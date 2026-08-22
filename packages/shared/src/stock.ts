@@ -1,0 +1,68 @@
+import type { BusinessLineConfig } from "./lines";
+
+// Five buckets per item × godown × batch (BR-14). Availability is always
+// computed live from these, never read from a stored "available" column.
+export interface StockBuckets {
+  onHand: number;
+  reserved: number;
+  hold: number;
+  damaged: number;
+  quarantined: number;
+}
+
+export function available(b: StockBuckets): number {
+  return b.onHand - b.reserved - b.hold - b.damaged - b.quarantined;
+}
+
+export function sumBuckets(rows: StockBuckets[]): StockBuckets & { available: number } {
+  const t = rows.reduce(
+    (s, b) => ({
+      onHand: s.onHand + b.onHand,
+      reserved: s.reserved + b.reserved,
+      hold: s.hold + b.hold,
+      damaged: s.damaged + b.damaged,
+      quarantined: s.quarantined + b.quarantined,
+    }),
+    { onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0 }
+  );
+  return { ...t, available: available(t) };
+}
+
+// F-01 display band — protects stock depth from competitors while telling the
+// retailer exactly what they need to know to book.
+export type BandKind = "svc" | "out" | "eta" | "low" | "ltd" | "in";
+export interface Band {
+  k: BandKind;
+  label: string;
+  hi: string;
+  cls: "ok" | "warn" | "err" | "neu";
+  dot: string;
+  qty: number;
+  canBook: boolean;
+  belowSet?: boolean;
+  prebook?: boolean;
+  eta?: string | null;
+}
+
+const fmtDate = (d: string | Date) =>
+  new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
+const num = (n: number) => n.toLocaleString("en-IN");
+
+export function band(
+  line: Pick<BusinessLineConfig, "workflow" | "minSetQty">,
+  availableQty: number,
+  uom: string,
+  inTransitEta?: string | Date | null
+): Band {
+  if (line.workflow === "JOBWORK")
+    return { k: "svc", label: "Service", hi: "सेवा", cls: "neu", dot: "#8A93A3", qty: 0, canBook: false };
+  const D = availableQty, M = line.minSetQty;
+  if (D <= 0) {
+    if (inTransitEta)
+      return { k: "eta", label: "Arriving " + fmtDate(inTransitEta), hi: fmtDate(inTransitEta) + " तक आएगा", cls: "neu", dot: "#8A93A3", qty: 0, canBook: false, prebook: true, eta: new Date(inTransitEta).toISOString() };
+    return { k: "out", label: "Out of stock", hi: "स्टॉक ख़त्म", cls: "err", dot: "#BE123C", qty: 0, canBook: false };
+  }
+  if (D >= 3 * M) return { k: "in", label: "In stock", hi: "स्टॉक में है", cls: "ok", dot: "#15803D", qty: D, canBook: true };
+  if (D >= M) return { k: "ltd", label: "Limited — " + num(D) + " " + uom.toLowerCase(), hi: "सीमित — " + num(D) + " बाकी", cls: "warn", dot: "#B45309", qty: D, canBook: true };
+  return { k: "low", label: "Only " + num(D) + " left — below full set", hi: "सिर्फ़ " + num(D) + " — पूरा सेट नहीं", cls: "warn", dot: "#D07A2E", qty: D, canBook: true, belowSet: true };
+}

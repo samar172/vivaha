@@ -1,0 +1,134 @@
+import { Router } from "express";
+import { z } from "zod";
+import { prisma, D } from "../../db";
+import { asyncHandler } from "../../utils/asyncHandler";
+import { requirePerm, can } from "../../middleware/auth";
+import { gatesForAll, customerFinance } from "../../services/credit";
+import { audit } from "../../services/audit";
+import { notify } from "../../services/notify";
+import { nextCustomerNo } from "../../services/sequence";
+import { groupMultiplier } from "../../services/pricing";
+import { getMinMargin } from "../../services/settings";
+import { badRequest, notFound, forbidden } from "../../utils/httpError";
+import { marginFloor, slabRate } from "@vivaha/shared";
+
+const router = Router();
+const custInclude = { contacts: true, machines: true, salesExec: { select: { id: true, name: true } }, users: { select: { username: true, isActive: true } } } as const;
+
+function serialize<T extends { creditLimit: unknown }>(c: T): Omit<T, "creditLimit"> & { creditLimit: number } {
+  return { ...c, creditLimit: D(c.creditLimit as number) };
+}
+
+router.get("/", requirePerm("cust.view"), asyncHandler(async (req, res) => {
+  const q = z.object({ line: z.string().optional(), q: z.string().optional(), filter: z.string().optional() }).parse(req.query);
+  let rows = await prisma.customer.findMany({ include: custInclude, orderBy: { id: "asc" } });
+  if (q.line && q.line !== "ALL") rows = rows.filter((c) => (c.linesEnabled as string[]).includes(q.line!));
+  if (q.q) { const s = q.q.toLowerCase(); rows = rows.filter((c) => (c.name + c.contactName + c.tehsil + (c.gstin || "")).toLowerCase().includes(s)); }
+  const gates = await gatesForAll(rows);
+  const filters = (q.filter || "").split(",").filter(Boolean);
+  let out = rows.map((c) => ({ ...serialize(c), gate: gates[c.id].gate, ageing: gates[c.id].ageing, hasLogin: c.users.some((u) => u.isActive) }));
+  if (filters.includes("gate")) out = out.filter((c) => c.gate.restricted);
+  if (filters.includes("blocked")) out = out.filter((c) => !!c.blockReason);
+  if (filters.includes("machines")) out = out.filter((c) => c.machines.length > 0);
+  res.json(out);
+}));
+
+router.get("/:id", requirePerm("cust.view"), asyncHandler(async (req, res) => {
+  const c = await prisma.customer.findUnique({ where: { id: req.params.id }, include: { ...custInclude, overrides: { include: { item: { select: { sku: true, name: true, moq: true, landedCost: true, slabs: true } } } } } });
+  if (!c) throw notFound("Customer not found");
+  const [fin, orders, mult, minMargin, kit] = await Promise.all([
+    customerFinance(c), prisma.order.findMany({ where: { customerId: c.id }, orderBy: { createdAt: "desc" }, take: 12, select: { id: true, total: true, status: true, createdAt: true } }),
+    groupMultiplier(c.group), getMinMargin(), prisma.kit.findUnique({ where: { customerId: c.id } }),
+  ]);
+  res.json({
+    ...serialize(c), ...fin, multiplier: mult, kit,
+    orders: orders.map((o) => ({ ...o, total: D(o.total) })),
+    overrides: c.overrides.map((o) => ({ itemId: o.itemId, sku: o.item.sku, name: o.item.name, rate: D(o.rate), reason: o.reason, setBy: o.setBy, slabRate: slabRate(o.item.slabs.map((s) => ({ fromQty: s.fromQty, toQty: s.toQty, rate: D(s.rate) })), o.item.moq), groupRate: Math.round(slabRate(o.item.slabs.map((s) => ({ fromQty: s.fromQty, toQty: s.toQty, rate: D(s.rate) })), o.item.moq) * mult), floor: marginFloor(D(o.item.landedCost), minMargin) })),
+  });
+}));
+
+const custSchema = z.object({
+  name: z.string().min(1), contactName: z.string().min(1), phone: z.string().min(5), tehsil: z.string().min(1), gstin: z.string().optional(), firmType: z.string().default("Registered"),
+  address: z.string().default(""), linesEnabled: z.array(z.string()).min(1), group: z.string().default("Regular"), salesExecId: z.string().nullable().optional(),
+  creditLimit: z.number().min(0).default(0), creditDays: z.number().int().min(0).default(0), gateMode: z.enum(["WARN", "BLOCK"]).default("WARN"),
+  machines: z.array(z.object({ type: z.string(), spec: z.record(z.string()).default({}) })).default([]),
+});
+router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
+  const b = custSchema.parse(req.body);
+  if (await prisma.customer.findFirst({ where: { name: { equals: b.name, mode: "insensitive" } } })) throw badRequest("A firm with this name already exists");
+  const c = await prisma.$transaction(async (tx) => {
+    const id = await nextCustomerNo(tx);
+    const seq = Number(id.split("-")[1]);
+    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }] }, machines: { create: b.machines } } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer created", entityType: "Customer", entityId: b.name, newValue: `${b.group} · limit ₹${b.creditLimit}`, reason: "New onboarding" });
+    return c;
+  });
+  res.status(201).json(serialize(c));
+}));
+
+router.patch("/:id", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
+  const b = custSchema.partial().parse(req.body);
+  const before = await prisma.customer.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Customer not found");
+  const { machines, ...rest } = b;
+  const c = await prisma.$transaction(async (tx) => {
+    if (machines) { await tx.customerMachine.deleteMany({ where: { customerId: before.id } }); await tx.customerMachine.createMany({ data: machines.map((m) => ({ ...m, customerId: before.id })) }); }
+    const c = await tx.customer.update({ where: { id: before.id }, data: { ...rest, gstin: rest.gstin === undefined ? undefined : rest.gstin || null, salesExecId: rest.salesExecId === undefined ? undefined : rest.salesExecId } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer updated", entityType: "Customer", entityId: before.name, oldValue: `limit ₹${D(before.creditLimit)} · ${before.creditDays}d · ${before.gateMode}`, newValue: `limit ₹${D(c.creditLimit)} · ${c.creditDays}d · ${c.gateMode}` });
+    return c;
+  });
+  res.json(serialize(c));
+}));
+
+router.post("/:id/block", requirePerm("cust.block"), asyncHandler(async (req, res) => {
+  const b = z.object({ reason: z.string().min(3, "A reason is required"), until: z.string().optional() }).parse(req.body);
+  const c = await prisma.customer.findUnique({ where: { id: req.params.id } });
+  if (!c) throw notFound("Customer not found");
+  await prisma.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id: c.id }, data: { blockReason: b.reason, blockedBy: req.user!.name, blockedAt: new Date(), blockUntil: b.until ? new Date(b.until) : null } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Temporary block applied", entityType: "Customer", entityId: c.name, oldValue: "Active", newValue: "Blocked", reason: b.reason });
+    await notify(tx, { text: `Temporary block applied to ${c.name}`, kind: "WARN", role: "SALES_EXECUTIVE" });
+  });
+  res.json({ ok: true });
+}));
+router.post("/:id/unblock", requirePerm("cust.block"), asyncHandler(async (req, res) => {
+  const c = await prisma.customer.findUnique({ where: { id: req.params.id } });
+  if (!c) throw notFound("Customer not found");
+  await prisma.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id: c.id }, data: { blockReason: null, blockedBy: null, blockedAt: null, blockUntil: null } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Temporary block lifted", entityType: "Customer", entityId: c.name, oldValue: "Blocked", newValue: "Active", reason: "Manual release" });
+  });
+  res.json({ ok: true });
+}));
+
+router.put("/:id/overrides/:itemId", requirePerm("cust.price"), asyncHandler(async (req, res) => {
+  const { rate, reason } = z.object({ rate: z.number().positive("Enter a valid rate"), reason: z.string().default("Negotiated rate") }).parse(req.body);
+  const [c, it, minMargin] = await Promise.all([prisma.customer.findUnique({ where: { id: req.params.id } }), prisma.item.findUnique({ where: { id: req.params.itemId } }), getMinMargin()]);
+  if (!c || !it) throw notFound();
+  const floor = marginFloor(D(it.landedCost), minMargin);
+  if (rate < floor && !can(req, "margin.override")) throw forbidden(`₹${rate} is below the margin floor of ₹${floor} — your role cannot override it`);
+  await prisma.$transaction(async (tx) => {
+    await tx.priceOverride.upsert({ where: { customerId_itemId: { customerId: c.id, itemId: it.id } }, create: { customerId: c.id, itemId: it.id, rate, reason, setBy: req.user!.name }, update: { rate, reason, setBy: req.user!.name } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer price override set", entityType: "Customer", entityId: c.name, oldValue: "—", newValue: `${it.sku} = ₹${rate}`, reason: rate < floor ? `Below margin floor ₹${floor}, overridden by ${req.user!.role}` : reason });
+  });
+  res.json({ ok: true, belowFloor: rate < floor, floor });
+}));
+router.delete("/:id/overrides/:itemId", requirePerm("cust.price"), asyncHandler(async (req, res) => {
+  await prisma.priceOverride.deleteMany({ where: { customerId: req.params.id, itemId: req.params.itemId } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Customer price override removed", entityType: "Customer", entityId: req.params.id, oldValue: req.params.itemId });
+  res.status(204).send();
+}));
+
+// Portal login for a firm contact.
+router.post("/:id/login", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
+  const { username, password, contactName, authority } = z.object({ username: z.string().min(3), password: z.string().min(6), contactName: z.string().min(1), authority: z.enum(["Owner", "Staff"]).default("Owner") }).parse(req.body);
+  const c = await prisma.customer.findUnique({ where: { id: req.params.id } });
+  if (!c) throw notFound();
+  const bcrypt = await import("bcryptjs");
+  const u = await prisma.user.create({ data: { username, passwordHash: await bcrypt.hash(password, 10), name: contactName, initials: contactName.split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase(), role: "CUSTOMER", customerId: c.id, authority } });
+  await prisma.customerContact.updateMany({ where: { customerId: c.id, name: contactName }, data: { hasLogin: true } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Portal login issued", entityType: "Customer", entityId: c.name, newValue: username });
+  res.status(201).json({ id: u.id, username: u.username });
+}));
+
+export default router;

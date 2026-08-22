@@ -356,9 +356,9 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .crow{display:flex;gap:11px;padding:11px 0;border-bottom:1px solid var(--bd-soft)}
 .crow .th{width:48px;flex-shrink:0}
 .crow .in{flex:1;min-width:0}
-.qs{display:flex;align-items:center;border:1px solid var(--bd);border-radius:6px;height:28px}
-.qs button{width:26px;height:100%;font-size:13px;font-weight:700;color:var(--ac)}
-.qs span{min-width:44px;text-align:center;font-size:12px;font-weight:700}
+.qs{display:flex;align-items:center;border:1px solid var(--bd);border-radius:6px;height:34px}
+.qs button{width:34px;height:100%;font-size:15px;font-weight:700;color:var(--ac)}
+.qs span{min-width:48px;text-align:center;font-size:12.5px;font-weight:700}
 .lgrp{background:#fff;border:1px solid var(--bd);border-radius:10px;margin-bottom:10px;overflow:hidden}
 .lgrp .hd{padding:9px 13px;border-bottom:1px solid var(--bd-soft);display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
 .lgrp .bd2{padding:2px 13px 11px}
@@ -381,6 +381,24 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .ledr{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--bd-soft);font-size:12.5px}
 .ledr:last-child{border:none}
 
+@media(max-width:1200px){
+  .g3,.g2{grid-template-columns:1fr}
+  .kpis.c6{grid-template-columns:repeat(3,1fr)}
+  .kpis.c5{grid-template-columns:repeat(3,1fr)}
+}
+@media(max-width:900px){
+  .kpis,.kpis.c5,.kpis.c6{grid-template-columns:repeat(2,1fr)}
+}
+/* ── portal: Bharat-first touch targets (NFR-13) ── */
+@media(pointer:coarse),(max-width:820px){
+  #portal .b,.sheet .b{min-height:40px;padding:0 14px}
+  #portal .b-s,.sheet .b-s{min-height:38px;font-size:12.5px;padding:0 12px}
+  .sheet .qs{height:38px}
+  .sheet .qs button,.cart-drawer .qs button{width:38px}
+  .sheet .qs span{min-width:52px;font-size:13.5px}
+  .pcd .ab{height:40px;font-size:13px}
+  .cats button{padding:9px 16px;min-height:38px}
+}
 @media(max-width:640px){
   .pgrid{grid-template-columns:repeat(2,1fr);gap:9px}
   .kpis,.kpis.c5,.kpis.c6{grid-template-columns:repeat(2,1fr)}
@@ -976,7 +994,15 @@ function receive(iid, gid, qty, ref, batch, expiry){
   txn({t:'GRN', item:iid, gd:gid, batch:batch||null, qty, ref});
 }
 function adjust(iid, gid, qty, dir, reason, batch){
+  if(batch === undefined){
+    const rows = Object.values(DB.stock).filter(x => x.item===iid && x.gd===gid && x.onHand>0)
+      .sort((a,c) => c.onHand - a.onHand);
+    batch = rows.length ? rows[0].batch : (batchesOf(iid,gid)[0] || null);
+  }
   const b = bal(iid, gid, batch);
+  const freeNow = b.onHand - b.reserved - b.hold - b.damaged - b.quarantined;
+  if((dir === 'damage' || dir === 'quarantine') && qty > freeNow) qty = Math.max(0, freeNow);
+  if(qty <= 0) return false;
   if(dir === 'damage'){ b.damaged += qty; txn({t:'DAMAGE', item:iid, gd:gid, batch:batch||null, qty, reason}); }
   else if(dir === 'quarantine'){ b.quarantined += qty; txn({t:'QUARANTINE', item:iid, gd:gid, batch:batch||null, qty, reason}); }
   else if(dir === 'recover'){ b.damaged = Math.max(0, b.damaged - qty); txn({t:'RECOVER', item:iid, gd:gid, batch:batch||null, qty, reason}); }
@@ -1109,12 +1135,16 @@ function seedOrders(db){
       const n = lid==='L1' ? 1 + (i % 3) : 1;
       for(let j = 0; j < n; j++){
         const it = pool[(i*5 + j*3 + li*7) % pool.length];
-        const q = lid==='L1' ? [250,500,750,1200,2200][(i+j)%5] : lid==='L2' ? [10,25,40,60][(i+j)%4] : [400,800,1200][(i+j)%3];
+        let q = lid==='L1' ? [250,500,750,1200,2200][(i+j)%5] : lid==='L2' ? [10,25,40,60][(i+j)%4] : [400,800,1200][(i+j)%3];
+        const best = Math.max(...GODOWNS.map(g => availGodown(it.id, g.id)));
+        if(best < q) q = Math.floor(best / it.moq) * it.moq;
+        if(q < it.moq) continue;
         const pi = priceFor(it, c, q);
         lines.push({ item:it.id, line:lid, qty:q, rate:pi.rate, slab:pi.slab, mult:pi.mult, src:pi.src,
                      amount:q*pi.rate, gst:it.gst, hsn:it.hsn, alloc:{}, shipped:0 });
       }
     });
+    if(!lines.length) return;
     const sub = lines.reduce((s,l) => s + l.amount, 0);
     const tot = invoiceTotals(lines, c);
     const created = daysAgo(p[3]);
@@ -1125,18 +1155,22 @@ function seedOrders(db){
 
     const idx = FLOW.indexOf(status);
     const advanced = idx > 0 || status==='Partially Dispatched';
+    const step = (to, by, day, why) => o.hist.push({from:o.hist[o.hist.length-1].to, to, by, at:daysAgo(Math.max(0, day)), why});
     if(advanced){
       o.approvedAt = daysAgo(Math.max(0, p[3]-1));
-      o.hist.push({from:'Booked', to:'Approved', by:'Khadija Ansari', at:o.approvedAt, why:'Credit and stock verified'});
+      step('Approved', 'Khadija Ansari', p[3]-1, 'Credit and stock verified');
+      let reservedOk = true;
       lines.forEach(l => {
         const gid = GODOWNS[(i + l.item.length) % 3].id;
         const use = availGodown(l.item, gid) >= l.qty ? gid
           : (GODOWNS.find(g => availGodown(l.item, g.id) >= l.qty) || {}).id;
-        if(!use){ l.alloc = {}; return; }
-        l.alloc = {[use]: l.qty};
-        if(tryHold(l.item, l.alloc, o.id).ok) holdToReserved(l.item, l.alloc, o.id);
-        else l.alloc = {};
+        if(!use || !tryHold(l.item, l.alloc = {[use]: l.qty}, o.id).ok){ l.alloc = {}; reservedOk = false; return; }
+        holdToReserved(l.item, l.alloc, o.id);
       });
+      if(!reservedOk){
+        lines.forEach(l => { if(Object.keys(l.alloc).length) shipReserved(l.item, l.alloc, o.id); l.alloc = {}; });
+        return;
+      }
       const ship = ['Dispatched','Delivered','Partially Dispatched'].includes(status);
       if(ship){
         lines.forEach(l => {
@@ -1148,14 +1182,25 @@ function seedOrders(db){
         o.dispatch = { transporter:['Rajasthan Roadways Cargo','Marudhar Transport Co.','Bikaner Fast Freight','Shree Balaji Carriers'][i%4],
           lr:'LR-'+(55120+i*17), tracking:'TRK'+(904100+i*271), packages: lines.length+1, at:daysAgo(Math.max(0,p[3]-2)),
           freight: 400 + i*35 };
-        const shipLines = lines.map(l => Object.assign({}, l, {amount: l.shipped * l.rate}));
+        const shipLines = lines.filter(l => l.shipped > 0).map(l => Object.assign({}, l, {qty: l.shipped, amount: l.shipped * l.rate}));
         const t = invoiceTotals(shipLines, c);
         const invNo = nextInvNo();
         o.invoice = { no:invNo, date:o.dispatch.at, lines:shipLines, ...t };
         db.invoices.push({no:invNo, order:o.id, cust:c.id, date:o.dispatch.at, taxable:t.taxable, tax:t.tax, total:t.total, blocks:t.blocks, status:'Posted'});
         post(c.id, {date:o.dispatch.at, type:'invoice', ref:invNo, particular:'Tax Invoice '+invNo+' · '+o.id, debit:t.total, credit:0});
       }
-      if(status==='Delivered') o.hist.push({from:'Dispatched', to:'Delivered', by:'Office', at:daysAgo(Math.max(0,p[3]-4)), why:'Delivery confirmed by customer'});
+      const WHY = {'Reserved':'Temporary hold converted to firm reservation','Allocated':'Godown allocation confirmed',
+        'Picking':'Pick list generated','Picked':'All lines picked','Packed':'Packed into boxes',
+        'Ready to Dispatch':'Staged at dispatch bay','Dispatched':'Dispatched via '+(o.dispatch?o.dispatch.transporter:'transporter'),
+        'Delivered':'Delivery confirmed by customer'};
+      const WHO = {'Reserved':'Khadija Ansari','Allocated':'Devendra Suthar','Picking':'Devendra Suthar','Picked':'Devendra Suthar',
+        'Packed':'Devendra Suthar','Ready to Dispatch':'Farhan Sheikh','Dispatched':'Farhan Sheikh','Delivered':'Office'};
+      const target = status==='Partially Dispatched' ? 'Ready to Dispatch' : status;
+      const ti = FLOW.indexOf(target);
+      FLOW.slice(2, ti + 1).forEach((st, x) => step(st, WHO[st]||'Office', p[3] - 2 - x*0.4, WHY[st]||''));
+      if(status==='Partially Dispatched')
+        step('Partially Dispatched', 'Farhan Sheikh', Math.max(0,p[3]-3),
+             'Partial dispatch — balance stays reserved as a backorder');
     }
     if(status==='Booked'){
       lines.forEach(l => {

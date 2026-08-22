@@ -1,0 +1,758 @@
+// Vivaha Cards ERP — physical data model.
+// Derived from the client-approved interactive mock (docs/reference/vivaha-erp-mockup.html).
+// Stock movements, ledger entries and audit rows are append-only: corrections are
+// reversing entries, never edits.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Users, RBAC, Audit ─────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  PURCHASE_MANAGER
+  SALES_EXECUTIVE
+  GODOWN_MANAGER
+  DISPATCH_MANAGER
+  ACCOUNTS_MANAGER
+  CUSTOMER
+}
+
+model User {
+  id               String    @id @default(cuid())
+  username         String    @unique
+  passwordHash     String
+  name             String
+  initials         String
+  role             Role
+  isActive         Boolean   @default(true)
+  customerId       String?   // set only for CUSTOMER (portal) logins
+  customer         Customer? @relation(fields: [customerId], references: [id])
+  authority        String?   // Owner | Staff — portal contact authority
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  notificationReads NotificationRead[]
+  salesCustomers    Customer[]         @relation("CustomerSalesExec")
+}
+
+// Permissions are data, not code — Settings → Roles & permissions.
+model RolePermission {
+  role Role
+  perm String
+
+  @@id([role, perm])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  actor      String
+  action     String
+  entityType String
+  entityId   String
+  oldValue   String   @default("")
+  newValue   String   @default("")
+  reason     String   @default("")
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+enum NotifKind {
+  INFO
+  OK
+  WARN
+  ERR
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id])
+  role      Role?     // broadcast to a role when userId is null
+  kind      NotifKind @default(INFO)
+  text      String
+  link      String?
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  reads     NotificationRead[]
+
+  @@index([userId, isRead])
+  @@index([role, createdAt])
+}
+
+model NotificationRead {
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+
+  @@id([notificationId, userId])
+}
+
+// Gapless document numbering per series (INV, CN, ORD, PO, TRF, RET, RCPT, JOB).
+model Sequence {
+  name  String @id
+  value Int    @default(0)
+}
+
+model Setting {
+  key   String @id
+  value Json
+}
+
+// ───────────────────────── Masters ─────────────────────────
+
+enum PricingModel {
+  SLAB
+  AREA
+  QUOTE
+}
+
+enum LineWorkflow {
+  FULFIL
+  JOBWORK
+}
+
+model BusinessLine {
+  id           String       @id // L1, L2, ...
+  code         String       @unique
+  name         String
+  nameHi       String
+  icon         String
+  color        String
+  bg           String
+  uom          String
+  packUoms     Json         @default("[]")
+  minSetQty    Int          @default(0)
+  holdMins     Int          @default(30)
+  gstPct       Int
+  stockDims    Json         @default("[]")
+  batchTracked Boolean      @default(false)
+  pricingModel PricingModel @default(SLAB)
+  workflow     LineWorkflow @default(FULFIL)
+  facets       Json         @default("[]")
+  sortOrder    Int          @default(0)
+  isActive     Boolean      @default(true)
+
+  items      Item[]
+  attributes AttributeDef[]
+  orderLines OrderLine[]
+}
+
+// "Or any other" / "future option to add more fields" — every classification
+// is an admin-editable master.
+model AttributeDef {
+  id          String        @id @default(cuid())
+  lineId      String?       // null = customer-level attribute
+  line        BusinessLine? @relation(fields: [lineId], references: [id])
+  key         String
+  label       String
+  values      Json          @default("[]")
+  multiSelect Boolean       @default(false)
+  portalFacet Boolean       @default(false)
+  sortOrder   Int           @default(0)
+
+  @@unique([lineId, key])
+}
+
+model Godown {
+  id       String  @id // GD-A
+  name     String
+  short    String
+  manager  String
+  address  String
+  isActive Boolean @default(true)
+
+  balances  StockBalance[]
+  txns      StockTxn[]
+  transfersFrom Transfer[] @relation("TransferFrom")
+  transfersTo   Transfer[] @relation("TransferTo")
+}
+
+model Vendor {
+  id     String @id // VND-01
+  name   String
+  gstin  String?
+  terms  String
+  city   String
+  phone  String
+  items     Item[]
+  purchases Purchase[]
+  payments  VendorPayment[]
+}
+
+model PricingGroup {
+  name       String  @id
+  multiplier Decimal @db.Decimal(6, 3)
+}
+
+enum ItemStatus {
+  ACTIVE
+  DISCONTINUED
+}
+
+model Item {
+  id           String       @id // ITM-101
+  sku          String       @unique
+  designNo     String?
+  name         String
+  nameHi       String
+  lineId       String
+  line         BusinessLine @relation(fields: [lineId], references: [id])
+  attrs        Json         @default("{}")
+  uom          String
+  packUom      String       @default("")
+  perPack      Int          @default(1)
+  moq          Int          @default(1)
+  landedCost   Decimal      @db.Decimal(12, 2)
+  hsn          String
+  gstPct       Int
+  vendorId     String?
+  vendor       Vendor?      @relation(fields: [vendorId], references: [id])
+  status       ItemStatus   @default(ACTIVE)
+  season       String?
+  batchTracked Boolean      @default(false)
+  wastagePct   Decimal?     @db.Decimal(5, 2)
+  setupCharge  Decimal?     @db.Decimal(12, 2)
+  artSeed      Int          @default(0)
+  imageUrl     String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  slabs         PriceSlab[]
+  balances      StockBalance[]
+  txns          StockTxn[]
+  overrides     PriceOverride[]
+  purchaseLines PurchaseLine[]
+  transfers     Transfer[]
+  orderLines    OrderLine[]
+  returns       ReturnRequest[]
+  jobsBase      JobWork[]       @relation("JobBase")
+  jobsProcess   JobWork[]       @relation("JobProcess")
+  stockoutHits  StockoutSearch[]
+  kitItems      KitVersionItem[]
+}
+
+model PriceSlab {
+  id      String  @id @default(cuid())
+  itemId  String
+  item    Item    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  fromQty Int
+  toQty   Int
+  rate    Decimal @db.Decimal(12, 2)
+
+  @@index([itemId, fromQty])
+}
+
+// ───────────────────────── Customers ─────────────────────────
+
+enum GateMode {
+  WARN
+  BLOCK
+}
+
+model Customer {
+  id           String   @id // CUST-101
+  name         String
+  contactName  String
+  group        String   // PricingGroup.name
+  tehsil       String
+  creditLimit  Decimal  @db.Decimal(14, 2)
+  creditDays   Int      @default(0)
+  gateMode     GateMode @default(WARN)
+  gstin        String?
+  firmType     String   @default("Registered")
+  phone        String
+  address      String   @default("")
+  linesEnabled Json     @default("[]")
+  referCode    String   @unique
+  salesExecId  String?
+  salesExec    User?    @relation("CustomerSalesExec", fields: [salesExecId], references: [id])
+  status       String   @default("Active")
+  blockReason  String?
+  blockedBy    String?
+  blockedAt    DateTime?
+  blockUntil   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  contacts   CustomerContact[]
+  machines   CustomerMachine[]
+  overrides  PriceOverride[]
+  users      User[]
+  orders     Order[]
+  ledger     LedgerEntry[]
+  payments   Payment[]
+  invoices   Invoice[]
+  returns    ReturnRequest[]
+  jobs       JobWork[]
+  kit        Kit?
+  cart       Cart?
+  referrals  Referral[]
+  stockoutHits StockoutSearch[]
+}
+
+model CustomerContact {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  name       String
+  role       String
+  phone      String
+  hasLogin   Boolean  @default(false)
+  authority  String   @default("Staff")
+}
+
+model CustomerMachine {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       String
+  spec       Json     @default("{}")
+}
+
+model PriceOverride {
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  rate       Decimal  @db.Decimal(12, 2)
+  reason     String   @default("")
+  setBy      String
+  createdAt  DateTime @default(now())
+
+  @@id([customerId, itemId])
+}
+
+// ───────────────────────── Stock ─────────────────────────
+
+// One row per item × godown × batch. Five buckets; availability is computed.
+model StockBalance {
+  id          String    @id @default(cuid())
+  itemId      String
+  item        Item      @relation(fields: [itemId], references: [id])
+  godownId    String
+  godown      Godown    @relation(fields: [godownId], references: [id])
+  batchNo     String    @default("-")
+  expiry      DateTime?
+  onHand      Int       @default(0)
+  reserved    Int       @default(0)
+  hold        Int       @default(0)
+  damaged     Int       @default(0)
+  quarantined Int       @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([itemId, godownId, batchNo])
+  @@index([itemId])
+}
+
+enum StockTxnType {
+  GRN
+  HOLD
+  HOLD_RELEASE
+  RESERVE
+  RESERVE_RELEASE
+  DISPATCH
+  TRANSFER_OUT
+  TRANSFER_IN
+  DAMAGE
+  QUARANTINE
+  RECOVER
+  WRITE_OFF
+  RETURN_IN
+  JOB_ISSUE
+}
+
+model StockTxn {
+  id       String       @id @default(cuid())
+  type     StockTxnType
+  itemId   String
+  item     Item         @relation(fields: [itemId], references: [id])
+  godownId String
+  godown   Godown       @relation(fields: [godownId], references: [id])
+  batchNo  String?
+  qty      Int
+  ref      String?
+  reason   String?
+  by       String
+  at       DateTime     @default(now())
+
+  @@index([itemId, at])
+  @@index([ref])
+}
+
+enum PurchaseStatus {
+  IN_TRANSIT
+  POSTED
+}
+
+model Purchase {
+  id       String         @id // PO-4180
+  vendorId String
+  vendor   Vendor         @relation(fields: [vendorId], references: [id])
+  invNo    String
+  date     DateTime
+  eta      DateTime?
+  freight  Decimal        @default(0) @db.Decimal(12, 2)
+  total    Decimal        @db.Decimal(14, 2)
+  gstPct   Int
+  status   PurchaseStatus @default(POSTED)
+  by       String
+  lines    PurchaseLine[]
+
+  @@index([vendorId, date])
+}
+
+model PurchaseLine {
+  id         String   @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       Item     @relation(fields: [itemId], references: [id])
+  qty        Int
+  rate       Decimal  @db.Decimal(12, 2)
+  alloc      Json     @default("{}") // { godownId: qty }
+  batchNo    String?
+  expiry     DateTime?
+}
+
+model VendorPayment {
+  id       String   @id @default(cuid())
+  vendorId String
+  vendor   Vendor   @relation(fields: [vendorId], references: [id])
+  date     DateTime
+  amount   Decimal  @db.Decimal(14, 2)
+  ref      String   @default("")
+}
+
+enum TransferStatus {
+  IN_TRANSIT
+  RECEIVED
+}
+
+model Transfer {
+  id         String         @id // TRF-2201
+  itemId     String
+  item       Item           @relation(fields: [itemId], references: [id])
+  fromId     String
+  from       Godown         @relation("TransferFrom", fields: [fromId], references: [id])
+  toId       String
+  to         Godown         @relation("TransferTo", fields: [toId], references: [id])
+  qty        Int
+  batchNo    String?
+  status     TransferStatus @default(IN_TRANSIT)
+  by         String
+  at         DateTime       @default(now())
+  receivedAt DateTime?
+}
+
+// ───────────────────────── Orders ─────────────────────────
+
+enum OrderStatus {
+  BOOKED
+  APPROVED
+  RESERVED
+  ALLOCATED
+  PICKING
+  PICKED
+  PACKED
+  READY_TO_DISPATCH
+  PARTIALLY_DISPATCHED
+  DISPATCHED
+  DELIVERED
+  LAPSED
+  REJECTED
+  CANCELLED
+}
+
+model Order {
+  id         String      @id // ORD-1061
+  customerId String
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  status     OrderStatus @default(BOOKED)
+  subtotal   Decimal     @db.Decimal(14, 2)
+  tax        Decimal     @db.Decimal(14, 2)
+  total      Decimal     @db.Decimal(14, 2)
+  requiredBy DateTime
+  holdUntil  DateTime?
+  approvedAt DateTime?
+  bookedBy   String
+  source     String      @default("portal")
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  lines      OrderLine[]
+  events     OrderEvent[]
+  dispatches Dispatch[]
+  invoices   Invoice[]
+  returns    ReturnRequest[]
+
+  @@index([customerId, createdAt])
+  @@index([status, holdUntil])
+}
+
+model OrderLine {
+  id       String       @id @default(cuid())
+  orderId  String
+  order    Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId   String
+  item     Item         @relation(fields: [itemId], references: [id])
+  lineId   String
+  line     BusinessLine @relation(fields: [lineId], references: [id])
+  qty      Int
+  rate     Decimal      @db.Decimal(12, 2) // snapshot — never recalculated
+  slabRate Decimal      @db.Decimal(12, 2)
+  mult     Decimal      @db.Decimal(6, 3)
+  priceSrc String       @default("slab")
+  amount   Decimal      @db.Decimal(14, 2)
+  gstPct   Int
+  hsn      String
+  alloc    Json         @default("{}") // { godownId: qty }
+  shipped  Int          @default(0)
+}
+
+model OrderEvent {
+  id      String   @id @default(cuid())
+  orderId String
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  from    String?
+  to      String
+  by      String
+  why     String   @default("")
+  at      DateTime @default(now())
+}
+
+model Dispatch {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  transporter String
+  lr          String
+  tracking    String   @default("")
+  packages    Int      @default(1)
+  freight     Decimal  @default(0) @db.Decimal(12, 2)
+  ewb         String?
+  lines       Json     @default("[]") // [{ itemId, qty, godownId }]
+  invoiceNo   String?
+  at          DateTime @default(now())
+  by          String
+}
+
+model Invoice {
+  no         String   @id // VC/26-27/0412
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id])
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  date       DateTime @default(now())
+  taxable    Decimal  @db.Decimal(14, 2)
+  cgst       Decimal  @db.Decimal(14, 2)
+  sgst       Decimal  @db.Decimal(14, 2)
+  igst       Decimal  @db.Decimal(14, 2)
+  total      Decimal  @db.Decimal(14, 2)
+  blocks     Json     @default("[]")
+  status     String   @default("Posted") // Posted | Cancelled (number never reused)
+  lines      InvoiceLine[]
+
+  @@index([customerId, date])
+}
+
+model InvoiceLine {
+  id        String  @id @default(cuid())
+  invoiceNo String
+  invoice   Invoice @relation(fields: [invoiceNo], references: [no], onDelete: Cascade)
+  itemId    String
+  itemName  String
+  sku       String
+  hsn       String
+  qty       Int
+  rate      Decimal @db.Decimal(12, 2)
+  amount    Decimal @db.Decimal(14, 2)
+  gstPct    Int
+}
+
+// ───────────────────────── Ledger ─────────────────────────
+
+enum LedgerType {
+  OPENING
+  INVOICE
+  PAYMENT
+  CREDIT
+}
+
+// The only source of truth for outstanding. No screen stores or edits a balance.
+model LedgerEntry {
+  id         String     @id @default(cuid())
+  customerId String
+  customer   Customer   @relation(fields: [customerId], references: [id])
+  date       DateTime
+  type       LedgerType
+  ref        String
+  particular String
+  debit      Decimal    @default(0) @db.Decimal(14, 2)
+  credit     Decimal    @default(0) @db.Decimal(14, 2)
+  createdAt  DateTime   @default(now())
+
+  @@index([customerId, date])
+}
+
+model Payment {
+  id         String   @id // RCPT-3300
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  date       DateTime
+  amount     Decimal  @db.Decimal(14, 2)
+  method     String
+  ref        String   @default("")
+  by         String
+  createdAt  DateTime @default(now())
+}
+
+// ───────────────────────── Returns, Job work ─────────────────────────
+
+enum ReturnStatus {
+  REQUESTED
+  INSPECTION
+  ACCEPTED
+  REJECTED
+}
+
+model ReturnRequest {
+  id           String       @id // RET-3101
+  orderId      String
+  order        Order        @relation(fields: [orderId], references: [id])
+  customerId   String
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  itemId       String
+  item         Item         @relation(fields: [itemId], references: [id])
+  qty          Int
+  reason       String
+  hasPhoto     Boolean      @default(false)
+  status       ReturnStatus @default(REQUESTED)
+  outcome      String?      // Good stock | Damaged | Rejected
+  note         String?
+  godownId     String?
+  creditAmount Decimal?     @db.Decimal(14, 2)
+  creditNoteNo String?
+  createdAt    DateTime     @default(now())
+  resolvedAt   DateTime?
+}
+
+enum JobStatus {
+  ENQUIRY
+  QUOTED
+  ACCEPTED
+  PROOF_SENT
+  APPROVED_PROOF
+  PRINTING
+  QC
+  READY
+  DELIVERED
+}
+
+model JobWork {
+  id            String    @id // JOB-5101
+  customerId    String
+  customer      Customer  @relation(fields: [customerId], references: [id])
+  baseItemId    String
+  baseItem      Item      @relation("JobBase", fields: [baseItemId], references: [id])
+  processItemId String
+  processItem   Item      @relation("JobProcess", fields: [processItemId], references: [id])
+  qty           Int
+  status        JobStatus @default(QUOTED)
+  requiredBy    DateTime
+  text          String
+  quote         Decimal   @db.Decimal(14, 2)
+  proofs        Int       @default(0)
+  approvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// ───────────────────────── Portal: kits, cart, referrals, ads ─────────────────────────
+
+model KitVersion {
+  id       String           @id // KIT-2026-S2
+  name     String
+  issuedAt DateTime         @default(now())
+  items    KitVersionItem[]
+  kits     Kit[]
+}
+
+model KitVersionItem {
+  kitVersionId String
+  kitVersion   KitVersion @relation(fields: [kitVersionId], references: [id], onDelete: Cascade)
+  itemId       String
+  item         Item       @relation(fields: [itemId], references: [id])
+
+  @@id([kitVersionId, itemId])
+}
+
+model Kit {
+  customerId   String     @id
+  customer     Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  kitVersionId String
+  kitVersion   KitVersion @relation(fields: [kitVersionId], references: [id])
+  issuedAt     DateTime
+  lastScanAt   DateTime?
+  session      Json?      // { scans: string[], last, startedAt, pending }
+}
+
+model Cart {
+  customerId String   @id
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lines      Json     @default("[]") // [{ itemId, qty }]
+  updatedAt  DateTime @updatedAt
+}
+
+model Referral {
+  id        String   @id // REF-01
+  byId      String
+  by        Customer @relation(fields: [byId], references: [id])
+  name      String
+  tehsil    String
+  phone     String
+  address   String   @default("")
+  state     String   @default("Submitted")
+  reward    Decimal  @default(2000) @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+}
+
+model Ad {
+  id          String @id
+  title       String
+  sub         String
+  target      Json   @default("{}")
+  impressions Int    @default(0)
+  taps        Int    @default(0)
+}
+
+// "What customers searched for and could not get" — the stock-out demand report.
+model StockoutSearch {
+  id         String   @id @default(cuid())
+  itemId     String
+  item       Item     @relation(fields: [itemId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  reqQty     Int
+  availQty   Int
+  at         DateTime @default(now())
+
+  @@index([itemId, at])
+}
