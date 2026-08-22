@@ -71,9 +71,11 @@ const RAW_CUST: RawCust[] = [
   ["Lunkaransar Card Mart", "Baljeet Kaur", "Regular", "Lunkaransar", 90000, 15, "WARN", null, ["L1"], []],
   ["Napasar Print & Cards", "Yusuf Pathan", "Dealer", "Napasar", 220000, 45, "WARN", null, ["L1", "L2", "L3"], [["Offset", { colours: "1", ink: "SGL", company: "Rotaprint", roller: "620 mm", chem: "Anchor", industry: "Job Printing" }]]],
 ];
+// Only the single "admin" login is active for the client demo; the staff users
+// exist (inactive) so seeded orders/customers keep their sales-exec references.
 const USERS = [
-  ["admin", "SUPER_ADMIN", "Aadil Bhati", "AB"], ["samar.purchase", "PURCHASE_MANAGER", "Samar Iqbal", "SI"], ["khadija.sales", "SALES_EXECUTIVE", "Khadija Ansari", "KA"],
-  ["devendra.godown", "GODOWN_MANAGER", "Devendra Suthar", "DS"], ["farhan.dispatch", "DISPATCH_MANAGER", "Farhan Sheikh", "FS"], ["rahin.accounts", "ACCOUNTS_MANAGER", "Rahin Qureshi", "RQ"],
+  ["admin", "SUPER_ADMIN", "Admin", "AD", true], ["samar.purchase", "PURCHASE_MANAGER", "Samar Iqbal", "SI", false], ["khadija.sales", "SALES_EXECUTIVE", "Khadija Ansari", "KA", false],
+  ["devendra.godown", "GODOWN_MANAGER", "Devendra Suthar", "DS", false], ["farhan.dispatch", "DISPATCH_MANAGER", "Farhan Sheikh", "FS", false], ["rahin.accounts", "ACCOUNTS_MANAGER", "Rahin Qureshi", "RQ", false],
 ] as const;
 
 async function reset() {
@@ -103,7 +105,7 @@ async function main() {
   const item = (id: string) => items.find((i) => i.id === id)!;
 
   const users: Record<string, { id: string; name: string }> = {};
-  for (const [username, role, name, initials] of USERS) users[username] = await prisma.user.create({ data: { username, passwordHash: hash, name, initials, role } });
+  for (const [username, role, name, initials, isActive] of USERS) users[username] = await prisma.user.create({ data: { username, passwordHash: hash, name, initials, role, isActive } });
   const execs = [users["khadija.sales"], users["samar.purchase"]];
 
   const custs: { id: string; name: string; group: string; gstin: string; contactName: string; tehsil: string; creditLimit: number; creditDays: number; gateMode: "WARN" | "BLOCK"; username: string | null }[] = [];
