@@ -9,6 +9,7 @@ import { KPI, Panel, Bar, Hold, GateDot, Thumb, Empty } from "@/components/ui";
 import { useUI } from "@/lib/ui";
 import { OrderDrawer } from "@/components/OrderDrawer";
 import { exportCsv } from "@/lib/csv";
+import { Icon, KIND_ICON } from "@/components/icons";
 
 interface Dash { kpis: { awaiting: number; expiringSoon: number; toDispatch: number; receivables: number; pastGate: number; billed30d: number; available: number; reserved: number; stockValue: number; damaged: number }; holds: { id: string; firm: string; tehsil: string; group: string; total: number; requiredBy: string; holdUntil: string | null; gate: { status: string; restricted: boolean; mode: string } }[]; pipeline: { status: string; count: number }[]; fastest: { item: { id: string; sku: string; name: string; lineId: string; artSeed: number; imageUrl: string | null; available: number }; qty: number }[]; ageing: number[]; notifs: { id: string; text: string; kind: string }[]; totalOrders: number }
 
@@ -19,7 +20,7 @@ export default function Dashboard() {
   if (!d) return <div className="loading" style={{ height: 300 }}>Loading…</div>;
   const k = d.kpis; const mx = Math.max(1, ...d.pipeline.map((p) => p.count)); const amx = Math.max(1, ...d.ageing);
   return <>
-    <PageHead crumb={["Overview", "Dashboard"]} title="Dashboard" sub={(line === "ALL" ? "All business lines" : lines?.find((l) => l.id === line)?.name) + " · " + new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} actions={<button className="b b-o" onClick={() => exportCsv("dashboard", ["Metric", "Value"], Object.entries(k))}>⤓ Export snapshot</button>} />
+    <PageHead crumb={["Overview", "Dashboard"]} title="Dashboard" sub={(line === "ALL" ? "All business lines" : lines?.find((l) => l.id === line)?.name) + " · " + new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} actions={<button className="b b-o" onClick={() => exportCsv("dashboard", ["Metric", "Value"], Object.entries(k))}><Icon n="download" s={13} /> Export snapshot</button>} />
     <div className="wa">
       <div className="kpis c6">
         <KPI l="Awaiting approval" v={k.awaiting} d={k.expiringSoon ? k.expiringSoon + " expiring < 10 min" : "all holds healthy"} cls={k.expiringSoon ? "dn" : "up"} onClick={() => router.push("/orders")} />
@@ -39,7 +40,7 @@ export default function Dashboard() {
       </div><div>
         <Panel t="Fastest moving" h="by quantity"><div className="pnb" style={{ padding: "8px 13px" }}>{d.fastest.map((x) => <div key={x.item.id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", borderBottom: "1px solid var(--bd-soft)" }}><Thumb it={x.item} w={40} h={52} style={{ width: 32 }} /><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 11.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.item.name}</div><div className="sm">{x.item.sku} · avail {num(x.item.available)}</div></div><div className="tab" style={{ fontSize: 11.5, fontWeight: 700 }}>{num(x.qty)}</div></div>)}</div></Panel>
         <Panel t="Receivables ageing" h="all firms"><div className="pnb">{AGEING_LABELS.map((l, i) => <div key={l} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}><div style={{ width: 62, fontSize: 11.5, color: "var(--t6)" }}>{l}</div><div style={{ flex: 1 }}><Bar pct={(d.ageing[i] / amx) * 100} color={i >= 3 ? "var(--er)" : i === 2 ? "var(--wa)" : undefined} /></div><div className="tab" style={{ width: 74, textAlign: "right", fontSize: 11 }}>{money(d.ageing[i])}</div></div>)}</div></Panel>
-        <Panel t="Needs attention"><div className="pnb" style={{ padding: "9px 13px" }}>{d.notifs.map((n) => <div key={n.id} style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--bd-soft)", fontSize: 11.5, lineHeight: 1.5 }}><span style={{ color: `var(--${({ WARN: "wa", OK: "ok", ERR: "er", INFO: "in" } as Record<string, string>)[n.kind]})` }}>{({ WARN: "⚠", OK: "✓", ERR: "✕", INFO: "ℹ" } as Record<string, string>)[n.kind]}</span><span>{n.text}</span></div>)}</div></Panel>
+        <Panel t="Needs attention"><div className="pnb" style={{ padding: "9px 13px" }}>{d.notifs.map((n) => <div key={n.id} style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--bd-soft)", fontSize: 11.5, lineHeight: 1.5 }}><span style={{ color: `var(--${({ WARN: "wa", OK: "ok", ERR: "er", INFO: "in" } as Record<string, string>)[n.kind]})`, marginTop: 2 }}><Icon n={KIND_ICON[n.kind] ?? "info"} s={13} /></span><span>{n.text}</span></div>)}</div></Panel>
       </div></div>
     </div>
   </>;

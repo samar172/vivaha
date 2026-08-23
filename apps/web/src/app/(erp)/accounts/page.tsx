@@ -10,6 +10,7 @@ import { KPI, DF, Section, DrawerFrame, Note, Panel } from "@/components/ui";
 import { PaymentModal } from "@/components/CustomerDrawer";
 import { InvoiceModal } from "@/components/InvoiceModal";
 import { exportCsv } from "@/lib/csv";
+import { Icon } from "@/components/icons";
 
 const HSN_DESC: Record<string, string> = { "4817": "Envelopes, letter cards, printed stationery", "3215": "Printing ink", "3814": "Organic composite solvents", "5911": "Textile products for technical use", "3701": "Photographic plates", "3707": "Chemical preparations for photographic use", "3921": "Plastic sheets, film, foil", "7606": "Aluminium plates, sheets", "3920": "Acrylic sheets", "5603": "Non-wovens", "9989": "Other manufacturing services" };
 interface OutRow { id: string; name: string; tehsil: string; creditDays: number; gateMode: string; creditLimit: number; gate: CreditGate; ageing: number[] }
@@ -23,7 +24,7 @@ export default function AccountsPage() {
   const pg = usePager(list as unknown[]); useFooter(list.length, "", pg.page, pg.pages, pg.setPage);
   const gstr1 = () => exportCsv("gstr1", ["Invoice", "Date", "Firm", "GSTIN", "Taxable", "CGST", "SGST", "IGST", "Total"], (invs ?? []).map((i) => [i.no, fDate(i.date), i.customer.name, i.customer.gstin, i.taxable.toFixed(2), i.cgst.toFixed(2), i.sgst.toFixed(2), i.igst.toFixed(2), i.total.toFixed(2)]));
   return <>
-    <PageHead crumb={["Finance", "Ledger & GST"]} title="Ledger & GST" sub="The ledger is the only source of truth for outstanding — no screen stores or edits a balance" actions={<><button className="b b-o" onClick={gstr1}>⤓ GSTR-1 data</button>{can("payment.create") && <button className="b b-p" onClick={() => openModal(<PaymentModal />)}>+ Record payment</button>}</>} tabs={[{ k: "out", l: "Outstanding", n: out?.rows.length }, { k: "inv", l: "Invoice register", n: invs?.length }, { k: "pay", l: "Receipts", n: pays?.length }, { k: "gst", l: "GST summary" }]} tab={tab} onTab={setTab} />
+    <PageHead crumb={["Finance", "Ledger & GST"]} title="Ledger & GST" sub="The ledger is the only source of truth for outstanding — no screen stores or edits a balance" actions={<><button className="b b-o" onClick={gstr1}><Icon n="download" s={13} /> GSTR-1 data</button>{can("payment.create") && <button className="b b-p" onClick={() => openModal(<PaymentModal />)}>+ Record payment</button>}</>} tabs={[{ k: "out", l: "Outstanding", n: out?.rows.length }, { k: "inv", l: "Invoice register", n: invs?.length }, { k: "pay", l: "Receipts", n: pays?.length }, { k: "gst", l: "GST summary" }]} tab={tab} onTab={setTab} />
     <div className="wa">
       {tab === "out" && out && <><div className="kpis c5"><KPI l="Total receivable" v={money(out.total)} />{AGEING_LABELS.slice(1).map((l, i) => <KPI key={l} l={l + " days"} v={<span style={{ color: i >= 2 ? "var(--er)" : undefined }}>{money(out.buckets[i + 1])}</span>} d={Math.round((out.buckets[i + 1] / Math.max(1, out.total)) * 100) + "% of book"} />)}</div>
         <div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Terms</th><th className="n">Limit</th><th className="n">Outstanding</th><th className="n">Available</th>{AGEING_LABELS.map((l) => <th className="n" key={l}>{l}</th>)}<th>Gate</th><th></th></tr></thead><tbody>

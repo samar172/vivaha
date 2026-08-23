@@ -403,3 +403,11 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .dg tr.dim td{opacity:.6}
 input[type=number]{-moz-appearance:textfield}
 .tsr input{border:none;outline:none;background:transparent;font-size:12px;width:100%;color:var(--t9)}
+
+/* ── inline stroke icons (components/icons.tsx) ── */
+.ni .ic svg,.pli .ic svg{display:block}
+.chip .x{display:inline-flex;align-items:center}
+.to>span:first-child,.gi svg{opacity:.95}
+.ni:not(.on) .ic{color:var(--t4)}
+.ni.on .ic{color:var(--ac)}
+.sb.col .ni .ic{margin:0 auto}

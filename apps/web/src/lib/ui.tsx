@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { Icon, KIND_ICON } from "@/components/icons";
 
 type ToastKind = "s" | "e" | "w" | "i";
 interface Toast { id: number; msg: string; k: ToastKind }
@@ -23,7 +24,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
       <div className={"ov" + (drawer ? " on" : "")} onClick={closeDrawer} />
       <div className={"dr" + (drawer ? " on" : "")} style={drawer?.width ? { width: drawer.width } : undefined}>{drawer?.body}</div>
       <div className={"mo" + (modal ? " on" : "")} onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}><div className={"mb " + (modal?.cls ?? "")}>{modal?.body}</div></div>
-      <div className="tw">{toasts.map((t) => <div key={t.id} className={"to " + t.k}><span>{t.k === "s" ? "✓" : t.k === "e" ? "✕" : t.k === "w" ? "⚠" : "ℹ"}</span><span>{t.msg}</span></div>)}</div>
+      <div className="tw">{toasts.map((t) => <div key={t.id} className={"to " + t.k}><span style={{ marginTop: 2 }}><Icon n={KIND_ICON[t.k] ?? "info"} s={15} /></span><span>{t.msg}</span></div>)}</div>
     </Ctx.Provider>
   );
 }

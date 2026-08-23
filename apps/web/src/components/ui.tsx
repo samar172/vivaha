@@ -4,6 +4,7 @@ import { money, num, fDT } from "@vivaha/shared";
 import type { Band } from "@vivaha/shared";
 import { useLines } from "@/lib/hooks";
 import { thumb } from "@/lib/art";
+import { Icon } from "@/components/icons";
 
 const PILL: Record<string, string> = { DELIVERED: "b-ok", APPROVED: "b-ok", RECEIVED: "b-ok", POSTED: "b-ok", ACCEPTED: "b-ok", ACTIVE: "b-ok", Active: "b-ok", "Good stock": "b-ok",
   BOOKED: "b-wa", PICKING: "b-wa", READY_TO_DISPATCH: "b-wa", PARTIALLY_DISPATCHED: "b-wa", IN_TRANSIT: "b-wa", INSPECTION: "b-wa", QUOTED: "b-wa", PROOF_SENT: "b-wa", REQUESTED: "b-wa", Damaged: "b-wa",
@@ -35,10 +36,10 @@ export function Hold({ until, onExpire }: { until: string | null | undefined; on
 export const fmtMoney = money; export const fmtNum = num; export const fmtDT = fDT;
 
 export function ModalFrame({ title, children, actions, onClose }: { title: ReactNode; children: ReactNode; actions: ReactNode; onClose: () => void }) {
-  return <><div className="mh"><h3>{title}</h3><button className="b b-g b-s" onClick={onClose}>✕</button></div><div className="mbd">{children}</div><div className="ma">{actions}</div></>;
+  return <><div className="mh"><h3>{title}</h3><button className="b b-g b-s" onClick={onClose}><Icon n="x" s={13} /></button></div><div className="mbd">{children}</div><div className="ma">{actions}</div></>;
 }
 export function DrawerFrame({ head, children, actions, onClose }: { head: ReactNode; children: ReactNode; actions?: ReactNode; onClose: () => void }) {
-  return <><div className="drh">{head}<button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}>✕</button></div><div className="drb">{children}</div><div className="dra">{actions}<button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button></div></>;
+  return <><div className="drh">{head}<button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}><Icon n="x" s={13} /></button></div><div className="drb">{children}</div><div className="dra">{actions}<button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button></div></>;
 }
 export const Field = ({ label, children, hint, full }: { label: string; children: ReactNode; hint?: ReactNode; full?: boolean }) => <div className={"fd" + (full ? " f" : "")}><label>{label}</label>{children}{hint && <div className="hint">{hint}</div>}</div>;
 export const Note = ({ k, children, style }: { k?: "w" | "i" | "o"; children: ReactNode; style?: React.CSSProperties }) => <div className={"note " + (k ?? "")} style={style}>{children}</div>;
