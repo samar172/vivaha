@@ -29,8 +29,11 @@ import portalRoutes from "./modules/portal/portal.routes";
 export const app = express();
 app.set("trust proxy", 1);
 app.use(helmet());
-const origins = env.CORS_ORIGIN.split(",").map((s) => s.trim());
-app.use(cors({ origin: (origin, cb) => cb(null, !origin || origins.includes(origin) || origin.startsWith("http://localhost")), credentials: true }));
+const origins = env.CORS_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean);
+const VERCEL_HOST = /^https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app$/i;
+const allowOrigin = (origin?: string) =>
+  !origin || origins.includes(origin) || origin.startsWith("http://localhost") || (env.ALLOW_VERCEL_ORIGINS && VERCEL_HOST.test(origin));
+app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(morgan("dev"));

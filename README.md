@@ -62,4 +62,4 @@ packages/shared/src/            engine
 - WhatsApp delivery (invoice/statement/nudge buttons toast instead of sending)
 - Image upload for items (procedural artwork is used, `Item.imageUrl` is ready)
 - Physical stock count session (button is a stub; adjustments and transfers are real)
-- Deployment (mirror JMS: PM2 + tsx on the VM for the API, Vercel for web)
+- Frontend deployment — the API is live at `https://vivaha-api.98.70.37.83.nip.io`; Vercel setup is in [docs/DEPLOY.md](docs/DEPLOY.md)

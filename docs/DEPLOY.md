@@ -1,0 +1,87 @@
+# Deployment
+
+## Backend — Azure VM (`saangri`)
+
+Same box as the JMS and Saangri APIs, kept fully separate from them: its own
+directory, its own Postgres role and database, its own PM2 process, its own
+nginx vhost and certificate. Nothing about `jms` or `saangri` was modified.
+
+| | |
+|---|---|
+| Public URL | `https://vivaha-api.98.70.37.83.nip.io` |
+| Path on VM | `/opt/apps/vivaha` |
+| Internal port | `4004` (jms-api is 4002, saangri-api is 4000) |
+| PM2 process | `vivaha-api` (fork mode, `tsx` against `src/server.ts` — no build step) |
+| Database | local Postgres, db `vivaha`, owner role `vivaha` |
+| nginx | `/etc/nginx/sites-available/vivaha-api.98.70.37.83.nip.io` |
+| TLS | Let's Encrypt via certbot, auto-renewing, expires 2026-11-21 |
+
+Server env lives in `/opt/apps/vivaha/apps/api/.env` (chmod 600, never in git).
+`NODE_ENV=production` matters: it flips the refresh cookie to
+`Secure; SameSite=None`, without which a cross-origin frontend cannot stay
+signed in.
+
+### Redeploying the backend
+
+There is no build step, so a plain rsync of `src/` and `prisma/` is enough.
+
+```bash
+# 1. Dry run — confirm exactly what changes
+rsync -avn --delete -e ssh --exclude node_modules --exclude '.env*' \
+  apps/api/src/ saangri:/opt/apps/vivaha/apps/api/src/
+rsync -avn --delete -e ssh apps/api/prisma/ saangri:/opt/apps/vivaha/apps/api/prisma/
+
+# 2. Back up the database first, always
+ssh saangri "pg_dump \"\$(grep DATABASE_URL /opt/apps/vivaha/apps/api/.env | cut -d'\"' -f2)\" \
+  -F c -f /opt/apps/vivaha/backups/vivaha_\$(date +%Y%m%d_%H%M%S).dump"
+
+# 3. Sync for real (add packages/shared/ too if the engine changed)
+rsync -a -e ssh --exclude node_modules --exclude '.env*' apps/api/src/ saangri:/opt/apps/vivaha/apps/api/src/
+rsync -a -e ssh apps/api/prisma/ saangri:/opt/apps/vivaha/apps/api/prisma/
+rsync -a -e ssh --exclude node_modules packages/shared/ saangri:/opt/apps/vivaha/packages/shared/
+
+# 4. Migrate (check first; deploy is non-interactive and prod-safe)
+ssh saangri "cd /opt/apps/vivaha/apps/api && npx prisma migrate status"
+ssh saangri "cd /opt/apps/vivaha/apps/api && npx prisma migrate deploy && npx prisma generate"
+
+# 5. Restart and verify
+ssh saangri "pm2 restart vivaha-api && sleep 3 && pm2 show vivaha-api"
+curl https://vivaha-api.98.70.37.83.nip.io/health
+```
+
+Reseeding wipes and rebuilds the demo dataset — only run it deliberately:
+
+```bash
+ssh saangri "cd /opt/apps/vivaha/apps/api && npx tsx prisma/seed.ts"
+```
+
+## Frontend — Vercel
+
+Import the repo, then set these in the Vercel project:
+
+- **Root Directory**: `apps/web`
+- **Environment variable**: `API_PROXY_TARGET = https://vivaha-api.98.70.37.83.nip.io`
+
+`next.config.ts` rewrites `/api/*` to `API_PROXY_TARGET`, so the browser only
+ever talks to the Vercel origin. That keeps the refresh cookie first-party,
+which matters because Safari and Brave block third-party cookies by default —
+with direct cross-origin calls the session would silently die when the 30-minute
+access token expired.
+
+Do **not** set `NEXT_PUBLIC_API_URL`. It makes the browser call the API host
+directly, which is the third-party-cookie path described above. It exists for
+local experiments only.
+
+Deploy to a preview first (plain `vercel`), check it, then promote to production.
+
+### If you do point a browser straight at the API host
+
+`CORS_ORIGIN` in the server `.env` holds the allowed origins as a comma list,
+and `ALLOW_VERCEL_ORIGINS=true` additionally permits any `https://*.vercel.app`
+host so per-deployment preview URLs work without editing the server each time.
+After changing either, `ssh saangri "pm2 restart vivaha-api"`.
+
+## Demo credentials
+
+Office: `admin` / `demo123`.
+Portal: `sharma_wedding`, `rajputana_cards`, `golden_invites` — all `demo123`.
