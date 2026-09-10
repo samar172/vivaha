@@ -4,8 +4,10 @@ import { prisma, D, type Db } from "../../db";
 import * as stock from "../../services/stock";
 import { audit } from "../../services/audit";
 import { notify } from "../../services/notify";
-import { nextInvoiceNo } from "../../services/sequence";
+import { nextInvoiceNo, nextOrderNo } from "../../services/sequence";
 import { gateFor } from "../../services/credit";
+import { loadItemViews } from "../../services/items";
+import { pricerFor } from "../../services/pricing";
 import { getHomeState } from "../../services/settings";
 import { badRequest, notFound, forbidden } from "../../utils/httpError";
 
@@ -195,3 +197,132 @@ export async function cancel(o: OrderFull, actor: Actor, reason: string) {
 }
 
 export const flowIndex = (s: OrderStatus) => ORDER_FLOW.indexOf(s);
+
+// ── Office-raised orders ────────────────────────────────────────────────────
+// Most bookings arrive from the wholesale portal, but plenty do not: the firm
+// telephones, walks in, or hands a list to its sales executive. Those orders are
+// keyed here. The pricing, credit gate and stock hold are exactly the portal's —
+// only the entry point differs, so an assisted order cannot be priced or gated
+// on softer terms than a self-service one.
+
+export interface NewOrderLine { itemId: string; qty: number }
+export interface NewOrderInput { customerId: string; lines: NewOrderLine[]; requiredBy?: string; note?: string; overrideReason?: string }
+
+export interface QuoteLine {
+  itemId: string; sku: string; designNo: string | null; name: string; nameHi: string; lineId: string; uom: string;
+  artSeed: number; imageUrl: string | null; qty: number; moq: number; available: number;
+  rate: number; slabRate: number; mult: number; priceSrc: string; amount: number; gstPct: number; hsn: string;
+  short: boolean; belowMoq: boolean;
+}
+
+// Priced, stock-checked and credit-checked, but nothing is written. The modal
+// re-quotes on every change so the operator sees the real number — and the real
+// shortfall — before committing.
+export async function quoteOrder(input: { customerId: string; lines: NewOrderLine[] }) {
+  const customer = await prisma.customer.findUnique({ where: { id: input.customerId } });
+  if (!customer) throw notFound("Firm not found");
+  const wanted = input.lines.filter((l) => l.qty > 0);
+  const [price, homeState] = await Promise.all([pricerFor(customer), getHomeState()]);
+  const views = wanted.length ? await loadItemViews({ id: { in: wanted.map((l) => l.itemId) } }) : [];
+
+  const lines: QuoteLine[] = [];
+  for (const w of wanted) {
+    const it = views.find((v) => v.id === w.itemId);
+    if (!it) throw badRequest("Item not found");
+    const pr = price(it, w.qty);
+    lines.push({
+      itemId: it.id, sku: it.sku, designNo: it.designNo, name: it.name, nameHi: it.nameHi, lineId: it.lineId, uom: it.uom,
+      artSeed: it.artSeed, imageUrl: it.imageUrl, qty: w.qty, moq: it.moq, available: it.available,
+      rate: pr.rate, slabRate: pr.slab, mult: pr.mult, priceSrc: pr.src, amount: pr.rate * w.qty, gstPct: it.gstPct, hsn: it.hsn,
+      short: w.qty > it.available, belowMoq: w.qty < it.moq,
+    });
+  }
+  const totals = invoiceTotals(lines, customer.gstin, homeState);
+  const gate = await gateFor(customer, totals.total);
+  const lineIds = [...new Set(lines.map((l) => l.lineId))];
+  return {
+    customer: { id: customer.id, name: customer.name, contactName: customer.contactName, group: customer.group, gstin: customer.gstin, tehsil: customer.tehsil, blockReason: customer.blockReason, gateMode: customer.gateMode, linesEnabled: customer.linesEnabled as string[] },
+    lines, totals, gate, lineIds,
+  };
+}
+
+export async function createOrder(input: NewOrderInput, actor: Actor): Promise<OrderFull> {
+  const q = await quoteOrder(input);
+  if (!q.lines.length) throw badRequest("Add at least one item");
+  if (q.customer.blockReason) throw badRequest(`${q.customer.name} is blocked — ${q.customer.blockReason}`);
+
+  // One business line per order, the way a purchase invoice is one line: the
+  // hold window and the dispatch queue are both per line, so a mixed order
+  // would inherit whichever line happened to sort first.
+  if (q.lineIds.length > 1) throw badRequest("An order covers one business line — raise a separate order for the other line");
+  const short = q.lines.find((l) => l.short);
+  if (short) throw badRequest(`Only ${short.available.toLocaleString("en-IN")} of ${short.sku} available — reduce the quantity`);
+  const below = q.lines.find((l) => l.belowMoq);
+  if (below) throw badRequest(`${below.sku} has a minimum order of ${below.moq.toLocaleString("en-IN")}`);
+
+  // Same rule the approval screen applies: a BLOCK gate needs credit.override,
+  // and any restricted gate needs a reason on the record.
+  if (q.gate.restricted) {
+    if (q.customer.gateMode === "BLOCK" && !actor.perms.includes("credit.override")) throw forbidden(`${q.customer.name} is over its credit limit and gated BLOCK. Your role (${actor.role}) cannot override it — an Accounts Manager or Super Admin must raise this order.`);
+    if (!input.overrideReason?.trim()) throw badRequest("This firm is past its credit gate — a reason is required to book anyway");
+  }
+
+  const line = await prisma.businessLine.findUniqueOrThrow({ where: { id: q.lineIds[0] } });
+  const bookedBy = `${actor.name} (assisted)`;
+  const orderId = await prisma.$transaction(async (tx) => {
+    const id = await nextOrderNo(tx);
+    const gds = await tx.godown.findMany({ where: { isActive: true } });
+    const lineData = [];
+    for (const l of q.lines) {
+      // Deepest godown first, same split reserve() and the portal both use.
+      const avail = await Promise.all(gds.map(async (g) => ({ g: g.id, a: await stock.availGodown(tx, l.itemId, g.id) })));
+      avail.sort((a, b) => b.a - a.a);
+      const map: stock.GodownMap = {}; let need = l.qty;
+      for (const x of avail) { if (need <= 0) break; const take = Math.min(x.a, need); if (take > 0) { map[x.g] = take; need -= take; } }
+      if (need > 0) throw badRequest(`Stock moved while the order was being keyed — ${l.sku} is short by ${need}`);
+      const r = await stock.tryHold(tx, l.itemId, map, id, bookedBy);
+      if (!r.ok) throw badRequest(`Stock moved while the order was being keyed — re-check ${l.sku}`);
+      lineData.push({ itemId: l.itemId, lineId: l.lineId, qty: l.qty, rate: l.rate, slabRate: l.slabRate, mult: l.mult, priceSrc: l.priceSrc, amount: l.amount, gstPct: l.gstPct, hsn: l.hsn, alloc: map });
+    }
+    const why = input.note?.trim() ? `Booked at the office — ${input.note.trim()}` : "Booked at the office";
+    await tx.order.create({ data: {
+      id, customerId: q.customer.id, status: "BOOKED",
+      subtotal: q.totals.taxable, tax: q.totals.tax, total: q.totals.total,
+      requiredBy: input.requiredBy ? new Date(input.requiredBy) : new Date(Date.now() + 14 * 864e5),
+      holdUntil: new Date(Date.now() + line.holdMins * 60_000),
+      bookedBy, source: "office",
+      lines: { create: lineData },
+      events: { create: { from: null, to: "BOOKED", by: bookedBy, why } },
+    } });
+    await audit(tx, { userId: actor.id, actor: actor.name, action: "Order booked at the office", entityType: "Order", entityId: id, newValue: "₹" + q.totals.total.toFixed(2), reason: input.overrideReason?.trim() || input.note?.trim() || "" });
+    if (q.gate.restricted) await audit(tx, { userId: actor.id, actor: actor.name, action: "Order booked past the credit gate", entityType: "Customer", entityId: q.customer.name, oldValue: "Restricted", newValue: "Booked", reason: input.overrideReason!.trim() });
+    const text = `Order ${id} booked for ${q.customer.name} by ${actor.name} — ₹${q.totals.total.toLocaleString("en-IN")}${q.gate.restricted ? " · credit warning" : ""}`;
+    await notify(tx, { text, kind: q.gate.restricted ? "WARN" : "OK", role: "SALES_EXECUTIVE", link: `/orders?open=${id}` });
+    return id;
+  });
+  return getOrder(prisma, orderId);
+}
+
+// The item list the office picks from, priced for the firm that is buying —
+// the same rate the firm would have seen in its own portal, so a phoned-in
+// order and a self-service one quote alike.
+export async function orderCatalogue(customerId: string, lineId?: string, q?: string) {
+  const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+  if (!customer) throw notFound("Firm not found");
+  const price = await pricerFor(customer);
+  const where: Prisma.ItemWhereInput = {
+    status: "ACTIVE",
+    ...(lineId && lineId !== "ALL" ? { lineId } : {}),
+    ...(q ? { OR: [{ sku: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { designNo: { contains: q, mode: "insensitive" } }, { codes: { some: { code: { contains: q, mode: "insensitive" } } } }] } : {}),
+  };
+  const items = await loadItemViews(where);
+  return {
+    linesEnabled: customer.linesEnabled as string[],
+    items: items.map((i) => ({
+      id: i.id, sku: i.sku, designNo: i.designNo, name: i.name, nameHi: i.nameHi, lineId: i.lineId,
+      uom: i.uom, moq: i.moq, available: i.available, band: i.band, gstPct: i.gstPct,
+      artSeed: i.artSeed, imageUrl: i.imageUrl, code: i.code,
+      rate: price(i, i.moq).rate,
+    })),
+  };
+}

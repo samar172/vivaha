@@ -11,6 +11,7 @@ import { getCompany } from "../../services/settings";
 import * as svc from "./orders.service";
 
 const router = Router();
+const actor = (req: { user?: { id: string; name: string; role: string; perms: string[] } }) => req.user!;
 const TABS: Record<string, OrderStatus[] | null> = { all: null, approve: ["BOOKED"], active: ORDER_ACTIVE, shipped: ORDER_SHIPPED, closed: ORDER_CLOSED, dispatch: ORDER_DISPATCH_QUEUE };
 
 router.get("/", requirePerm("order.view"), asyncHandler(async (req, res) => {
@@ -29,13 +30,39 @@ router.get("/", requirePerm("order.view"), asyncHandler(async (req, res) => {
   res.json({ orders: rows.map((o) => ({ ...svc.serializeOrder(o), gate: gates[o.customer.id].gate })), counts });
 }));
 
+const newOrderBody = z.object({
+  customerId: z.string(),
+  lines: z.array(z.object({ itemId: z.string(), qty: z.number().int() })).default([]),
+  requiredBy: z.string().optional(),
+  note: z.string().optional(),
+  overrideReason: z.string().optional(),
+});
+
+// Priced preview for the office booking screen. Writes nothing — the modal
+// calls it on every change so the rate, the credit gate and any shortfall are
+// the server's answer, not the browser's guess.
+router.post("/quote", requirePerm("order.create"), asyncHandler(async (req, res) => {
+  const b = newOrderBody.parse(req.body);
+  res.json(await svc.quoteOrder({ customerId: b.customerId, lines: b.lines }));
+}));
+
+// The catalogue the office picks from, priced for the firm that is buying.
+router.get("/catalogue", requirePerm("order.create"), asyncHandler(async (req, res) => {
+  const q = z.object({ customerId: z.string(), line: z.string().optional(), q: z.string().optional() }).parse(req.query);
+  res.json(await svc.orderCatalogue(q.customerId, q.line, q.q));
+}));
+
+router.post("/", requirePerm("order.create"), asyncHandler(async (req, res) => {
+  const b = newOrderBody.parse(req.body);
+  const o = await svc.createOrder(b, actor(req));
+  res.status(201).json(svc.serializeOrder(o));
+}));
+
 router.get("/:id", requirePerm("order.view"), asyncHandler(async (req, res) => {
   const o = await svc.getOrder(prisma, req.params.id);
   const [gate, company] = await Promise.all([gateFor(o.customer, D(o.total)), getCompany()]);
   res.json({ ...svc.serializeOrder(o), gate, company });
 }));
-
-const actor = (req: { user?: { id: string; name: string; role: string; perms: string[] } }) => req.user!;
 
 router.post("/:id/approve", requirePerm("order.approve"), asyncHandler(async (req, res) => {
   const { reason } = z.object({ reason: z.string().optional() }).parse(req.body ?? {});

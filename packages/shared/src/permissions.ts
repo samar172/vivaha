@@ -25,7 +25,7 @@ export const PERMS = [
   "dash.view", "item.view", "item.edit", "purchase.view", "purchase.create",
   "stock.view", "stock.adjust", "stock.transfer",
   "cust.view", "cust.edit", "cust.price", "cust.block",
-  "order.view", "order.approve", "order.allocate", "order.pick", "order.dispatch",
+  "order.view", "order.create", "order.approve", "order.allocate", "order.pick", "order.dispatch",
   "return.view", "return.process", "ledger.view", "payment.create", "credit.override",
   "margin.override", "report.view", "audit.view", "settings.manage",
 ] as const;
@@ -34,7 +34,7 @@ export type Perm = (typeof PERMS)[number];
 export const DEFAULT_ROLE_PERMS: Record<Role, Perm[]> = {
   SUPER_ADMIN: [...PERMS],
   PURCHASE_MANAGER: ["dash.view", "item.view", "item.edit", "purchase.view", "purchase.create", "stock.view", "stock.transfer", "cust.view", "report.view"],
-  SALES_EXECUTIVE: ["dash.view", "item.view", "stock.view", "cust.view", "cust.edit", "order.view", "order.approve", "report.view"],
+  SALES_EXECUTIVE: ["dash.view", "item.view", "stock.view", "cust.view", "cust.edit", "order.view", "order.create", "order.approve", "report.view"],
   GODOWN_MANAGER: ["item.view", "stock.view", "stock.adjust", "stock.transfer", "order.view", "order.allocate", "order.pick", "return.view", "return.process"],
   DISPATCH_MANAGER: ["order.view", "order.pick", "order.dispatch", "stock.view"],
   ACCOUNTS_MANAGER: ["dash.view", "cust.view", "cust.block", "order.view", "ledger.view", "payment.create", "credit.override", "return.view", "report.view", "audit.view"],

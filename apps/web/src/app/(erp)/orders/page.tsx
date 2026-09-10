@@ -5,18 +5,20 @@ import { money, fDate, dueLbl, daysTo, orderProgress, ORDER_STATUS_LABEL, type O
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useUI, errMsg } from "@/lib/ui";
+import { useAuth } from "@/lib/auth-context";
 import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { Pill, LineChip, GateDot, Hold, Empty, Bar } from "@/components/ui";
 import { OrderDrawer, useOrderActions } from "@/components/OrderDrawer";
+import { NewOrderModal } from "@/components/NewOrderModal";
 import type { Order } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";
 
 const CLOSED = ["LAPSED", "REJECTED", "CANCELLED"];
 export default function OrdersPage() {
-  const { line } = useAppState(); const { data: lines } = useLines(); const { openDrawer, toast } = useUI(); const sp = useSearchParams(); const A = useOrderActions();
+  const { line } = useAppState(); const { data: lines } = useLines(); const { openDrawer, openModal, toast } = useUI(); const { can } = useAuth(); const sp = useSearchParams(); const A = useOrderActions();
   const [tab, setTab] = useState(() => sp.get("tab") ?? "approve"); const [q, setQ] = useState(""); const [sel, setSel] = useState<Set<string>>(new Set()); const [sort, setSort] = useState<{ k: string; d: 1 | -1 } | null>(null);
   // The dashboard links straight into a stage, e.g. /orders?tab=active&status=PICKING.
   const [status, setStatus] = useState<string | null>(() => sp.get("status"));
@@ -31,7 +33,7 @@ export default function OrdersPage() {
   const bulk = async () => { try { const r = await post<{ approved: number; skipped: number }>("/api/orders/bulk-approve", { ids: [...sel] }); toast(`${r.approved} approved${r.skipped ? ` · ${r.skipped} skipped, credit gate not green — open individually` : ""}`, r.skipped ? "w" : "s"); setSel(new Set()); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   const sortBy = (k: string) => setSort((s) => ({ k, d: s?.k === k && s.d === 1 ? -1 : 1 })); const ic = (k: string) => sort?.k === k ? (sort.d === 1 ? " ↑" : " ↓") : "";
   return <>
-    <PageHead crumb={["Sales", "Orders"]} title="Orders" sub="Booking → approval → reservation → allocation → pick → pack → dispatch. Lapsed holds keep the intent; partial dispatch creates a backorder." actions={<button className="b b-o" onClick={() => exportCsv("orders", ["Order", "Firm", "Status", "Lines", "Taxable", "Tax", "Total", "Required by", "Created"], rows.map((o) => [o.id, o.customer.name, o.status, o.lines.length, o.subtotal, o.tax, o.total, fDate(o.requiredBy), fDate(o.createdAt)]))}><Icon n="download" s={13} /> Export</button>}
+    <PageHead crumb={["Sales", "Orders"]} title="Orders" sub="Booking → approval → reservation → allocation → pick → pack → dispatch. Lapsed holds keep the intent; partial dispatch creates a backorder." actions={<><button className="b b-o" onClick={() => exportCsv("orders", ["Order", "Firm", "Status", "Lines", "Taxable", "Tax", "Total", "Required by", "Created"], rows.map((o) => [o.id, o.customer.name, o.status, o.lines.length, o.subtotal, o.tax, o.total, fDate(o.requiredBy), fDate(o.createdAt)]))}><Icon n="download" s={13} /> Export</button>{can("order.create") && <button className="b b-p" onClick={() => openModal(<NewOrderModal />, "w")}>+ New order</button>}</>}
       tabs={[{ k: "approve", l: "Awaiting approval", n: cnt.approve }, { k: "active", l: "In fulfilment", n: cnt.active }, { k: "shipped", l: "Shipped", n: cnt.shipped }, { k: "closed", l: "Closed", n: cnt.closed }, { k: "all", l: "All", n: cnt.all }]} tab={tab} onTab={(k) => { setTab(k); setStatus(null); setSel(new Set()); }} />
     <div className={"bulk" + (sel.size ? " on" : "")}>{sel.size ? <>{sel.size} selected · <button className="b b-o b-s" onClick={bulk}>Approve green only</button> <button className="b b-g b-s" onClick={() => setSel(new Set())}>Clear</button></> : null}</div>
     <div className="wa">
