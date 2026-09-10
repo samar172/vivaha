@@ -10,7 +10,9 @@ router.get("/", asyncHandler(async (req, res) => {
   if (q.length < 2) return res.json({ orders: [], items: [], customers: [] });
   const [orders, items, customers] = await Promise.all([
     prisma.order.findMany({ where: { OR: [{ id: { contains: q, mode: "insensitive" } }, { customer: { name: { contains: q, mode: "insensitive" } } }] }, include: { customer: { select: { name: true } } }, take: 5, orderBy: { createdAt: "desc" } }),
-    prisma.item.findMany({ where: { OR: [{ sku: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { designNo: { contains: q, mode: "insensitive" } }] }, take: 5 }),
+    // Codes are searchable too — scanning a carton into ⌘K finds the item even
+    // when the label on it is the manufacturer's, long since replaced.
+    prisma.item.findMany({ where: { OR: [{ sku: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { designNo: { contains: q, mode: "insensitive" } }, { codes: { some: { code: { contains: q, mode: "insensitive" } } } }] }, take: 5 }),
     prisma.customer.findMany({ where: { OR: [{ name: { contains: q, mode: "insensitive" } }, { contactName: { contains: q, mode: "insensitive" } }, { tehsil: { contains: q, mode: "insensitive" } }] }, take: 5 }),
   ]);
   const g = await gatesForAll(customers);

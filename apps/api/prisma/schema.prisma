@@ -24,6 +24,40 @@ enum Role {
   CUSTOMER
 }
 
+// Goods arrive carrying the manufacturer's own QR label. The office re-labels
+// them with its own code, but the manufacturer code is never destroyed: a scan
+// of the old label still resolves, so a vendor claim or a recall can always be
+// traced back. One item has many codes; exactly one of them is ACTIVE + OWN.
+enum CodeKind {
+  MANUFACTURER
+  OWN
+}
+
+enum CodeStatus {
+  ACTIVE
+  REPLACED
+}
+
+model ItemCode {
+  id           String     @id @default(cuid())
+  code         String     @unique
+  itemId       String
+  item         Item       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  kind         CodeKind
+  status       CodeStatus @default(ACTIVE)
+  vendorId     String?
+  vendor       Vendor?    @relation(fields: [vendorId], references: [id])
+  note         String?
+  replacedById String?    @unique
+  replacedBy   ItemCode?  @relation("Replacement", fields: [replacedById], references: [id])
+  replaces     ItemCode?  @relation("Replacement")
+  by           String
+  createdAt    DateTime   @default(now())
+  replacedAt   DateTime?
+
+  @@index([itemId, status])
+}
+
 model User {
   id               String    @id @default(cuid())
   username         String    @unique
@@ -37,6 +71,11 @@ model User {
   authority        String?   // Owner | Staff — portal contact authority
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
+  // Set when the office issues or resets a password. The holder is forced to
+  // replace it before the session can be used for anything else.
+  mustChangePassword Boolean @default(false)
+  passwordSetAt      DateTime?
+  lastLoginAt        DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -195,6 +234,7 @@ model Vendor {
   items     Item[]
   purchases Purchase[]
   payments  VendorPayment[]
+  itemCodes ItemCode[]
 }
 
 model PricingGroup {
@@ -235,6 +275,7 @@ model Item {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
+  codes         ItemCode[]
   slabs         PriceSlab[]
   balances      StockBalance[]
   txns          StockTxn[]
@@ -430,6 +471,9 @@ model PurchaseLine {
   alloc      Json     @default("{}") // { godownId: qty }
   batchNo    String?
   expiry     DateTime?
+  // The label the goods physically arrived carrying. Kept on the document so a
+  // claim can be tied to the exact consignment, and registered as an ItemCode.
+  mfrCode    String?
 }
 
 model VendorPayment {

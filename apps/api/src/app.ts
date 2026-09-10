@@ -23,6 +23,7 @@ import auditRoutes from "./modules/audit/audit.routes";
 import notificationsRoutes from "./modules/notifications/notifications.routes";
 import settingsRoutes from "./modules/settings/settings.routes";
 import searchRoutes from "./modules/search/search.routes";
+import codesRoutes from "./modules/codes/codes.routes";
 import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import portalRoutes from "./modules/portal/portal.routes";
 
@@ -34,6 +35,9 @@ const VERCEL_HOST = /^https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app$/i;
 const allowOrigin = (origin?: string) =>
   !origin || origins.includes(origin) || origin.startsWith("http://localhost") || (env.ALLOW_VERCEL_ORIGINS && VERCEL_HOST.test(origin));
 app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credentials: true }));
+// A full-database restore is a whole business in one payload, so it gets its
+// own ceiling; everything else stays on the tight limit.
+app.use("/api/settings/restore", express.json({ limit: "128mb" }));
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(morgan("dev"));
@@ -56,6 +60,7 @@ app.use("/api/reports", ...internal, reportsRoutes);
 app.use("/api/audit-logs", ...internal, auditRoutes);
 app.use("/api/notifications", ...internal, notificationsRoutes);
 app.use("/api/settings", ...internal, settingsRoutes);
+app.use("/api/codes", ...internal, codesRoutes);
 app.use("/api/search", ...internal, searchRoutes);
 app.use("/api/dashboard", ...internal, dashboardRoutes);
 app.use("/api/portal", requireAuth, requireCustomer, portalRoutes);

@@ -79,7 +79,7 @@ const USERS = [
 ] as const;
 
 async function reset() {
-  const tables = ["StockoutSearch", "Referral", "Ad", "Cart", "Kit", "KitVersionItem", "KitVersion", "JobWork", "ReturnRequest", "Payment", "LedgerEntry", "InvoiceLine", "Invoice", "Dispatch", "OrderEvent", "OrderLine", "Order", "Transfer", "VendorPayment", "PurchaseLine", "Purchase", "StockTxn", "StockBalance", "PriceOverride", "CustomerMachine", "CustomerContact", "NotificationRead", "Notification", "AuditLog", "User", "Customer", "PriceSlab", "Item", "AttributeDef", "Vendor", "Godown", "PricingGroup", "BusinessLine", "RolePermission", "Sequence", "Setting"];
+  const tables = ["StockoutSearch", "Referral", "Ad", "Cart", "Kit", "KitVersionItem", "KitVersion", "JobWork", "ReturnRequest", "Payment", "LedgerEntry", "InvoiceLine", "Invoice", "Dispatch", "OrderEvent", "OrderLine", "Order", "Transfer", "VendorPayment", "PurchaseLine", "Purchase", "StockTxn", "StockBalance", "PriceOverride", "CustomerMachine", "CustomerContact", "NotificationRead", "Notification", "AuditLog", "User", "Customer", "ItemCode", "PriceSlab", "Item", "AttributeDef", "Vendor", "Godown", "PricingGroup", "BusinessLine", "RolePermission", "Sequence", "Setting"];
   for (const t of tables) await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${t}" CASCADE`);
 }
 
@@ -103,6 +103,25 @@ async function main() {
   for (const it of makeItems()) await prisma.item.create({ data: it });
   const items = await prisma.item.findMany({ include: { slabs: true, line: true }, orderBy: { id: "asc" } });
   const item = (id: string) => items.find((i) => i.id === id)!;
+
+  // Goods land carrying the manufacturer's label. The office has worked through
+  // most of the catalogue re-labelling with its own code; the rest are still on
+  // the factory code and show up on the Inventory screen as needing a label.
+  const ownCode = (i: { designNo: string | null; sku: string }) => "VC-" + (i.designNo || i.sku).replace(/[^A-Za-z0-9]+/g, "-").toUpperCase();
+  const vendorPrefix: Record<string, string> = { "VND-01": "SGP", "VND-02": "RCH", "VND-03": "MPM", "VND-04": "OSP", "VND-05": "SIC", "VND-06": "NPS", "VND-07": "MSS" };
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const pre = vendorPrefix[it.vendorId ?? "VND-01"] ?? "MFR";
+    const mfr = await prisma.itemCode.create({
+      data: { code: `${pre}-${4100 + i * 13}`, itemId: it.id, kind: "MANUFACTURER", status: "ACTIVE", vendorId: it.vendorId, by: "Goods receipt", note: "Label as received from the vendor" },
+    });
+    // Every fourth item is still waiting to be re-labelled.
+    if (i % 4 === 3) continue;
+    const own = await prisma.itemCode.create({
+      data: { code: ownCode(it), itemId: it.id, kind: "OWN", status: "ACTIVE", by: "Samar Iqbal" },
+    });
+    await prisma.itemCode.update({ where: { id: mfr.id }, data: { status: "REPLACED", replacedById: own.id, replacedAt: daysAgo(40 - (i % 30)) } });
+  }
 
   const users: Record<string, { id: string; name: string }> = {};
   for (const [username, role, name, initials, isActive] of USERS) users[username] = await prisma.user.create({ data: { username, passwordHash: hash, name, initials, role, isActive } });

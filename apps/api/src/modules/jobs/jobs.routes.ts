@@ -57,9 +57,25 @@ router.post("/:id/status", requirePerm("order.view"), asyncHandler(async (req, r
   await prisma.$transaction(async (tx) => {
     if (to === "PRINTING") {
       // Base cards are drawn through a normal outward movement (qty + wastage).
+      // A print run routinely needs more than any one godown holds, so draw from
+      // the deepest first — the same split reserve() uses — unless the floor
+      // names a godown, in which case that one has to cover the whole run.
       const c = costing(j as never);
-      const gd = godownId ?? (await tx.godown.findFirst({ where: { isActive: true } }))!.id;
-      await stock.issue(tx, j.baseItemId, gd, c.baseCards, j.id, req.user!.name, "JOB_ISSUE");
+      if (godownId) {
+        await stock.issue(tx, j.baseItemId, godownId, c.baseCards, j.id, req.user!.name, "JOB_ISSUE");
+      } else {
+        const gds = await tx.godown.findMany({ where: { isActive: true } });
+        const avail = await Promise.all(gds.map(async (g) => ({ g: g.id, a: await stock.availGodown(tx, j.baseItemId, g.id) })));
+        avail.sort((x, y) => y.a - x.a);
+        const total = avail.reduce((s, x) => s + x.a, 0);
+        if (total < c.baseCards) throw badRequest(`${j.baseItem.sku}: ${c.baseCards} base cards needed for this run, only ${total} available across all godowns`);
+        let left = c.baseCards;
+        for (const x of avail) {
+          if (left <= 0) break;
+          const take = Math.min(x.a, left);
+          if (take > 0) { await stock.issue(tx, j.baseItemId, x.g, take, j.id, req.user!.name, "JOB_ISSUE"); left -= take; }
+        }
+      }
     }
     await tx.jobWork.update({ where: { id: j.id }, data: { status: to, ...(to === "APPROVED_PROOF" ? { approvedAt: new Date() } : {}), ...(to === "PROOF_SENT" ? { proofs: { increment: 1 } } : {}) } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Job " + to.toLowerCase().replace(/_/g, " "), entityType: "Job", entityId: j.id, oldValue: j.status, newValue: to });

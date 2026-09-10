@@ -78,7 +78,13 @@ router.get("/scan", asyncHandler(async (req, res) => {
   let items = await loadItemViews({ status: "ACTIVE", lineId: { in: c.linesEnabled as string[] } });
   if (q === "__random__") { const lineId = String(req.query.line || (c.linesEnabled as string[])[0]); const pool = items.filter((i) => i.lineId === lineId); items = pool.length ? [pool[Math.floor(Math.random() * pool.length)]] : []; }
   else if (q.length < 2) items = [];
-  else items = items.filter((i) => (i.sku + (i.designNo || "") + i.name + i.nameHi).toLowerCase().includes(q)).slice(0, 5);
+  else {
+    // A retailer scanning a carton may read either label — the code we print or
+    // the manufacturer's, which we keep on file precisely so this still works.
+    const byCode = await prisma.itemCode.findMany({ where: { code: { contains: q, mode: "insensitive" } }, select: { itemId: true } });
+    const codeHits = new Set(byCode.map((x) => x.itemId));
+    items = items.filter((i) => codeHits.has(i.id) || (i.sku + (i.designNo || "") + i.name + i.nameHi).toLowerCase().includes(q)).slice(0, 5);
+  }
   res.json(items.map((i) => pub(i, price(i, i.moq).rate)));
 }));
 

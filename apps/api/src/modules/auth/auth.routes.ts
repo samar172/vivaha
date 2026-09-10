@@ -33,6 +33,13 @@ router.post("/logout", (_req, res) => { res.clearCookie(svc.REFRESH_COOKIE_NAME,
 
 router.get("/me", requireAuth, asyncHandler(async (req, res) => res.json(await svc.me(req.user!.id))));
 
+const pwSchema = z.object({ currentPassword: z.string().min(1, "Enter your current password"), newPassword: z.string().min(8, "Use at least 8 characters") });
+router.post("/change-password", requireAuth, asyncHandler(async (req, res) => {
+  const b = pwSchema.parse(req.body);
+  await svc.changePassword(req.user!.id, b.currentPassword, b.newPassword);
+  res.json({ ok: true });
+}));
+
 // Demo helper for the login screen's role/firm pickers (names only — no secrets).
 router.get("/demo-logins", asyncHandler(async (_req, res) => {
   const users = await prisma.user.findMany({ where: { isActive: true }, include: { customer: { select: { name: true, group: true, tehsil: true } } }, orderBy: { createdAt: "asc" } });
