@@ -19,8 +19,9 @@ npm run db:seed               # demo data identical to the mock
 npm run dev:api               # http://localhost:4100
 npm run dev:web               # http://localhost:3100 (second terminal)
 ```
-Demo logins (password `demo123`): `admin`, `samar.purchase`, `khadija.sales`, `devendra.godown`,
-`farhan.dispatch`, `rahin.accounts`. Portal (Customer tab): `sharma_wedding`, `rajputana_cards`, `golden_invites`.
+Demo logins (password `demo123`): office `admin`. Portal (Customer tab): `sharma_wedding`,
+`rajputana_cards`, `golden_invites`. The other staff users exist but are seeded inactive, so the
+login picker shows one internal user — see [docs/SESSION-LOG.md](docs/SESSION-LOG.md).
 
 ## What's implemented (everything in the mock)
 **Engine** — five-bucket stock (on hand / reserved / hold / damaged / quarantined) computed live, FEFO for batch items;
@@ -63,3 +64,9 @@ packages/shared/src/            engine
 - Image upload for items (procedural artwork is used, `Item.imageUrl` is ready)
 - Physical stock count session (button is a stub; adjustments and transfers are real)
 - Frontend deployment — the API is live at `https://vivaha-api.98.70.37.83.nip.io`; Vercel setup is in [docs/DEPLOY.md](docs/DEPLOY.md)
+
+## Docs
+
+- [docs/PLAN.md](docs/PLAN.md) — the original build plan
+- [docs/DEPLOY.md](docs/DEPLOY.md) — deploy/redeploy runbook for API and web
+- [docs/SESSION-LOG.md](docs/SESSION-LOG.md) — what changed each session, and why

@@ -47,8 +47,10 @@ rsync -avn --delete -e ssh --exclude node_modules --exclude '.env*' \
 rsync -avn --delete -e ssh apps/api/prisma/ saangri:/opt/apps/vivaha/apps/api/prisma/
 
 # 2. Back up first, always
-ssh saangri "pg_dump \"\$(grep DATABASE_URL /opt/apps/vivaha/apps/api/.env | cut -d'\"' -f2)\" \
-  -F c -f /opt/apps/vivaha/backups/vivaha_\$(date +%Y%m%d_%H%M%S).dump"
+# DATABASE_URL carries ?schema=public, which pg_dump rejects outright
+# ("invalid URI query parameter"), so the query string is stripped first.
+ssh saangri 'U=$(grep DATABASE_URL /opt/apps/vivaha/apps/api/.env | cut -d\" -f2 | sed "s/?.*//"); \
+  pg_dump "$U" -F c -f /opt/apps/vivaha/backups/vivaha_$(date +%Y%m%d_%H%M%S).dump'
 
 # 3. Sync for real
 rsync -a -e ssh --exclude node_modules --exclude '.env*' apps/api/src/ saangri:/opt/apps/vivaha/apps/api/src/
