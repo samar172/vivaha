@@ -3,8 +3,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import type { Perm, Role } from "@vivaha/shared";
 import { apiFetch, setAccessToken, setUnauthorizedHandler, refreshAccessToken, ApiError } from "./api";
 
-export interface SessionUser { id: string; username: string; name: string; initials: string; role: Role; customerId: string | null; customerName?: string | null; authority?: string | null; perms: string[] }
-interface Ctx { user: SessionUser | null; loading: boolean; login: (username: string, password: string, kind: "internal" | "customer") => Promise<SessionUser>; logout: () => Promise<void>; can: (p: Perm) => boolean }
+export interface SessionUser { id: string; username: string; name: string; initials: string; role: Role; customerId: string | null; customerName?: string | null; authority?: string | null; perms: string[]; mustChangePassword?: boolean }
+interface Ctx { user: SessionUser | null; loading: boolean; login: (username: string, password: string, kind: "internal" | "customer") => Promise<SessionUser>; logout: () => Promise<void>; can: (p: Perm) => boolean; reloadUser: () => Promise<void> }
 const AuthContext = createContext<Ctx | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -21,6 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, []);
   const can = (p: Perm) => !!user && user.perms.includes(p);
-  return <AuthContext.Provider value={{ user, loading, login, logout, can }}>{children}</AuthContext.Provider>;
+  const reloadUser = async () => { setUser(await apiFetch<SessionUser>("/api/auth/me")); };
+  return <AuthContext.Provider value={{ user, loading, login, logout, can, reloadUser }}>{children}</AuthContext.Provider>;
 }
 export function useAuth() { const c = useContext(AuthContext); if (!c) throw new Error("useAuth outside AuthProvider"); return c; }

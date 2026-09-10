@@ -6,7 +6,9 @@ import { useAuth } from "@/lib/auth-context";
 import { useAppState } from "@/lib/app-state";
 import { useApi, useGodowns, useLines } from "@/lib/hooks";
 import { post } from "@/lib/api";
-import { useUI } from "@/lib/ui";
+import { useUI, errMsg } from "@/lib/ui";
+import { Section, Field, Note } from "./ui";
+import { FirstLoginGate } from "./FirstLogin";
 import { money, num, fDT, type Perm } from "@vivaha/shared";
 import { ROLE_LABELS } from "@vivaha/shared";
 import { Icon, KIND_ICON, type IconName } from "./icons";
@@ -41,7 +43,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const { user, loading, logout, can } = useAuth(); const router = useRouter(); const pathname = usePathname();
   const { line, setLine, godown, setGodown, sbCol, toggleSb } = useAppState();
   const { data: lines } = useLines(); const { data: godowns } = useGodowns();
-  const [mob, setMob] = useState(false); const [nt, setNt] = useState(false); const [pal, setPal] = useState<string | null>(null);
+  const [mob, setMob] = useState(false); const [nt, setNt] = useState(false); const [pal, setPal] = useState<string | null>(null); const [prof, setProf] = useState(false);
   const [foot, setFootS] = useState<FootState>({ count: null, filter: "", page: 1, pages: 1, setPage: () => {} });
   const { data: notifs, mutate: mutNotifs } = useApi<{ notifications: { id: string; text: string; kind: string; isRead: boolean; createdAt: string; link: string | null }[]; unread: number }>(user && user.role !== "CUSTOMER" ? "/api/notifications" : null, { refreshInterval: 20000 });
   const { data: counts } = useApi<{ counts: Record<string, number> }>(user && can("order.view") ? "/api/orders?tab=approve" : null, { refreshInterval: 30000 });
@@ -53,6 +55,7 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => { const h = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPal(""); } else if (e.key === "Escape") { setPal(null); setNt(false); } else if (e.key === "[" && !/input|textarea|select/i.test((document.activeElement as HTMLElement)?.tagName)) toggleSb(); else if (e.key === "/" && !/input|textarea|select/i.test((document.activeElement as HTMLElement)?.tagName)) { const f = document.querySelector<HTMLInputElement>(".tsr input"); if (f) { e.preventDefault(); f.focus(); } } }; document.addEventListener("keydown", h); return () => document.removeEventListener("keydown", h); }, [toggleSb]);
   const ctx = useMemo(() => ({ foot, set: (s: Partial<FootState>) => setFootS((f) => ({ ...f, ...s })) }), [foot]);
   if (loading || !user) return <div className="loading">Loading…</div>;
+  if (user.mustChangePassword) return <FirstLoginGate />;
   const navCount = (k: string) => k === "orders" ? counts?.counts.approve || null : k === "dispatch" ? counts?.counts.dispatch || null : k === "returns" ? rets?.filter((r) => r.status !== "ACCEPTED" && r.status !== "REJECTED").length || null : k === "jobs" ? jobs?.filter((j) => j.status !== "DELIVERED").length || null : null;
   const gdLabel = godown === "ALL" ? "All godowns" : godowns?.find((g) => g.id === godown)?.name ?? godown;
   return (
@@ -67,7 +70,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <button className="gsr" onClick={() => setPal("")}><Icon n="search" s={13} /><span className="lbl">Search orders, customers, SKUs…</span><kbd>⌘K</kbd></button>
           <button className="gi" onClick={() => setNt((v) => !v)} title="Notifications"><Icon n="bell" s={16} />{!!notifs?.unread && <span className="bg">{notifs.unread}</span>}</button>
           <div className="rch"><Icon n="user" s={13} /><span>{ROLE_LABELS[user.role]}</span></div>
-          <button className="av" onClick={() => logout().then(() => router.replace("/login"))} title="Sign out">{user.initials}</button>
+          <button className="av" onClick={() => setProf(true)} title={`${user.name} — profile and password`}>{user.initials}</button>
         </div>
         <div className="shell">
           <aside className={"sb" + (sbCol ? " col" : "") + (mob ? " mob" : "")}>
@@ -84,14 +87,58 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="pg"><button className="pb" onClick={() => foot.setPage(Math.max(1, foot.page - 1))}>Prev</button><span>Page {foot.page} of {foot.pages}</span><button className="pb" onClick={() => foot.setPage(Math.min(foot.pages, foot.page + 1))}>Next</button></div>
         </footer>
       </div>
-      <div className={"ov" + (nt ? " on" : "")} onClick={() => setNt(false)} />
+      <div className={"ov" + (nt || prof ? " on" : "")} onClick={() => { setNt(false); setProf(false); }} />
       <div className={"dr" + (nt ? " on" : "")} style={{ width: 370 }}>
-        <div className="drh"><strong style={{ fontSize: 13 }}>Notifications</strong><button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={() => post("/api/notifications/read-all").then(() => mutNotifs())}>Mark all read</button><button className="b b-g b-s" onClick={() => setNt(false)}><Icon n="x" s={13} /></button></div>
-        <div className="drb">{notifs?.notifications.length ? notifs.notifications.map((n) => <div className="ds" key={n.id} style={{ opacity: n.isRead ? .55 : 1, cursor: n.link ? "pointer" : "default" }} onClick={() => { post(`/api/notifications/${n.id}/read`).then(() => mutNotifs()); if (n.link) { setNt(false); router.push(n.link); } }}><div style={{ display: "flex", gap: 9 }}><span style={{ color: `var(--${({ WARN: "wa", OK: "ok", ERR: "er", INFO: "in" } as Record<string, string>)[n.kind]})`, marginTop: 2 }}><Icon n={KIND_ICON[n.kind] ?? "info"} s={14} /></span><div><div style={{ fontSize: 12, lineHeight: 1.5 }}>{n.text}</div><div className="sm" style={{ marginTop: 3 }}>{fDT(n.createdAt)}</div></div></div></div>) : <div className="empty"><div className="t">Nothing new</div><div className="d">You are all caught up.</div></div>}</div>
+        <div className="drh"><strong style={{ fontSize: 14.5 }}>Notifications</strong><button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={() => post("/api/notifications/read-all").then(() => mutNotifs())}>Mark all read</button><button className="b b-g b-s" onClick={() => setNt(false)}><Icon n="x" s={13} /></button></div>
+        <div className="drb">{notifs?.notifications.length ? notifs.notifications.map((n) => <div className="ds" key={n.id} style={{ opacity: n.isRead ? .55 : 1, cursor: n.link ? "pointer" : "default" }} onClick={() => { post(`/api/notifications/${n.id}/read`).then(() => mutNotifs()); if (n.link) { setNt(false); router.push(n.link); } }}><div style={{ display: "flex", gap: 9 }}><span style={{ color: `var(--${({ WARN: "wa", OK: "ok", ERR: "er", INFO: "in" } as Record<string, string>)[n.kind]})`, marginTop: 2 }}><Icon n={KIND_ICON[n.kind] ?? "info"} s={14} /></span><div><div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{n.text}</div><div className="sm" style={{ marginTop: 3 }}>{fDT(n.createdAt)}</div></div></div></div>) : <div className="empty"><div className="t">Nothing new</div><div className="d">You are all caught up.</div></div>}</div>
+      </div>
+      <div className={"dr" + (prof ? " on" : "")} style={{ width: 400 }}>
+        {prof && <ProfileDrawer onClose={() => setProf(false)} onSignOut={() => logout().then(() => router.replace("/login"))} />}
       </div>
       {pal !== null && <Palette initial={pal} onClose={() => setPal(null)} setGodown={(g) => { setGodown(g); setPal(null); }} godowns={godowns ?? []} />}
     </FootCtx.Provider>
   );
+}
+
+function ProfileDrawer({ onClose, onSignOut }: { onClose: () => void; onSignOut: () => void }) {
+  const { user } = useAuth(); const { toast } = useUI();
+  const [f, setF] = useState({ currentPassword: "", newPassword: "", confirm: "" });
+  const [busy, setBusy] = useState(false);
+  if (!user) return null;
+  const save = async () => {
+    if (f.newPassword.length < 8) return toast("The new password needs at least 8 characters", "e");
+    if (f.newPassword !== f.confirm) return toast("The two new-password fields do not match", "e");
+    setBusy(true);
+    try {
+      await post("/api/auth/change-password", { currentPassword: f.currentPassword, newPassword: f.newPassword });
+      toast("Password changed — it applies the next time you sign in", "s");
+      setF({ currentPassword: "", newPassword: "", confirm: "" });
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+  const row = (k: string, v: ReactNode) => <div className="df" key={k}><span className="k">{k}</span><span className="v">{v}</span></div>;
+  return <>
+    <div className="drh"><strong style={{ fontSize: 14.5 }}>Your profile</strong><button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}><Icon n="x" s={13} /></button></div>
+    <div className="drb">
+      <Section t="Account">
+        {row("Name", user.name)}
+        {row("Username", <span className="m">{user.username}</span>)}
+        {row("Role", ROLE_LABELS[user.role])}
+        {row("Capabilities", `${user.perms.length} of 26 permissions`)}
+      </Section>
+      <Section t="Change password">
+        <Note k="w" style={{ marginBottom: 11 }}>Your account was handed over with a shared default password. Change it to something only you know — the office cannot see it, and it is recorded in the audit log.</Note>
+        <div className="fg">
+          <Field label="Current password" full><input type="password" autoComplete="current-password" value={f.currentPassword} onChange={(e) => setF({ ...f, currentPassword: e.target.value })} /></Field>
+          <Field label="New password (at least 8 characters)" full><input type="password" autoComplete="new-password" value={f.newPassword} onChange={(e) => setF({ ...f, newPassword: e.target.value })} /></Field>
+          <Field label="Repeat new password" full><input type="password" autoComplete="new-password" value={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.value })} /></Field>
+        </div>
+        <button className="b b-p" style={{ marginTop: 12 }} disabled={busy || !f.currentPassword || !f.newPassword} onClick={save}>{busy ? "Saving…" : "Change password"}</button>
+      </Section>
+      <Section t="Session">
+        <button className="b b-d" onClick={onSignOut}>Sign out</button>
+      </Section>
+    </div>
+  </>;
 }
 
 function Palette({ initial, onClose, setGodown, godowns }: { initial: string; onClose: () => void; setGodown: (g: string) => void; godowns: { id: string; name: string }[] }) {
