@@ -17,7 +17,7 @@ export const NAV: { g: string; items: { k: string; l: string; i: IconName; perm:
   { g: "Overview", items: [{ k: "dashboard", l: "Dashboard", i: "grid", perm: "dash.view" }] },
   { g: "Catalogue", items: [{ k: "items", l: "Items & Rates", i: "tag", perm: "item.view" }] },
   { g: "Supply", items: [{ k: "purchase", l: "Purchase & GRN", i: "inbox", perm: "purchase.view" }, { k: "stock", l: "Inventory", i: "warehouse", perm: "stock.view" }] },
-  { g: "Sales", items: [{ k: "customers", l: "Customers", i: "users", perm: "cust.view" }, { k: "orders", l: "Orders", i: "receipt", perm: "order.view" }, { k: "dispatch", l: "Dispatch", i: "truck", perm: "order.dispatch" }, { k: "jobs", l: "Job Work", i: "printer", perm: "order.view" }, { k: "returns", l: "Returns", i: "undo", perm: "return.view" }] },
+  { g: "Sales", items: [{ k: "customers", l: "Customers", i: "users", perm: "cust.view" }, { k: "orders", l: "Orders", i: "receipt", perm: "order.view" }, { k: "dispatch", l: "Dispatch", i: "truck", perm: "order.dispatch" }, { k: "jobs", l: "Job Work", i: "printer", perm: "order.view" }, { k: "cart-recovery", l: "Cart Recovery", i: "inbox", perm: "order.create" }, { k: "returns", l: "Returns", i: "undo", perm: "return.view" }] },
   { g: "Finance", items: [{ k: "invoices", l: "Invoices", i: "receipt", perm: "ledger.view" }, { k: "accounts", l: "Ledger & GST", i: "rupee", perm: "ledger.view" }] },
   { g: "Insight", items: [{ k: "reports", l: "Reports", i: "chart", perm: "report.view" }, { k: "audit", l: "Audit Log", i: "history", perm: "audit.view" }] },
   { g: "System", items: [{ k: "banners", l: "Banners", i: "tag", perm: "settings.manage" }, { k: "settings", l: "Settings", i: "sliders", perm: "settings.manage" }] },

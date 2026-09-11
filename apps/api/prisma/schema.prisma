@@ -408,6 +408,7 @@ model Customer {
   kit        Kit?
   cart       Cart?
   referrals  Referral[]
+  recoveries CartRecovery[]
   stockoutHits StockoutSearch[]
 }
 
@@ -885,6 +886,30 @@ model Kit {
   issuedAt     DateTime
   lastScanAt   DateTime?
   session      Json?      // { scans: string[], last, startedAt, pending }
+}
+
+// Chasing a basket somebody filled and walked away from. One row per attempt,
+// because two executives ringing the same firm on the same afternoon is worse
+// than nobody ringing at all — the screen has to be able to say "already done,
+// by her, on Tuesday".
+//
+// The basket's value is copied in at the moment of the chase. A basket changes
+// after it is chased, and "what was it worth when we rang" is the question that
+// makes the follow-up worth measuring.
+model CartRecovery {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel    String   @default("WHATSAPP") // WHATSAPP | CALL | NOTE
+  toName     String   @default("")
+  toPhone    String   @default("")
+  note       String   @default("")
+  cartValue  Decimal  @default(0) @db.Decimal(14, 2)
+  cartCount  Int      @default(0)
+  by         String
+  at         DateTime @default(now())
+
+  @@index([customerId, at])
 }
 
 model Cart {

@@ -58,6 +58,17 @@ router.get("/abandoned-carts", requirePerm("order.create"), asyncHandler(async (
   res.json(await svc.abandonedCarts());
 }));
 
+// Records a chase against a basket. The message goes out through WhatsApp the
+// same way a bill does; this is the note that keeps two people from ringing the
+// same firm, and the mark a conversion is measured from.
+router.post("/abandoned-carts/:customerId/chase", requirePerm("order.create"), asyncHandler(async (req, res) => {
+  const b = z.object({
+    channel: z.enum(["WHATSAPP", "CALL", "NOTE"]).default("WHATSAPP"),
+    toName: z.string().default(""), toPhone: z.string().default(""), note: z.string().max(300).default(""),
+  }).parse(req.body);
+  res.status(201).json(await svc.recordChase(req.params.customerId, actor(req).name, b));
+}));
+
 router.post("/", requirePerm("order.create"), asyncHandler(async (req, res) => {
   const b = newOrderBody.parse(req.body);
   const o = await svc.createOrder(b, actor(req));

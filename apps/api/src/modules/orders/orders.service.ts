@@ -325,7 +325,18 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
 // is, so the office gets the same view and can ring them.
 export async function abandonedCarts() {
   const carts = await prisma.cart.findMany({
-    include: { customer: { select: { id: true, name: true, tehsil: true, phone: true, group: true, salesExec: { select: { name: true } } } } },
+    include: {
+      customer: {
+        select: {
+          id: true, name: true, tehsil: true, phone: true, group: true,
+          salesExec: { select: { name: true } },
+          contacts: { select: { id: true, name: true, role: true, phone: true } },
+          recoveries: { orderBy: { at: "desc" }, take: 5 },
+          // Anything ordered since tells us whether chasing worked.
+          orders: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, createdAt: true, total: true, status: true } },
+        },
+      },
+    },
     orderBy: { updatedAt: "desc" },
   });
   const out = [];
@@ -339,15 +350,68 @@ export async function abandonedCarts() {
       const it = views.find((v) => v.id === l.itemId);
       const rate = it ? price(it, l.qty).rate : 0;
       value += rate * l.qty;
-      return { itemId: l.itemId, sku: it?.sku ?? l.itemId, name: it?.name ?? "—", qty: l.qty, rate, amount: rate * l.qty, available: it?.available ?? 0, short: it ? l.qty > it.available : false };
+      return {
+        itemId: l.itemId, sku: it?.sku ?? l.itemId, name: it?.name ?? "—", qty: l.qty, rate,
+        amount: rate * l.qty, available: it?.available ?? 0,
+        short: it ? l.qty > it.available : false,
+        // A basket can go stale: an item discontinued, or gone since they filled it.
+        gone: !it || it.status !== "ACTIVE",
+      };
     });
+
+    const recoveries = cart.customer.recoveries;
+    const lastChase = recoveries[0] ?? null;
+    const lastOrder = cart.customer.orders[0] ?? null;
+    // Chased, and then they ordered: that is a recovery, and it is the only
+    // number that says whether any of this is worth doing.
+    const recovered = !!(lastChase && lastOrder && lastOrder.createdAt > lastChase.at);
+
     out.push({
-      customer: cart.customer, updatedAt: cart.updatedAt,
+      customer: { ...cart.customer, recoveries: undefined, orders: undefined },
+      contacts: cart.customer.contacts,
+      updatedAt: cart.updatedAt,
       ageDays: Math.floor((Date.now() - cart.updatedAt.getTime()) / 864e5),
       lines: rows, count: rows.length, value,
+      // A basket nobody can actually fulfil should not be chased as if they can.
+      issues: rows.filter((r) => r.short || r.gone).length,
+      chases: recoveries.length,
+      lastChase: lastChase ? { at: lastChase.at, by: lastChase.by, channel: lastChase.channel, toName: lastChase.toName, note: lastChase.note } : null,
+      recovered,
+      recoveredOrder: recovered ? lastOrder : null,
     });
   }
   return out.sort((a, b) => b.value - a.value);
+}
+
+// Records that somebody chased this basket. The message itself goes out through
+// WhatsApp the same way a bill does — opened ready-addressed, sent by a person.
+// This is the note that stops the next executive ringing the same firm an hour
+// later, and the thing a conversion is measured against.
+export async function recordChase(
+  customerId: string,
+  by: string,
+  input: { channel?: string; toName?: string; toPhone?: string; note?: string },
+) {
+  const cart = await prisma.cart.findUnique({ where: { customerId } });
+  const lines = ((cart?.lines as { itemId: string; qty: number }[]) || []);
+  const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId } });
+  const price = await pricerFor(customer);
+  const views = lines.length ? await loadItemViews({ id: { in: lines.map((l) => l.itemId) } }) : [];
+  const value = lines.reduce((s, l) => {
+    const it = views.find((v) => v.id === l.itemId);
+    return s + (it ? price(it, l.qty).rate * l.qty : 0);
+  }, 0);
+
+  const row = await prisma.cartRecovery.create({
+    data: {
+      customerId, by,
+      channel: input.channel ?? "WHATSAPP",
+      toName: input.toName ?? "", toPhone: input.toPhone ?? "", note: input.note ?? "",
+      cartValue: value, cartCount: lines.length,
+    },
+  });
+  await audit(prisma, { actor: by, action: "Abandoned basket chased", entityType: "Customer", entityId: customer.name, newValue: `${input.channel ?? "WHATSAPP"} · ₹${value.toFixed(2)} in the basket`, reason: input.note ?? "" });
+  return row;
 }
 
 export async function orderCatalogue(customerId: string, lineId?: string, q?: string) {
