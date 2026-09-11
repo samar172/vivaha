@@ -65,6 +65,12 @@ const custSchema = z.object({
   priceAdjPct: z.number().min(0, "A discount cannot be negative").max(90, "That is not a discount, that is a giveaway").default(0),
   machines: z.array(z.object({ type: z.string(), spec: z.record(z.string()).default({}) })).default([]),
   contacts: z.array(contactSchema).default([]),
+  // Captured from the browser when the executive is standing in the shop and
+  // permission is granted. Optional throughout — a refusal must never stop a
+  // firm being created.
+  lat: z.number().min(-90).max(90).nullable().optional(),
+  lng: z.number().min(-180).max(180).nullable().optional(),
+  geoAccuracy: z.number().nonnegative().nullable().optional(),
 });
 router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
   const b = custSchema.parse(req.body);
@@ -78,7 +84,7 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
       ? b.contacts.map(({ id: _drop, ...ct }) => ct)
       : [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }];
     if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" });
-    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
+    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, lat: b.lat ?? null, lng: b.lng ?? null, geoAccuracy: b.geoAccuracy ?? null, geoAt: b.lat != null && b.lng != null ? new Date() : null, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer created", entityType: "Customer", entityId: b.name, newValue: `${b.group} · limit ₹${b.creditLimit}`, reason: "New onboarding" });
     return c;
   });
@@ -104,7 +110,11 @@ router.patch("/:id", requirePerm("cust.edit"), asyncHandler(async (req, res) => 
         else await tx.customerContact.create({ data: { ...data, customerId: before.id } });
       }
     }
-    const c = await tx.customer.update({ where: { id: before.id }, data: { ...rest, gstin: rest.gstin === undefined ? undefined : rest.gstin || null, salesExecId: rest.salesExecId === undefined ? undefined : rest.salesExecId } });
+    // A fresh fix replaces the last known one and carries its own timestamp;
+    // an edit that captured nothing leaves the existing pin alone.
+    const geo = rest.lat != null && rest.lng != null ? { lat: rest.lat, lng: rest.lng, geoAccuracy: rest.geoAccuracy ?? null, geoAt: new Date() } : {};
+    const { lat: _lat, lng: _lng, geoAccuracy: _acc, ...restNoGeo } = rest;
+    const c = await tx.customer.update({ where: { id: before.id }, data: { ...restNoGeo, ...geo, gstin: rest.gstin === undefined ? undefined : rest.gstin || null, salesExecId: rest.salesExecId === undefined ? undefined : rest.salesExecId } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer updated", entityType: "Customer", entityId: before.name, oldValue: `limit ₹${D(before.creditLimit)} · ${before.creditDays}d · ${before.gateMode}`, newValue: `limit ₹${D(c.creditLimit)} · ${c.creditDays}d · ${c.gateMode}` });
     return c;
   });

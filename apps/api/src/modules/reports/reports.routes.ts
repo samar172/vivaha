@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { prisma, D } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
@@ -25,10 +26,57 @@ export const REPORTS = [
   ["Vendor performance", "Rate history, lead time, defect rate by vendor", "stock", "vendor"],
   ["GSTR-1 data set", "Invoice register, HSN summary, rate-wise tax, B2B and B2C splits", "fin", "gstr1"],
   ["Job work profitability", "Quoted against actual card, process and wastage cost", "fin", "jobs"],
+  ["Refer & earn", "Who referred whom, what came of it, and what is owed", "sales", "referral"],
+  ["Staff & logins", "Every contact across every firm, and who can sign in", "sales", "staff"],
 ];
 router.get("/", requirePerm("report.view"), (_req, res) => res.json(REPORTS.map(([name, answers, group, key]) => ({ name, answers, group, key }))));
 
 const lineOf = (req: { query: Record<string, unknown> }) => String(req.query.line || "ALL");
+
+// Referrals already existed end to end — a code on every firm, a submission
+// screen in the portal, a reward on the row. Nothing could read it back. This
+// joins each referral to the firm it produced, so "submitted" and "actually
+// bought" are told apart, and the reward is only counted once there is an order.
+router.get("/referral", requirePerm("report.view"), asyncHandler(async (req, res) => {
+  const refs = await prisma.referral.findMany({ include: { by: { select: { id: true, name: true, tehsil: true, referCode: true } } }, orderBy: { createdAt: "desc" } });
+  // A referred firm is matched by name — that is the only link the submission
+  // captures, so the match is reported rather than assumed.
+  const customers = await prisma.customer.findMany({ select: { id: true, name: true, createdAt: true, orders: { where: { status: { notIn: ["LAPSED", "REJECTED", "CANCELLED"] } }, select: { total: true } } } });
+  const byName = new Map(customers.map((c) => [c.name.trim().toLowerCase(), c]));
+  res.json(refs.map((r) => {
+    const joined = byName.get(r.name.trim().toLowerCase()) ?? null;
+    const orders = joined?.orders ?? [];
+    const business = orders.reduce((s, o) => s + D(o.total), 0);
+    // The reward is earned on business done, not on a name being written down.
+    const earned = orders.length > 0;
+    return {
+      id: r.id,
+      referrer: { id: r.by.id, name: r.by.name, tehsil: r.by.tehsil, code: r.by.referCode },
+      referred: { name: r.name, tehsil: r.tehsil, phone: r.phone, customerId: joined?.id ?? null },
+      date: r.createdAt, state: r.state,
+      orders: orders.length, business,
+      reward: D(r.reward), earned,
+      status: earned ? "Converted" : joined ? "Signed up, no order yet" : r.state,
+    };
+  }));
+}));
+
+// Staff are CustomerContact rows — the model has always been there, and the
+// customer screen has always shown them one firm at a time. This is the same
+// data read across every firm, which is what "view all staff" needs.
+router.get("/staff", requirePerm("report.view"), asyncHandler(async (req, res) => {
+  const q = z.object({ customerId: z.string().optional(), role: z.string().optional() }).parse(req.query);
+  const rows = await prisma.customerContact.findMany({
+    where: { ...(q.customerId ? { customerId: q.customerId } : {}), ...(q.role && q.role !== "ALL" ? { role: q.role } : {}) },
+    include: { customer: { select: { id: true, name: true, tehsil: true, salesExec: { select: { name: true } } } } },
+    orderBy: [{ customerId: "asc" }, { role: "asc" }],
+  });
+  res.json(rows.map((c) => ({
+    id: c.id, name: c.name, role: c.role, phone: c.phone, authority: c.authority, hasLogin: c.hasLogin,
+    customer: c.customer, salesExec: c.customer.salesExec?.name ?? "—",
+  })));
+}));
+
 const shippedStatuses = ["DISPATCHED", "DELIVERED", "PARTIALLY_DISPATCHED"] as const;
 
 router.get("/velocity", requirePerm("report.view"), asyncHandler(async (req, res) => {

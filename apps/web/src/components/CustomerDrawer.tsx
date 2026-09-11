@@ -19,7 +19,7 @@ export function CustomerDrawer({ id }: { id: string }) {
   const unblock = async () => { try { await post(`/api/customers/${id}/unblock`); toast("Block lifted", "s"); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <DrawerFrame onClose={closeDrawer} head={<><span className="rid" style={{ fontSize: 14.5 }}>{c.name}</span><Pill s={c.blockReason ? "Blocked" : "Active"} /></>}
     actions={<>{can("cust.edit") && <button className="b b-o b-s" onClick={() => openModal(<CustomerForm customer={c} />, "w")}>Edit</button>}{can("cust.price") && <button className="b b-o b-s" onClick={() => openModal(<OverrideModal c={c} />)}>Price overrides</button>}{can("payment.create") && <button className="b b-o b-s" onClick={() => openModal(<PaymentModal customerId={id} />)}>Record payment</button>}{can("cust.block") && (c.blockReason ? <button className="b b-o b-s" onClick={unblock}>Lift block</button> : <button className="b b-d b-s" onClick={() => openModal(<BlockModal c={c} />, "n")}>Temporary block</button>)}</>}>
-    <Section t="Firm"><DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} /><DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} />{!!c.priceAdjPct && <DF k="Firm discount" v={`${c.priceAdjPct}% off the group rate`} />}<DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} /><DF k="Deals in" v={c.linesEnabled.map((l) => lines?.find((x) => x.id === l)?.name ?? l).join(", ")} /></Section>
+    <Section t="Firm"><DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} />{c.lat != null && c.lng != null && <DF k="Shop location" v={<a href={`https://www.google.com/maps?q=${c.lat},${c.lng}`} target="_blank" rel="noreferrer">{c.lat.toFixed(5)}, {c.lng.toFixed(5)}</a>} />}<DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} />{!!c.priceAdjPct && <DF k="Firm discount" v={`${c.priceAdjPct}% off the group rate`} />}<DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} /><DF k="Deals in" v={c.linesEnabled.map((l) => lines?.find((x) => x.id === l)?.name ?? l).join(", ")} /></Section>
     {c.blockReason && <Note k="w"><b>Blocked</b> by {c.blockedBy} on {fDate(c.blockedAt)} — {c.blockReason}{c.blockUntil ? ` · auto-lift ${fDate(c.blockUntil)}` : ""}</Note>}
     <Section t="Contacts & logins">{c.contacts.map((ct) => <DF key={ct.id} k={<>{ct.name} <span className="sm">{ct.role}</span></>} v={<>{ct.phone} {ct.hasLogin && <span className="bd b-ok" style={{ marginLeft: 4 }}>login</span>}</>} mono />)}<div className="sm" style={{ marginTop: 6 }}>Owner authority may approve a credit-breaching order; Staff cannot — it routes to the owner.</div></Section>
     <Section t="Credit gate · time or amount, whichever first"><DF k="Credit limit" v={money(c.creditLimit)} mono /><DF k="Outstanding" v={<span style={{ color: g.amountBreach ? "var(--er)" : undefined }}>{money(g.out)}</span>} mono /><DF k="Credit days" v={c.creditDays || "Advance"} mono /><DF k="Oldest unpaid" v={<span style={{ color: g.timeBreach ? "var(--er)" : undefined }}>{g.oldestAge ? g.oldestAge + " days" : "—"}</span>} mono /><DF k="Gate mode" v={c.gateMode} /><div style={{ marginTop: 8 }}><Bar pct={g.util * 100} color={g.restricted ? "var(--er)" : g.util > .85 ? "var(--wa)" : "var(--ok)"} /></div><div className="sm" style={{ marginTop: 5 }}>{Math.round(g.util * 100)}% of limit used{g.restricted ? ` — ${g.amountBreach ? "amount breached" : ""}${g.amountBreach && g.timeBreach ? " and " : ""}${g.timeBreach ? "credit days exceeded" : ""}` : ""}</div></Section>
@@ -34,6 +34,32 @@ function BlockModal({ c }: { c: Customer }) {
   const { closeModal, closeDrawer, toast } = useUI(); const [r, setR] = useState(""); const [d, setD] = useState("");
   const go = async () => { if (!r.trim()) return toast("A reason is required", "e"); try { await post(`/api/customers/${c.id}/block`, { reason: r, until: d || undefined }); toast("Block applied — ordering suspended, ledger stays open", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Temporary block — " + c.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-d" onClick={go}>Apply block</button></>}><Note k="w" style={{ marginBottom: 13 }}>A block suspends <b>new orders only</b>. Ledger, statements and payment stay open so the firm can clear dues and be unblocked — BR-05.</Note><Field label="Reason (required)"><textarea value={r} onChange={(e) => setR(e.target.value)} placeholder="e.g. Two cheques returned, awaiting clearance" /></Field><Field label="Auto-lift on (optional)"><input type="date" value={d} onChange={(e) => setD(e.target.value)} /></Field></ModalFrame>;
+}
+
+// Captured once, when the executive is standing in the shop. Never a background
+// watch: one fix, on a button press, with the firm's consent in the room.
+// Refusal is an ordinary outcome — the firm saves regardless.
+function GeoCapture({ lat, lng, accuracy, at, onFix }: { lat: number | null; lng: number | null; accuracy: number | null; at?: string | null; onFix: (lat: number, lng: number, acc: number | null) => void }) {
+  const { toast } = useUI();
+  const [busy, setBusy] = useState(false);
+  const has = lat != null && lng != null;
+  const capture = () => {
+    if (!navigator.geolocation) return toast("This browser cannot report a location", "e");
+    setBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (p) => { onFix(p.coords.latitude, p.coords.longitude, p.coords.accuracy ?? null); setBusy(false); toast("Location captured — saved with the firm", "s"); },
+      (err) => { setBusy(false); toast(err.code === err.PERMISSION_DENIED ? "Location permission refused — the firm will save without a pin" : "Could not get a location fix — the firm will save without a pin", "w"); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+    );
+  };
+  return <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+    <button className="b b-o b-s" disabled={busy} onClick={capture}><Icon n="pin" s={13} /> {busy ? "Getting a fix…" : has ? "Update location" : "Capture location"}</button>
+    <div className="sm">
+      {has
+        ? <>Pinned at <span className="tab">{lat!.toFixed(5)}, {lng!.toFixed(5)}</span>{accuracy ? ` · ±${Math.round(accuracy)} m` : ""}{at ? ` · ${fDate(at)}` : ""} · <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer">open map</a></>
+        : "No location saved. Capture it while you are at the shop — it is optional, and refusing permission does not block anything."}
+    </div>
+  </div>;
 }
 
 function OverrideModal({ c }: { c: Full }) {
@@ -117,6 +143,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
     salesExecId: customer?.salesExecId ?? "", creditLimit: customer?.creditLimit ?? 150000, creditDays: customer?.creditDays ?? 30,
     gateMode: (customer?.gateMode ?? "WARN") as "WARN" | "BLOCK",
     priceAdjPct: customer?.priceAdjPct ?? 0,
+    lat: customer?.lat ?? null as number | null, lng: customer?.lng ?? null as number | null, geoAccuracy: customer?.geoAccuracy ?? null as number | null,
   });
   const [contacts, setContacts] = useState<FormContact[]>(
     customer?.contacts?.length
@@ -149,6 +176,12 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
       <Field label="Credit limit (₹)" hint="Suggested ₹1,80,000 from machine capacity"><input type="number" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: Number(e.target.value) })} /></Field><Field label="Credit days" hint="Time or amount, whichever breaches first"><input type="number" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: Number(e.target.value) })} /></Field>
       <Field label="Firm discount (%)" hint="Off the group rate, on everything they buy. Per-item prices are set from the drawer."><input type="number" value={f.priceAdjPct} onChange={(e) => setF({ ...f, priceAdjPct: Number(e.target.value) })} /></Field>
       <Field label="Gate mode" full><select value={f.gateMode} onChange={(e) => setF({ ...f, gateMode: e.target.value as "WARN" | "BLOCK" })}><option value="WARN">WARN — allow with a recorded reason</option><option value="BLOCK">BLOCK — needs an authorised override</option></select></Field></div>
+
+    <div className="st" style={{ marginTop: 16 }}>Shop location</div>
+    <GeoCapture
+      lat={f.lat} lng={f.lng} accuracy={f.geoAccuracy} at={customer?.geoAt ?? null}
+      onFix={(lat, lng, geoAccuracy) => setF((x) => ({ ...x, lat, lng, geoAccuracy }))}
+    />
 
     <div className="st" style={{ marginTop: 16 }}>Numbers &amp; staff</div>
     <div className="sm" style={{ marginBottom: 7 }}>The owner above is saved automatically. Add the office, accounts or a staff member here — a bill can then be sent to whichever of them handles bills.</div>

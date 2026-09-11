@@ -1,16 +1,75 @@
 "use client";
 import { money2, num, fDate } from "@vivaha/shared";
+import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { useUI } from "@/lib/ui";
-import { ModalFrame } from "./ui";
+import { ModalFrame, Field, Note } from "./ui";
+import { Icon } from "./icons";
 import type { Invoice } from "./types";
 
-export function InvoiceModal({ no, orderId }: { no: string; orderId: string }) {
+interface BillContact { id: string; name: string; role: string; phone: string }
+
+// WhatsApp only ever reaches a number someone chose. The firm is on several —
+// the owner, the office, accounts — and the bill goes to whichever of them
+// actually handles bills, so the number is picked here rather than assumed
+// from the one field on the customer record.
+//
+// The link hands the ready-addressed message to WhatsApp on the operator's
+// machine; they press send. That is deliberate: nothing is dispatched on the
+// firm's behalf without a person seeing it go.
+const waDigits = (phone: string) => {
+  const d = phone.replace(/\D/g, "");
+  // Indian numbers are stored with and without the country code; wa.me wants it.
+  return d.length === 10 ? "91" + d : d.replace(/^0+/, "");
+};
+
+function ShareBillModal({ inv, contacts, whatsappFrom }: { inv: Invoice & { customer: { name: string; phone?: string } }; contacts: BillContact[]; whatsappFrom?: string }) {
   const { closeModal, toast } = useUI();
-  const { data: inv } = useApi<Invoice & { customer: { name: string; address: string; tehsil: string; gstin: string | null }; company: { name: string; address: string; gstin: string; state: string } }>(`/api/orders/${orderId}/invoice/${encodeURIComponent(no)}`);
+  const [sel, setSel] = useState(contacts[0]?.id ?? "");
+  const [note, setNote] = useState("");
+  const c = contacts.find((x) => x.id === sel);
+
+  if (!contacts.length) return <ModalFrame title="Share bill" onClose={closeModal} actions={<button className="b b-p" onClick={closeModal}>Close</button>}>
+    <Note k="w">This firm has no phone numbers on record. Add them from the customer screen — Edit → Numbers &amp; staff — and the bill can then be shared to any of them.</Note>
+  </ModalFrame>;
+
+  const text = [
+    `${inv.customer.name} — Tax Invoice ${inv.no}`,
+    `Amount: Rs ${money2(inv.total)}`,
+    `Date: ${fDate(inv.date)}`,
+    note.trim(),
+    "— Vivaha Cards",
+  ].filter(Boolean).join("\n");
+
+  const send = () => {
+    if (!c) return;
+    window.open(`https://wa.me/${waDigits(c.phone)}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    toast(`WhatsApp opened for ${c.name} · ${c.phone}`, "s");
+    closeModal();
+  };
+
+  return <ModalFrame title={"Share bill " + inv.no} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={send}>Open WhatsApp</button></>}>
+    <Field label="Send to" full hint="The firm's saved numbers">
+      <select value={sel} onChange={(e) => setSel(e.target.value)}>
+        {contacts.map((x) => <option key={x.id} value={x.id}>{x.role} — {x.name} · {x.phone}</option>)}
+      </select>
+    </Field>
+    <Field label="Add a line (optional)" full><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Kindly clear by the 10th" /></Field>
+    <div className="sm" style={{ whiteSpace: "pre-wrap", border: "1px solid var(--bd)", borderRadius: 5, padding: "9px 11px", marginTop: 4 }}>{text}</div>
+    <Note style={{ marginTop: 11 }}>
+      {whatsappFrom ? <>Send from the office WhatsApp number <b>{whatsappFrom}</b>.</> : <>Sends from whichever WhatsApp account is signed in on this machine. Set the office number under Settings to standardise it.</>}
+      {" "}The message opens ready-addressed — you press send.
+    </Note>
+  </ModalFrame>;
+}
+
+export function InvoiceModal({ no, orderId }: { no: string; orderId: string }) {
+  const { closeModal, openModal } = useUI();
+  const { data: inv } = useApi<Invoice & { customer: { name: string; address: string; tehsil: string; gstin: string | null; phone: string; contacts: BillContact[] }; company: { name: string; address: string; gstin: string; state: string }; whatsappFrom?: string }>(`/api/orders/${orderId}/invoice/${encodeURIComponent(no)}`);
   if (!inv) return <ModalFrame title={"Tax Invoice " + no} onClose={closeModal} actions={null}><div className="sm">Loading…</div></ModalFrame>;
   const c = inv.customer, intra = !c.gstin || c.gstin.slice(0, 2) === inv.company.state;
-  return <ModalFrame title={"Tax Invoice " + inv.no} onClose={closeModal} actions={<><button className="b b-o" onClick={() => toast(`Sent to ${c.name} on WhatsApp`, "s")}>Send on WhatsApp</button><button className="b b-o" onClick={() => window.print()}>Print</button><button className="b b-p" onClick={closeModal}>Done</button></>}>
+  return <ModalFrame title={"Tax Invoice " + inv.no} onClose={closeModal} actions={<><button className="b b-o" onClick={() => openModal(<ShareBillModal inv={inv} contacts={c.contacts ?? []} whatsappFrom={inv.whatsappFrom} />, "n")}><Icon n="swap" s={13} /> Share on WhatsApp</button><button className="b b-o" onClick={() => window.print()}>Print</button><button className="b b-p" onClick={closeModal}>Done</button></>}>
     <div style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 15 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 20, borderBottom: "1px solid var(--bd)", paddingBottom: 11, marginBottom: 11 }}><div><div style={{ fontSize: 15.5, fontWeight: 700 }}>{inv.company.name}</div><div className="sm" style={{ fontFamily: "inherit" }}>{inv.company.address}</div><div className="sm">GSTIN {inv.company.gstin} · State code {inv.company.state}</div></div><div style={{ textAlign: "right" }}><div className="sm">TAX INVOICE</div><div style={{ fontSize: 14.5, fontWeight: 700 }} className="tab">{inv.no}</div><div className="sm">{fDate(inv.date)}</div></div></div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 12 }}><div><div className="sm">BILL TO</div><div style={{ fontWeight: 700, fontSize: 14 }}>{c.name}</div><div className="sm" style={{ fontFamily: "inherit" }}>{c.address}, {c.tehsil}, Rajasthan</div><div className="sm">GSTIN {c.gstin ?? "Unregistered"}</div></div><div style={{ textAlign: "right" }}><div className="sm">PLACE OF SUPPLY</div><div style={{ fontSize: 14, fontWeight: 600 }}>{intra ? "08 — Rajasthan (intra-state)" : "Inter-state"}</div><div className="sm">Order {orderId}</div></div></div>

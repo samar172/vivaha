@@ -346,6 +346,14 @@ model Customer {
   // Firm-wide percentage off the group rate, applied to everything they buy
   // unless a per-item override says otherwise.
   priceAdjPct  Decimal  @default(0) @db.Decimal(5, 2)
+  // Where the shop actually is, captured from the executive's phone when they
+  // are standing in it. Nullable throughout: permission is often refused, and a
+  // firm without a pin is still a firm. Never tracked continuously — this is
+  // the last known fix, written only when a workflow captures one.
+  lat          Float?
+  lng          Float?
+  geoAccuracy  Float?
+  geoAt        DateTime?
   salesExecId  String?
   salesExec    User?    @relation("CustomerSalesExec", fields: [salesExecId], references: [id])
   status       String   @default("Active")

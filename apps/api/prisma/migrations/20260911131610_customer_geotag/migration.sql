@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Customer" ADD COLUMN     "geoAccuracy" DOUBLE PRECISION,
+ADD COLUMN     "geoAt" TIMESTAMP(3),
+ADD COLUMN     "lat" DOUBLE PRECISION,
+ADD COLUMN     "lng" DOUBLE PRECISION;

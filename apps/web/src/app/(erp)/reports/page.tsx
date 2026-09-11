@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { money, num } from "@vivaha/shared";
+import { money, num, fDate } from "@vivaha/shared";
 import { useApi, useLines } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useUI } from "@/lib/ui";
@@ -14,7 +14,7 @@ import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";
 
 type Rep = { name: string; answers: string; group: string; key: string };
-const DETAIL: Record<string, string> = { velocity: "Item velocity", stockout: "Stock-out demand", margin: "Margin by line", conv: "Booking conversion", reorder: "Reorder due", tehsil: "Tehsil cluster", payment: "Payment behaviour", kit: "Kit health", sales: "Sales register", vendor: "Vendor performance", jobs: "Job profitability" };
+const DETAIL: Record<string, string> = { velocity: "Item velocity", stockout: "Stock-out demand", margin: "Margin by line", referral: "Refer & earn", staff: "Staff & logins", conv: "Booking conversion", reorder: "Reorder due", tehsil: "Tehsil cluster", payment: "Payment behaviour", kit: "Kit health", sales: "Sales register", vendor: "Vendor performance", jobs: "Job profitability" };
 
 export default function ReportsPage() {
   const [tab, setTab] = useState("list"); const { data: reps } = useApi<Rep[]>("/api/reports"); const { toast } = useUI(); useFooter(reps?.length ?? 0);
@@ -34,6 +34,56 @@ function Detail({ k }: { k: string }) {
   if (k === "margin") { const d = data as { minMargin: number; byLine: { lineId: string; rev: number; cost: number; marginPct: number }[]; byItem: { item: { id: string; sku: string; name: string; lineId: string }; rev: number; cost: number; qty: number; marginPct: number }[] }; return <><div className="kpis">{d.byLine.map((b) => <KPI key={b.lineId} l={lines?.find((l) => l.id === b.lineId)?.name ?? b.lineId} v={b.marginPct.toFixed(1) + "%"} d={`${money(b.rev - b.cost)} on ${money(b.rev)}`} />)}</div>{exp(["SKU", "Name", "Shipped", "Revenue", "Cost", "Margin %"], d.byItem.map((r) => [r.item.sku, r.item.name, r.qty, r.rev, r.cost, r.marginPct.toFixed(1)]))}<div className="gw"><table className="dg"><thead><tr><th>Item</th><th>Line</th><th className="n">Shipped</th><th className="n">Revenue</th><th className="n">Landed cost</th><th className="n">Gross margin</th><th>vs floor {d.minMargin * 100}%</th></tr></thead><tbody>{d.byItem.slice(0, 25).map((r) => <tr key={r.item.id} onClick={() => openDrawer(<ItemDrawer id={r.item.id} />)}><td className="w"><span className="rid">{r.item.sku}</span> {r.item.name}</td><td><LineChip id={r.item.lineId} /></td><td className="n tab">{num(r.qty)}</td><td className="n tab">{money(r.rev)}</td><td className="n tab">{money(r.cost)}</td><td className="n tab" style={{ fontWeight: 700, color: r.marginPct < d.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{r.marginPct.toFixed(1)}%</td><td>{r.marginPct < d.minMargin * 100 ? <span className="bd b-er">Below floor</span> : <span className="bd b-ok">OK</span>}</td></tr>)}</tbody></table></div></>; }
   if (k === "conv") { const rows = data as { id: string; name: string; salesExec: string; booked: number; conv: number; open: number; rate: number }[]; return <><Note style={{ marginBottom: 11 }}>Firms below 60% conversion with open bookings raise a review alert to the assigned sales executive. <b>No automatic restriction is applied</b> — escalation is a human decision, and it is audited.</Note>{exp(["Firm", "Sales exec", "Bookings", "Converted", "Open", "Conversion %"], rows.map((r) => [r.name, r.salesExec, r.booked, r.conv, r.open, Math.round(r.rate * 100)]))}<div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Sales exec</th><th className="n">Bookings</th><th className="n">Converted</th><th className="n">Open now</th><th className="n">Conversion</th><th>Action</th></tr></thead><tbody>{rows.map((r) => <tr key={r.id} onClick={() => openDrawer(<CustomerDrawer id={r.id} />)}><td className="w">{r.name}</td><td className="sm">{r.salesExec}</td><td className="n tab">{r.booked}</td><td className="n tab">{r.conv}</td><td className="n tab">{r.open}</td><td className="n tab" style={{ fontWeight: 700, color: r.rate < .6 ? "var(--er)" : "var(--ok)" }}>{Math.round(r.rate * 100)}%</td><td>{r.rate < .6 && r.open >= 1 ? <span className="bd b-wa">Review alert raised</span> : <span className="bd b-ok">Healthy</span>}</td></tr>)}</tbody></table></div></>; }
   if (k === "reorder") { const rows = data as { customer: { id: string; name: string; tehsil: string; contactName: string }; machines: string[]; item: { sku: string; name: string; uom: string } | null; qty: number; gap: number; due: number; confidence: string }[]; return <><Note k="o" style={{ marginBottom: 11 }}>Predicted from the median gap between the firm&apos;s last three consumable orders. With fewer than three, the machine profile supplies a default rate. A WhatsApp nudge goes out five days before the predicted date.</Note><div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Machine</th><th>Likely item</th><th className="n">Typical qty</th><th className="n">Order gap</th><th className="n">Due in</th><th>Confidence</th><th></th></tr></thead><tbody>{rows.map((r) => <tr key={r.customer.id} onClick={() => openDrawer(<CustomerDrawer id={r.customer.id} />)}><td className="w">{r.customer.name}<div className="sm">{r.customer.tehsil}</div></td><td className="sm">{r.machines.join(", ")}</td><td className="w">{r.item?.name}<div className="sm">{r.item?.sku}</div></td><td className="n tab">{r.qty} {r.item?.uom}</td><td className="n tab">{r.gap} d</td><td className="n tab" style={{ fontWeight: 700, color: r.due <= 5 ? "var(--er)" : r.due <= 12 ? "var(--wa)" : "var(--t6)" }}>{r.due <= 0 ? "overdue" : r.due + " d"}</td><td>{r.confidence === "high" ? <span className="bd b-ok">High</span> : <span className="bd b-nu">Estimated</span>}</td><td><button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); toast(`Reorder nudge sent to ${r.customer.contactName} on WhatsApp`, "s"); }}>Nudge</button></td></tr>)}</tbody></table></div></>; }
+  if (k === "referral") {
+    const rows = data as { id: string; referrer: { id: string; name: string; tehsil: string; code: string }; referred: { name: string; tehsil: string; phone: string; customerId: string | null }; date: string; orders: number; business: number; reward: number; earned: boolean; status: string }[];
+    const earned = rows.filter((r) => r.earned);
+    const owed = earned.reduce((s, r) => s + r.reward, 0);
+    return <>
+      <div className="kpis" style={{ marginBottom: 13 }}>
+        <KPI l="Referrals submitted" v={num(rows.length)} />
+        <KPI l="Converted to orders" v={num(earned.length)} d={rows.length ? `${Math.round((earned.length / rows.length) * 100)}% of submissions` : undefined} />
+        <KPI l="Business introduced" v={money(earned.reduce((s, r) => s + r.business, 0))} />
+        <KPI l="Reward payable" v={money(owed)} cls="d-wa" d="Earned on business done, not on a name" />
+      </div>
+      <div className="gw"><table className="dg"><thead><tr><th>Referred by</th><th>Firm referred</th><th>Submitted</th><th>Status</th><th className="n">Orders</th><th className="n">Business</th><th className="n">Reward</th></tr></thead><tbody>
+        {rows.length ? rows.map((r) => <tr key={r.id} onClick={() => openDrawer(<CustomerDrawer id={r.referrer.id} />)}>
+          <td className="w">{r.referrer.name}<div className="sm">{r.referrer.tehsil} · <span className="tab">{r.referrer.code}</span></div></td>
+          <td className="w">{r.referred.name}<div className="sm">{r.referred.tehsil} · {r.referred.phone}</div></td>
+          <td className="sm">{fDate(r.date)}</td>
+          <td>{r.earned ? <span className="bd b-ok">Converted</span> : r.referred.customerId ? <span className="bd b-wa">No order yet</span> : <span className="bd b-nu">{r.status}</span>}</td>
+          <td className="n tab">{r.orders || "—"}</td>
+          <td className="n tab">{r.business ? money(r.business) : "—"}</td>
+          <td className="n tab" style={{ fontWeight: r.earned ? 700 : undefined, color: r.earned ? "var(--ok)" : "var(--t4)" }}>{money(r.reward)}</td>
+        </tr>) : <tr><td colSpan={7}><div className="sm">No referrals submitted yet. Firms submit them from the portal under Refer &amp; earn.</div></td></tr>}
+      </tbody></table></div>
+      <Note k="i" style={{ marginTop: 11 }}>The reward is counted once the referred firm has actually ordered — a name written down is not a conversion. Referred firms are matched to customers by name, which is the only link the portal submission captures.</Note>
+    </>;
+  }
+  if (k === "staff") {
+    const rows = data as { id: string; name: string; role: string; phone: string; authority: string; hasLogin: boolean; customer: { id: string; name: string; tehsil: string }; salesExec: string }[];
+    const byFirm = new Map<string, typeof rows>();
+    for (const r of rows) { const l = byFirm.get(r.customer.id) ?? []; l.push(r); byFirm.set(r.customer.id, l); }
+    return <>
+      <div className="kpis" style={{ marginBottom: 13 }}>
+        <KPI l="Contacts on record" v={num(rows.length)} />
+        <KPI l="Firms covered" v={num(byFirm.size)} />
+        <KPI l="With a portal login" v={num(rows.filter((r) => r.hasLogin).length)} />
+        <KPI l="Owner authority" v={num(rows.filter((r) => r.authority === "Owner").length)} d="May approve a credit-breaching order" />
+      </div>
+      <div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Name</th><th>Role</th><th>Phone</th><th>Authority</th><th>Login</th><th>Sales executive</th></tr></thead><tbody>
+        {rows.map((r) => <tr key={r.id} onClick={() => openDrawer(<CustomerDrawer id={r.customer.id} />)}>
+          <td className="w">{r.customer.name}<div className="sm">{r.customer.tehsil}</div></td>
+          <td className="w">{r.name}</td>
+          <td><span className="bd b-nu">{r.role}</span></td>
+          <td className="tab">{r.phone}</td>
+          <td className="sm">{r.authority}</td>
+          <td>{r.hasLogin ? <span className="bd b-ok">Yes</span> : <span className="sm">—</span>}</td>
+          <td className="sm">{r.salesExec}</td>
+        </tr>)}
+      </tbody></table></div>
+      <Note k="i" style={{ marginTop: 11 }}>Every contact across every firm, from the same records the customer screen edits. Add, edit or reassign them there — Edit → Numbers &amp; staff — and issue a portal login from Settings.</Note>
+    </>;
+  }
   if (k === "tehsil") { const rows = data as { tehsil: string; firms: number; rev: number; out: number }[]; const mx = Math.max(1, ...rows.map((r) => r.rev)); return <><div className="gw"><table className="dg"><thead><tr><th>Tehsil</th><th className="n">Firms</th><th className="n">Order value</th><th className="n">Outstanding</th><th style={{ width: 220 }}>Share</th></tr></thead><tbody>{rows.map((r) => <tr key={r.tehsil} style={{ cursor: "default" }}><td><Icon n="pin" s={12} style={{ display: "inline", verticalAlign: "-2px", marginRight: 4, opacity: .6 }} />{r.tehsil}</td><td className="n tab">{r.firms}</td><td className="n tab">{money(r.rev)}</td><td className="n tab">{money(r.out)}</td><td><Bar pct={(r.rev / mx) * 100} /></td></tr>)}</tbody></table></div><Note k="i" style={{ marginTop: 11 }}>Tehsil concentration answers where the fourth godown goes and which routes justify a dedicated vehicle.</Note></>; }
   if (k === "payment") { const rows = data as { id: string; name: string; creditDays: number; invoices: number; avgDaysToPay: number | null }[]; return <div className="gw"><table className="dg"><thead><tr><th>Firm</th><th className="n">Agreed days</th><th className="n">Invoices</th><th className="n">Avg days to pay</th><th>Signal</th></tr></thead><tbody>{rows.map((r) => <tr key={r.id} onClick={() => openDrawer(<CustomerDrawer id={r.id} />)}><td>{r.name}</td><td className="n tab">{r.creditDays}</td><td className="n tab">{r.invoices}</td><td className="n tab">{r.avgDaysToPay ?? "—"}</td><td>{r.avgDaysToPay == null ? <span className="bd b-nu">No data</span> : r.avgDaysToPay > r.creditDays ? <span className="bd b-er">Slow</span> : <span className="bd b-ok">On time</span>}</td></tr>)}</tbody></table></div>; }
   if (k === "kit") { const rows = data as { customer: { id: string; name: string; tehsil: string }; version: string; current: boolean; daysSinceScan: number | null }[]; return <div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Kit</th><th>Current?</th><th className="n">Days since scan</th></tr></thead><tbody>{rows.map((r) => <tr key={r.customer.id} onClick={() => openDrawer(<CustomerDrawer id={r.customer.id} />)}><td>{r.customer.name}<div className="sm">{r.customer.tehsil}</div></td><td className="sm">{r.version}</td><td>{r.current ? <span className="bd b-ok">Current</span> : <span className="bd b-wa">Out of date — visit</span>}</td><td className="n tab">{r.daysSinceScan ?? "never"}</td></tr>)}</tbody></table></div>; }
