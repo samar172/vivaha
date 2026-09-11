@@ -366,6 +366,12 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .qs{display:flex;align-items:center;border:1px solid var(--bd);border-radius:6px;height:34px}
 .qs button{width:34px;height:100%;font-size:16.5px;font-weight:700;color:var(--ac)}
 .qs span{min-width:48px;text-align:center;font-size:14px;font-weight:700}
+.qs input{width:62px;height:100%;text-align:center;border:none;outline:none;font-size:14px;font-weight:700;background:transparent;padding:0}
+/* The spinners are useless on a number this size and steal half the box. */
+.qs input::-webkit-outer-spin-button,.qs input::-webkit-inner-spin-button,
+.qty input::-webkit-outer-spin-button,.qty input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.qs input,.qty input{appearance:textfield;-moz-appearance:textfield}
+.qs input:focus,.qty input:focus{background:var(--ac-bg)}
 .lgrp{background:#fff;border:1px solid var(--bd);border-radius:10px;margin-bottom:10px;overflow:hidden}
 .lgrp .hd{padding:9px 13px;border-bottom:1px solid var(--bd-soft);display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700}
 .lgrp .bd2{padding:2px 13px 11px}
@@ -412,6 +418,41 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .portal{height:100vh}
 .loading{display:flex;align-items:center;justify-content:center;height:100vh;color:var(--t4);font-size:14.5px}
 .sb.mob{position:fixed;left:0;top:46px;bottom:0;z-index:60;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+/* ── The portal on real devices ──────────────────────────────────────────────
+   A retailer reads this on a phone, a sales executive on a tablet in the shop,
+   and the office on a laptop. The grid was already fluid; these are the places
+   a fixed size or a desktop assumption still showed through. */
+@media(max-width:900px){
+  /* Fewer, larger tiles beat many cramped ones on a phone. */
+  .pgrid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
+  .pc{padding:11px 11px 92px}
+  .ph{padding:0 11px;gap:8px}
+  /* The firm name is the first thing to give way when the header is tight. */
+  .ph .lo .s{display:none}
+}
+@media(max-width:560px){
+  .pgrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .pc{padding:10px 10px 92px}
+  /* Thumb-sized targets: the minimums a finger needs. */
+  .qty{height:48px}
+  .qty button{width:52px}
+  .qs{height:38px}
+  .qs button{width:38px}
+  .qs input{width:56px}
+  /* A row of cart controls wraps rather than squeezing the price off-screen. */
+  .crow .in > div:last-child{flex-wrap:wrap;row-gap:7px}
+  .altrow{gap:9px}
+  .sect{font-size:15px}
+}
+/* A tablet held in portrait is not a phone — it has room for three across. */
+@media(min-width:561px) and (max-width:900px){
+  .pgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+/* Nothing in the portal may push the page sideways. */
+.portal{overflow-x:hidden}
+.pc{max-width:100%;box-sizing:border-box}
+.gw,.pgrid,.crow,.altrow{max-width:100%}
+
 @media(max-width:820px){ .sb:not(.mob){display:none} .gsr{width:auto;flex:1} .gsr .lbl{display:none} .lsw{display:none} .gsel{display:none} }
 .dg th.sortable{cursor:pointer;user-select:none}
 .dg tr.dim td{opacity:.6}
