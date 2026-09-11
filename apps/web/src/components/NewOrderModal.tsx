@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { money, num, type Band } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
-import { post } from "@/lib/api";
+import { post, get } from "@/lib/api";
 import { ModalFrame, Field, Note, Empty, GateDot, BandPill, Thumb } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import type { Customer, Order } from "@/components/types";
@@ -67,6 +67,19 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   const qErr = picked.length ? fresh?.err ?? "" : "";
 
   const add = (it: CatItem) => setCart((c) => ({ ...c, [it.id]: (c[it.id] ?? 0) + it.moq }));
+
+  // A carton is scanned, not typed. The same resolver the portal scanner uses
+  // accepts our own label or the manufacturer's, so a box that arrived under a
+  // factory code still lands on the right item.
+  const scan = async (code: string) => {
+    if (!code.trim()) return;
+    try {
+      const r = await get<{ item: { id: string; sku: string; name: string; lineId: string } }>(`/api/codes/resolve?code=${encodeURIComponent(code.trim())}`);
+      const hit = cat?.items.find((i) => i.id === r.item.id);
+      if (!hit) { toast(`${r.item.sku} is on another business line — switch the line to add it`, "w"); return; }
+      add(hit); setQ(""); toast(`${hit.sku} added`, "s");
+    } catch { toast(`No item carries the code ${code.trim()}`, "e"); }
+  };
   const setQty = (id: string, n: number) => setCart((c) => ({ ...c, [id]: Math.max(0, n) }));
   const drop = (id: string) => setCart((c) => { const n = { ...c }; delete n[id]; return n; });
 
@@ -110,7 +123,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
 
     {cid && !blocked && <>
       <div className="st" style={{ marginTop: 15 }}>Add items</div>
-      <div className="tsr" style={{ marginBottom: 8 }}><Icon n="search" s={13} /><input placeholder="SKU, design number, name or code…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+      <div className="tsr" style={{ marginBottom: 8 }}><Icon n="search" s={13} /><input placeholder="SKU, design number, name — or scan a label and press Enter" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scan(q); } }} /></div>
       <div className="gw" style={{ maxHeight: 190, overflowY: "auto" }}>
         <table className="dg"><thead><tr><th>Item</th><th className="n">MOQ</th><th className="n">Available</th><th className="n">Rate</th><th></th></tr></thead><tbody>
           {cat?.items.length ? cat.items.map((it) => <tr key={it.id} style={{ cursor: "default" }}>

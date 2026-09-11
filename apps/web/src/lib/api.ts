@@ -32,6 +32,7 @@ export async function apiFetch<T = unknown>(path: string, options: Opts = {}): P
   if (!res.ok) throw new ApiError(res.status, typeof data === "object" && data && "error" in data ? String(data.error) : "Request failed", typeof data === "object" ? (data as { details?: unknown }).details : undefined);
   return data as T;
 }
+export const get = <T = unknown>(path: string) => apiFetch<T>(path);
 export const post = <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: "POST", body: body ?? {} });
 export const patch = <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: "PATCH", body: body ?? {} });
 export const put = <T = unknown>(path: string, body?: unknown) => apiFetch<T>(path, { method: "PUT", body: body ?? {} });

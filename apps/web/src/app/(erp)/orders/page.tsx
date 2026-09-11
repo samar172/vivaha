@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { money, fDate, dueLbl, daysTo, orderProgress, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
+import { money, num, fDate, dueLbl, daysTo, orderProgress, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useUI, errMsg } from "@/lib/ui";
@@ -9,9 +9,10 @@ import { useAuth } from "@/lib/auth-context";
 import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
-import { Pill, LineChip, GateDot, Hold, Empty, Bar } from "@/components/ui";
+import { Pill, LineChip, GateDot, Hold, Empty, Bar, Note } from "@/components/ui";
 import { OrderDrawer, useOrderActions } from "@/components/OrderDrawer";
 import { NewOrderModal } from "@/components/NewOrderModal";
+import { CustomerDrawer } from "@/components/CustomerDrawer";
 import type { Order } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";
@@ -26,6 +27,7 @@ export default function OrdersPage() {
   useEffect(() => { const o = sp.get("open"); if (o) openDrawer(<OrderDrawer id={o} />); }, [sp, openDrawer]);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { const t = sp.get("tab"); if (t) setTab(t); setStatus(sp.get("status")); }, [sp]);
+  const { data: carts } = useApi<AbandonedCart[]>(can("order.create") ? "/api/orders/abandoned-carts" : null, { refreshInterval: 60000 });
   let rows = data?.orders ?? []; if (status) rows = rows.filter((o) => o.status === status);
   if (sort && tab !== "approve") rows = rows.slice().sort((a, b) => ((sort.k === "total" ? a.total - b.total : new Date(a.requiredBy).getTime() - new Date(b.requiredBy).getTime()) * sort.d));
   const pg = usePager(rows); useFooter(rows.length, line === "ALL" ? "" : lines?.find((l) => l.id === line)?.name ?? "", pg.page, pg.pages, pg.setPage);
@@ -34,9 +36,9 @@ export default function OrdersPage() {
   const sortBy = (k: string) => setSort((s) => ({ k, d: s?.k === k && s.d === 1 ? -1 : 1 })); const ic = (k: string) => sort?.k === k ? (sort.d === 1 ? " ↑" : " ↓") : "";
   return <>
     <PageHead crumb={["Sales", "Orders"]} title="Orders" sub="Booking → approval → reservation → allocation → pick → pack → dispatch. Lapsed holds keep the intent; partial dispatch creates a backorder." actions={<><button className="b b-o" onClick={() => exportCsv("orders", ["Order", "Firm", "Status", "Lines", "Taxable", "Tax", "Total", "Required by", "Created"], rows.map((o) => [o.id, o.customer.name, o.status, o.lines.length, o.subtotal, o.tax, o.total, fDate(o.requiredBy), fDate(o.createdAt)]))}><Icon n="download" s={13} /> Export</button>{can("order.create") && <button className="b b-p" onClick={() => openModal(<NewOrderModal />, "w")}>+ New order</button>}</>}
-      tabs={[{ k: "approve", l: "Awaiting approval", n: cnt.approve }, { k: "active", l: "In fulfilment", n: cnt.active }, { k: "shipped", l: "Shipped", n: cnt.shipped }, { k: "closed", l: "Closed", n: cnt.closed }, { k: "all", l: "All", n: cnt.all }]} tab={tab} onTab={(k) => { setTab(k); setStatus(null); setSel(new Set()); }} />
+      tabs={[{ k: "approve", l: "Awaiting approval", n: cnt.approve }, { k: "active", l: "In fulfilment", n: cnt.active }, { k: "shipped", l: "Shipped", n: cnt.shipped }, { k: "closed", l: "Closed", n: cnt.closed }, { k: "all", l: "All", n: cnt.all }, ...(can("order.create") ? [{ k: "carts", l: "Baskets left open", n: carts?.length }] : [])]} tab={tab} onTab={(k) => { setTab(k); setStatus(null); setSel(new Set()); }} />
     <div className={"bulk" + (sel.size ? " on" : "")}>{sel.size ? <>{sel.size} selected · <button className="b b-o b-s" onClick={bulk}>Approve green only</button> <button className="b b-g b-s" onClick={() => setSel(new Set())}>Clear</button></> : null}</div>
-    <div className="wa">
+    {tab === "carts" ? <div className="wa"><AbandonedCarts rows={carts ?? []} /></div> : <div className="wa">
       <div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="Order number or firm…" value={q} onChange={(e) => setQ(e.target.value)} /></div>{status && <button className="b b-o b-s" onClick={() => setStatus(null)}>{ORDER_STATUS_LABEL[status as OrderStatus] ?? status} only <Icon n="x" s={11} style={{ display: "inline", verticalAlign: "-1px", marginLeft: 3 }} /></button>}{tab === "approve" && !status && <span style={{ fontSize: 12.5, color: "var(--t4)" }}>Sorted by hold remaining — the order about to lapse is always first</span>}<span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--t4)" }}>{rows.length} shown</span></div>
       <div className="gw"><table className="dg"><thead><tr><th style={{ width: 30 }}></th>{tab === "approve" && <th className="n">Hold left</th>}<th>Order</th><th>Firm</th><th>Lines</th><th className="n sortable" onClick={() => sortBy("total")}>Value{ic("total")}</th><th className="n sortable" onClick={() => sortBy("req")}>Required by{ic("req")}</th><th>Credit</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody>
         {pg.rows.length ? pg.rows.map((o) => { const c = o.customer, g = o.gate; const rd = daysTo(o.requiredBy), urgent = rd >= 0 && rd <= 7 && !["DELIVERED", "DISPATCHED", ...CLOSED].includes(o.status); const closed = CLOSED.includes(o.status);
@@ -51,6 +53,32 @@ export default function OrdersPage() {
             <td style={{ minWidth: 90 }}><div style={{ width: 74 }}><Bar pct={orderProgress(o.status as OrderStatus) * 100} color={closed ? "var(--er)" : undefined} /></div></td><td>{A.actionBtn(o)}</td></tr>; })
           : <tr><td colSpan={11}><Empty t="Nothing here" d="No orders in this stage for the selected line." action={<button className="b b-o" onClick={() => { setTab("all"); setQ(""); }}>Show all orders</button>} /></td></tr>}
       </tbody></table></div>
-    </div>
+    </div>}
+  </>;
+}
+
+interface AbandonedCart { customer: { id: string; name: string; tehsil: string; phone: string; group: string; salesExec: { name: string } | null }; updatedAt: string; ageDays: number; count: number; value: number; lines: { itemId: string; sku: string; name: string; qty: number; rate: number; amount: number; available: number; short: boolean }[] }
+
+// The portal has always written a Cart row per firm; nobody in the office could
+// see one. A firm that filled a basket and stopped is the warmest lead there
+// is — this is that list, read off the same rows, with the number to ring.
+function AbandonedCarts({ rows }: { rows: AbandonedCart[] }) {
+  const { openDrawer, openModal } = useUI();
+  if (!rows.length) return <Empty t="No baskets left open" d="Every firm that started a basket in the portal has either ordered or emptied it." />;
+  const value = rows.reduce((s, r) => s + r.value, 0);
+  return <>
+    <div className="tbar"><span style={{ fontSize: 12.5, color: "var(--t4)" }}>{rows.length} firm{rows.length === 1 ? "" : "s"} left a basket without booking · {money(value)} sitting in them</span></div>
+    <div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Left in the basket</th><th className="n">Lines</th><th className="n">Value</th><th className="n">Idle</th><th>Sales executive</th><th></th></tr></thead><tbody>
+      {rows.map((r) => <tr key={r.customer.id} onClick={() => openDrawer(<CustomerDrawer id={r.customer.id} />)}>
+        <td className="w">{r.customer.name}<div className="sm">{r.customer.tehsil} · {r.customer.phone}</div></td>
+        <td className="w">{r.lines.slice(0, 3).map((l) => <div key={l.itemId} className="sm"><span className="rid">{l.sku}</span> × {num(l.qty)}{l.short ? <span style={{ color: "var(--er)" }}> · only {num(l.available)} left</span> : ""}</div>)}{r.lines.length > 3 ? <div className="sm">+{r.lines.length - 3} more</div> : null}</td>
+        <td className="n tab">{r.count}</td>
+        <td className="n tab" style={{ fontWeight: 700 }}>{money(r.value)}</td>
+        <td className="n tab" style={{ color: r.ageDays > 3 ? "var(--er)" : "var(--t6)" }}>{r.ageDays === 0 ? "today" : r.ageDays + "d"}</td>
+        <td className="sm">{r.customer.salesExec?.name ?? "—"}</td>
+        <td><button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); openModal(<NewOrderModal customerId={r.customer.id} />, "w"); }}>Book it for them</button></td>
+      </tr>)}
+    </tbody></table></div>
+    <Note k="i" style={{ marginTop: 11 }}>These are live portal baskets, not orders — no stock is held against them. Booking one here raises an ordinary office order, which does hold stock.</Note>
   </>;
 }

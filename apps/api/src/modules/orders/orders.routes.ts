@@ -52,6 +52,12 @@ router.get("/catalogue", requirePerm("order.create"), asyncHandler(async (req, r
   res.json(await svc.orderCatalogue(q.customerId, q.line, q.q));
 }));
 
+// The office sees what firms left in their baskets — same Cart rows the portal
+// writes, nothing new stored.
+router.get("/abandoned-carts", requirePerm("order.create"), asyncHandler(async (_req, res) => {
+  res.json(await svc.abandonedCarts());
+}));
+
 router.post("/", requirePerm("order.create"), asyncHandler(async (req, res) => {
   const b = newOrderBody.parse(req.body);
   const o = await svc.createOrder(b, actor(req));

@@ -316,6 +316,36 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
 // The item list the office picks from, priced for the firm that is buying —
 // the same rate the firm would have seen in its own portal, so a phoned-in
 // order and a self-service one quote alike.
+// Abandoned carts are the portal's own Cart rows, which nobody in the office
+// could see. A firm that filled a basket and stopped is the warmest lead there
+// is, so the office gets the same view and can ring them.
+export async function abandonedCarts() {
+  const carts = await prisma.cart.findMany({
+    include: { customer: { select: { id: true, name: true, tehsil: true, phone: true, group: true, salesExec: { select: { name: true } } } } },
+    orderBy: { updatedAt: "desc" },
+  });
+  const out = [];
+  for (const cart of carts) {
+    const lines = (cart.lines as { itemId: string; qty: number }[]) || [];
+    if (!lines.length) continue;
+    const price = await pricerFor(cart.customer as unknown as { id: string; group: string });
+    const views = await loadItemViews({ id: { in: lines.map((l) => l.itemId) } });
+    let value = 0;
+    const rows = lines.map((l) => {
+      const it = views.find((v) => v.id === l.itemId);
+      const rate = it ? price(it, l.qty).rate : 0;
+      value += rate * l.qty;
+      return { itemId: l.itemId, sku: it?.sku ?? l.itemId, name: it?.name ?? "—", qty: l.qty, rate, amount: rate * l.qty, available: it?.available ?? 0, short: it ? l.qty > it.available : false };
+    });
+    out.push({
+      customer: cart.customer, updatedAt: cart.updatedAt,
+      ageDays: Math.floor((Date.now() - cart.updatedAt.getTime()) / 864e5),
+      lines: rows, count: rows.length, value,
+    });
+  }
+  return out.sort((a, b) => b.value - a.value);
+}
+
 export async function orderCatalogue(customerId: string, lineId?: string, q?: string) {
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
   if (!customer) throw notFound("Firm not found");
