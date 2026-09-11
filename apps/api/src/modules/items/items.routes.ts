@@ -49,7 +49,7 @@ router.post("/", requirePerm("item.edit"), asyncHandler(async (req, res) => {
   const b = itemSchema.parse(req.body);
   const line = await prisma.businessLine.findUnique({ where: { id: b.lineId } });
   if (!line) throw badRequest("Unknown business line");
-  const prefix = { cards: "WC", consumables: "CN", signage: "SG", jobwork: "JW" }[line.code] ?? line.code.slice(0, 2).toUpperCase();
+  const prefix = { cards: "WC", consumables: "CN", signage: "SG", acp: "AC", jobwork: "JW" }[line.code] ?? line.code.slice(0, 2).toUpperCase();
   const count = await prisma.item.count({ where: { lineId: line.id } });
   const sku = `${prefix}-${1000 + count * 3 + Math.floor(Math.random() * 3)}`;
   const id = `ITM-${Date.now().toString(36).toUpperCase()}`;

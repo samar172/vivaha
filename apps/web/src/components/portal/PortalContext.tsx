@@ -22,11 +22,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const [line, setLineS] = useState(""); const [sheet, setSheet] = useState<string | null>(null); const [sheetQty, setSheetQty] = useState(0); const [cartOpen, setCartOpen] = useState(false);
   useEffect(() => { if (!loading && (!user || user.role !== "CUSTOMER")) router.replace(user ? "/dashboard" : "/login"); }, [user, loading, router]);
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { if (me && !line) setLineS(me.firm.linesEnabled[0]); }, [me, line]);
+  useEffect(() => { if (me && !line) setLineS(me.lines[0]?.id ?? me.firm.linesEnabled[0]); }, [me, line]);
   const reload = () => { mutMe(); mutCart(); refresh("/api/portal"); };
   const addLine = async (itemId: string, qty: number, mode: "add" | "set" = "add") => { try { await post("/api/portal/cart", { itemId, qty, mode }); mutCart(); mutMe(); return true; } catch (e) { toast(e instanceof Error ? e.message : "Error", "e"); return false; } };
   const rmLine = async (itemId: string) => { await del(`/api/portal/cart/${itemId}`); mutCart(); mutMe(); };
   if (loading || !user || !me) return <div className="loading">Loading…</div>;
-  return <C.Provider value={{ me, line: line || me.firm.linesEnabled[0], setLine: setLineS, sheet, openSheet: (id, q) => { setSheet(id); setSheetQty(q ?? 0); setCartOpen(false); }, closeSheet: () => { setSheet(null); setCartOpen(false); }, sheetQty, cartOpen, openCart: () => { if (!cart?.count) return toast("कार्ट खाली है", "i"); setSheet(null); setCartOpen(true); }, cart: cart ?? null, addLine, rmLine, reload }}>{children}</C.Provider>;
+  return <C.Provider value={{ me, line: line || me.lines[0]?.id || me.firm.linesEnabled[0], setLine: setLineS, sheet, openSheet: (id, q) => { setSheet(id); setSheetQty(q ?? 0); setCartOpen(false); }, closeSheet: () => { setSheet(null); setCartOpen(false); }, sheetQty, cartOpen, openCart: () => { if (!cart?.count) return toast("कार्ट खाली है", "i"); setSheet(null); setCartOpen(true); }, cart: cart ?? null, addLine, rmLine, reload }}>{children}</C.Provider>;
 }
 export const usePortal = () => { const c = useContext(C); if (!c) throw new Error("usePortal outside provider"); return c; };

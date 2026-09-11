@@ -26,9 +26,12 @@ async function gate(c: Cust, orderValue = 0) {
 }
 const pub = (i: ItemView, rate: number) => ({ id: i.id, sku: i.sku, designNo: i.designNo, name: i.name, nameHi: i.nameHi, lineId: i.lineId, attrs: i.attrs, uom: i.uom, packUom: i.packUom, perPack: i.perPack, moq: i.moq, gstPct: i.gstPct, artSeed: i.artSeed, imageUrl: i.imageUrl, band: i.band, rate, status: i.status });
 
+// Job work is quoted with the office, not bought off the shelf, and the portal
+// has no flow for it — offering it in the line switcher only leads to a
+// catalogue where every item reads "0 available".
 router.get("/me", asyncHandler(async (req, res) => {
   const c = await me(req);
-  const [g, lines, cart, kit] = await Promise.all([gate(c), prisma.businessLine.findMany({ where: { id: { in: c.linesEnabled as string[] }, isActive: true }, orderBy: { sortOrder: "asc" } }), prisma.cart.findUnique({ where: { customerId: c.id } }), prisma.kit.findUnique({ where: { customerId: c.id } })]);
+  const [g, lines, cart, kit] = await Promise.all([gate(c), prisma.businessLine.findMany({ where: { id: { in: c.linesEnabled as string[] }, isActive: true, workflow: "FULFIL" }, orderBy: { sortOrder: "asc" } }), prisma.cart.findUnique({ where: { customerId: c.id } }), prisma.kit.findUnique({ where: { customerId: c.id } })]);
   res.json({ firm: { ...c, creditLimit: D(c.creditLimit), machines: c.machines }, gate: g, lines, cartCount: ((cart?.lines as unknown[]) || []).length, kit });
 }));
 
