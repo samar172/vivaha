@@ -9,6 +9,7 @@ import { useUI, errMsg } from "@/lib/ui";
 import { post, patch, del } from "@/lib/api";
 import { Pill, BandPill, LineChip, Thumb, DF, Section, ModalFrame, Field, Note } from "./ui";
 import { PageHead } from "./PageHead";
+import { useFooter } from "./Shell";
 import { Qr } from "./Qr";
 import { Icon } from "./icons";
 import type { ItemView } from "./types";
@@ -21,7 +22,10 @@ export function ItemDetail({ id }: { id: string }) {
   const { data: i } = useApi<ItemView & { txns: { id: string; type: string; qty: number; godownId: string; batchNo: string | null; at: string; by: string; reason: string | null }[]; minMargin: number }>(`/api/items/${id}`);
   const { data: lines } = useLines(); const { data: godowns } = useGodowns(); const { can } = useAuth(); const { openModal } = useUI();
   const router = useRouter();
-  if (!i) return <div className="wa"><div className="sm" style={{ padding: 16 }}>Loading…</div></div>;
+  // The footer's count belongs to whatever list was last shown; a detail page
+  // has no record count of its own, so clear it rather than inherit one.
+  useFooter(null);
+  if (!i) return <div className="wa"><div className="sm">Loading…</div></div>;
   const L = lines?.find((l) => l.id === i.lineId); const svc = L?.workflow === "JOBWORK";
   return <>
     <PageHead
@@ -35,9 +39,10 @@ export function ItemDetail({ id }: { id: string }) {
         {can("stock.transfer") && !svc && <button className="b b-o" onClick={() => openModal(<TransferModal itemId={i.id} />)}>Transfer</button>}
       </>}
     />
-    <div className="idg">
+    <div className="wa">
+      <div className="idg">
       <div>
-        <div className="wa" style={{ padding: 15 }}>
+        <div className="pn"><div className="pnb">
           <div style={{ display: "flex", gap: 14 }}>
             <Thumb it={i} w={150} h={195} style={{ width: 118 }} />
             <div style={{ minWidth: 0 }}>
@@ -47,19 +52,19 @@ export function ItemDetail({ id }: { id: string }) {
             </div>
           </div>
           <ItemPhoto item={i} />
-        </div>
-        <div className="wa" style={{ padding: 15, marginTop: 13 }}>
+        </div></div>
+        <div className="pn"><div className="pnb">
           <Section t={<>Quantity slabs · rate before customer multiplier</>}>
             <div className="sm" style={{ marginBottom: 7 }}>The highlighted row is the slab an order of the minimum quantity ({num(i.moq)} {i.uom}) falls in.</div>
             <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Margin at Regular ×1.25</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = Math.round(s.rate * 1.25); const m = ((r - i.landedCost) / r) * 100; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--wa-bg)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "∞" : num(s.toQty)}</td><td className="n tab">{money(s.rate)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table>
             <div className="sm" style={{ marginTop: 7 }}>Landed cost {money(i.landedCost)} · floor {money(marginFloor(i.landedCost, i.minMargin))}</div>
           </Section>
           <PriceHistorySection itemId={i.id} />
-        </div>
+        </div></div>
       </div>
 
       <div>
-        <div className="wa" style={{ padding: 15 }}>
+        <div className="pn"><div className="pnb">
           {svc ? <Section t="Stock"><div className="sm">Job work carries no stock of its own — base cards are drawn through a normal outward movement.</div></Section> :
             <Section t={<>Availability · {i.band.label}</>}>
               <DF k="On hand" v={num(i.onHand) + " " + i.uom} mono /><DF k="Reserved" v={num(i.reserved)} mono /><DF k="On hold" v={num(i.hold)} mono /><DF k="Damaged / quarantined" v={<span style={{ color: "var(--er)" }}>{num(i.damaged + i.quarantined)}</span>} mono />
@@ -67,13 +72,14 @@ export function ItemDetail({ id }: { id: string }) {
               <div className="sm" style={{ marginTop: 7 }}>MIN SET QTY for {L?.name} = {num(L?.minSetQty ?? 0)} {L?.uom} (global per line)</div>
             </Section>}
           {!svc && <Section t="Godown split"><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Godown</th><th className="n">On hand</th><th className="n">Res</th><th className="n">Hold</th><th className="n">Dmg</th><th className="n">Avail</th></tr></thead><tbody>{(godowns ?? []).map((g) => { const r = i.godowns.find((x) => x.godownId === g.id) ?? { onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0 }; return <tr key={g.id} style={{ cursor: "default" }}><td>{g.short}</td><td className="n tab">{num(r.onHand)}</td><td className="n tab">{num(r.reserved)}</td><td className="n tab">{num(r.hold)}</td><td className="n tab" style={{ color: "var(--er)" }}>{num(r.damaged + r.quarantined)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{num(r.available)}</td></tr>; })}</tbody></table></Section>}
-        </div>
-        <div className="wa" style={{ padding: 15, marginTop: 13 }}>
+        </div></div>
+        <div className="pn"><div className="pnb">
           <CodesSection itemId={i.id} name={i.name} />
-        </div>
-        <div className="wa" style={{ padding: 15, marginTop: 13 }}>
+        </div></div>
+        <div className="pn"><div className="pnb">
           <Section t="Recent movements">{i.txns.length ? i.txns.map((t) => <div className="ti" key={t.id}><span className="dt" /><div><div><span className="wo">{t.type}</span> {num(t.qty)} {i.uom} · {t.godownId}{t.batchNo && t.batchNo !== "-" ? " · " + t.batchNo : ""}</div><div className="wn">{fDT(t.at)} · {t.by}{t.reason ? " · " + t.reason : ""}</div></div></div>) : <div className="sm">No movements yet.</div>}</Section>
-        </div>
+        </div></div>
+      </div>
       </div>
     </div>
   </>;
