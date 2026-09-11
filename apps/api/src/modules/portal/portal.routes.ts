@@ -143,7 +143,10 @@ router.post("/cart", asyncHandler(async (req, res) => {
   const it = await loadItemView(b.itemId); if (!it) throw notFound("Item not found");
   const ls = await loadCart(c); const ex = ls.find((l) => l.itemId === b.itemId);
   const nq = b.mode === "add" ? (ex?.qty ?? 0) + b.qty : b.qty;
-  if (nq > it.available) throw badRequest(`सिर्फ़ ${it.available.toLocaleString("en-IN")} उपलब्ध`);
+  // "Out of stock" ends the conversation; "only 60 left" continues it. The
+  // shortfall carries the number so the cart can offer to take what there is,
+  // the way the item sheet already does.
+  if (nq > it.available) throw badRequest(`सिर्फ़ ${it.available.toLocaleString("en-IN")} उपलब्ध`, { available: it.available, requested: nq, moq: it.moq });
   if (nq < it.moq) { await saveCart(c, ls.filter((l) => l.itemId !== b.itemId)); }
   else { if (ex) ex.qty = nq; else ls.push({ itemId: b.itemId, qty: nq }); await saveCart(c, ls); }
   res.json(await cartView(c));

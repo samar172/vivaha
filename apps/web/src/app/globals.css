@@ -274,9 +274,15 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .pbody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .pc{max-width:1080px;margin:0 auto;padding:14px 14px 90px}
 .pnav{position:fixed;bottom:0;left:0;right:0;height:58px;background:#fff;border-top:1px solid var(--bd);display:flex;z-index:60}
-.pnav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;font-weight:600;color:var(--t4)}
-.pnav button .i{font-size:18.5px;line-height:1}
-.pnav button.on{color:var(--ac)}
+/* The bar holds links and one button (the cart sheet is not a route), and the
+   rule only ever named `button` — so every tab that was a link fell through
+   unstyled. Both are named now. */
+.pnav a,.pnav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;font-weight:600;color:var(--t4);text-decoration:none;background:none;border:0;cursor:pointer;min-width:0}
+.pnav a .i,.pnav button .i{font-size:18.5px;line-height:1;position:relative}
+.pnav a.on,.pnav button.on{color:var(--ac)}
+.pnav a:active,.pnav button:active{background:var(--bg-2,#F6F7F9)}
+/* Cart count, on the icon itself so the bar stays five equal columns. */
+.pnav .i .nb{position:absolute;top:-6px;left:11px;min-width:15px;height:15px;padding:0 4px;border-radius:8px;background:var(--er);color:#fff;font-size:10px;font-weight:700;line-height:15px;text-align:center}
 
 .scan{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:12px}
 .scanb{width:100%;height:62px;border-radius:10px;background:var(--ac);color:#fff;font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:9px}

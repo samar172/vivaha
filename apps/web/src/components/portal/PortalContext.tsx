@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useApi, refresh } from "@/lib/hooks";
 import { useUI } from "@/lib/ui";
-import { post, del } from "@/lib/api";
+import { post, del, ApiError } from "@/lib/api";
 import type { Band, CreditGate } from "@vivaha/shared";
 
 export interface PItem { id: string; sku: string; designNo: string | null; name: string; nameHi: string; lineId: string; attrs: Record<string, string>; uom: string; packUom: string; perPack: number; moq: number; gstPct: number; artSeed: number; imageUrl: string | null; band: Band; rate: number; status: string }
@@ -24,7 +24,25 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (me && !line) setLineS(me.lines[0]?.id ?? me.firm.linesEnabled[0]); }, [me, line]);
   const reload = () => { mutMe(); mutCart(); refresh("/api/portal"); };
-  const addLine = async (itemId: string, qty: number, mode: "add" | "set" = "add") => { try { await post("/api/portal/cart", { itemId, qty, mode }); mutCart(); mutMe(); return true; } catch (e) { toast(e instanceof Error ? e.message : "Error", "e"); return false; } };
+  // Asking for more than there is should not end the conversation. When the
+  // shortfall comes back with a number, take what there is instead of refusing
+  // — the same thing the item sheet offers, now in the cart too.
+  const addLine = async (itemId: string, qty: number, mode: "add" | "set" = "add") => {
+    try { await post("/api/portal/cart", { itemId, qty, mode }); mutCart(); mutMe(); return true; }
+    catch (e) {
+      const d = e instanceof ApiError ? (e.details as { available?: number; moq?: number } | undefined) : undefined;
+      if (d?.available != null && d.moq != null && d.available >= d.moq) {
+        try {
+          await post("/api/portal/cart", { itemId, qty: d.available, mode: "set" });
+          mutCart(); mutMe();
+          toast(`सिर्फ़ ${d.available.toLocaleString("en-IN")} उपलब्ध — वही जोड़े गए`, "w");
+          return true;
+        } catch { /* fall through to the plain message */ }
+      }
+      toast(e instanceof Error ? e.message : "Error", "e");
+      return false;
+    }
+  };
   const rmLine = async (itemId: string) => { await del(`/api/portal/cart/${itemId}`); mutCart(); mutMe(); };
   if (loading || !user || !me) return <div className="loading">Loading…</div>;
   return <C.Provider value={{ me, line: line || me.lines[0]?.id || me.firm.linesEnabled[0], setLine: setLineS, sheet, openSheet: (id, q) => { setSheet(id); setSheetQty(q ?? 0); setCartOpen(false); }, closeSheet: () => { setSheet(null); setCartOpen(false); }, sheetQty, cartOpen, openCart: () => { if (!cart?.count) return toast("कार्ट खाली है", "i"); setSheet(null); setCartOpen(true); }, cart: cart ?? null, addLine, rmLine, reload }}>{children}</C.Provider>;
