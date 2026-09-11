@@ -296,7 +296,10 @@ async function main() {
   await prisma.ad.createMany({ data: [
     { id: "AD-01", title: "Marudhar Paper Mills — Monsoon offer", sub: "300gsm art card, ₹4/sheet off on 10+ reams", target: {}, impressions: 1842, taps: 96 },
     { id: "AD-02", title: "Sunlite UV Coating Machines", sub: "Add UV finishing in-house · EMI from ₹18,400/mo", target: { noMachine: "UV" }, impressions: 640, taps: 71 },
-    { id: "AD-03", title: "SGL Inks — bulk rate this week", sub: "Process set 4×5kg at ₹1,580 · limited", target: { machine: "Offset" }, impressions: 1120, taps: 58 },
+    { id: "AD-03", title: "SGL Inks — bulk rate this week", sub: "Process set 4×5kg at ₹1,580 · limited", target: { machine: "Offset" }, lineId: "L2", itemId: "ITM-201", impressions: 1120, taps: 58 },
+    // A banner is worth having only if it goes somewhere. This one opens the
+    // cards catalogue; AD-03 opens the ink it is actually advertising.
+    { id: "AD-04", title: "Wedding range 2026 — now in stock", sub: "New designs across every community", lineId: "L1", target: {}, sortOrder: -1, impressions: 0, taps: 0 },
   ] });
   await prisma.referral.createMany({ data: [
     { id: "REF-01", byId: "CUST-101", name: "Marwar Card Bhandar", tehsil: "Nokha", phone: "+91 94141 20038", state: "Reward released", reward: 2000, createdAt: daysAgo(40) },

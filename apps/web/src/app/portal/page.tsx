@@ -11,31 +11,50 @@ import { useLang, itemName } from "@/lib/i18n";
 import { LineChip } from "@/components/ui";
 import { thumb } from "@/lib/art";
 
-interface Home { ad: { id: string; title: string; sub: string; imageUrl?: string | null; item?: { id: string } | null } | null; reorder: { orderId: string; lines: { item: PItem; qty: number }[] } | null; nudge: { item: PItem; qty: number; amount: number; machine: string | null } | null; newItems: PItem[]; hits: { item: PItem; sold: number; district: number }[] }
+interface Home { ad: { id: string; title: string; sub: string; imageUrl?: string | null; lineId?: string | null; item?: { id: string } | null } | null; reorder: { orderId: string; lines: { item: PItem; qty: number }[] } | null; nudge: { item: PItem; qty: number; amount: number; machine: string | null } | null; newItems: PItem[]; hits: { item: PItem; sold: number; district: number }[] }
 // The banner above the catalogue. With a picture it is the picture — a retailer
 // buys a card by looking at it — with the words laid over the bottom so they
 // stay readable whatever was uploaded. Without one it stays the gradient slot
 // it has always been, so an office that never uploads anything loses nothing.
-function Banner({ ad }: { ad: { id: string; title: string; sub: string; imageUrl?: string | null; item?: { id: string } | null } }) {
-  const P = usePortal(); const { lang } = useLang(); const { toast } = useUI();
+//
+// Where it goes matters more than how it looks. A banner pointed at an item
+// opens that item ready to book; one pointed at a line opens that line's
+// catalogue. A banner pointed at neither is not pretending to be a button.
+function Banner({ ad }: { ad: { id: string; title: string; sub: string; imageUrl?: string | null; lineId?: string | null; item?: { id: string } | null } }) {
+  const P = usePortal(); const { lang } = useLang(); const router = useRouter();
+  const goesToItem = !!ad.item?.id;
+  const goesToLine = !goesToItem && !!ad.lineId;
+  const clickable = goesToItem || goesToLine;
+
   const go = () => {
+    if (!clickable) return;
     post(`/api/portal/ads/${ad.id}/tap`, {}).catch(() => {});
-    if (ad.item?.id) P.openSheet(ad.item.id);
-    else toast(lang === "hi" ? "और जानकारी के लिए ऑफ़िस से बात करें" : "Ask the office for more", "i");
+    if (goesToItem) P.openSheet(ad.item!.id);
+    else { P.setLine(ad.lineId!); router.push("/portal/cat"); }
   };
-  if (!ad.imageUrl) return <div className="adslot" onClick={go} style={{ cursor: "pointer" }}>
+  const cta = goesToItem
+    ? (lang === "hi" ? "देखें और बुक करें" : "View and book")
+    : (lang === "hi" ? "सब देखें" : "See the range");
+
+  if (!ad.imageUrl) return <div className="adslot" onClick={go} style={{ cursor: clickable ? "pointer" : "default" }}>
     <div style={{ flex: 1 }}>
       <div className="l">{lang === "hi" ? "विज्ञापन" : "Featured"}</div>
       <div className="t">{ad.title}</div>
       <div className="s">{ad.sub}</div>
     </div>
-    <button className="b b-o b-s" style={{ background: "rgba(255,255,255,.14)", borderColor: "rgba(255,255,255,.24)", color: "#fff" }}>{lang === "hi" ? "देखें" : "See"}</button>
+    {clickable && <button className="b b-o b-s" style={{ background: "rgba(255,255,255,.14)", borderColor: "rgba(255,255,255,.24)", color: "#fff", whiteSpace: "nowrap" }}>{cta}</button>}
   </div>;
-  return <div className="banner" onClick={go}>
+
+  return <div className="banner" onClick={go} style={{ cursor: clickable ? "pointer" : "default" }}>
     <img src={ad.imageUrl} alt={ad.title} />
     <div className="cap">
-      <div className="t">{ad.title}</div>
-      {ad.sub && <div className="s">{ad.sub}</div>}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="t">{ad.title}</div>
+          {ad.sub && <div className="s">{ad.sub}</div>}
+        </div>
+        {clickable && <button className="b b-p b-s" style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{cta}</button>}
+      </div>
     </div>
   </div>;
 }

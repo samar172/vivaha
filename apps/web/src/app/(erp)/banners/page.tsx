@@ -81,7 +81,7 @@ export default function BannersPage() {
         </div>)}
       </div> : <Empty t="No banners yet" d="A banner is the first thing a firm sees when it opens the portal. Put this season's range on one." action={<button className="b b-p" onClick={() => openModal(<BannerForm onSaved={mutate} />, "w")}>+ New banner</button>} />}
 
-      <Note k="i" style={{ marginTop: 13 }}>The portal shows one banner at a time — the first live one that matches the firm, preferring a banner aimed at a machine they own. A banner with no line runs everywhere; one with dates runs only between them.</Note>
+      <Note k="i" style={{ marginTop: 13 }}>A banner that points at an item opens it ready to book; one that points only at a line opens that line&apos;s catalogue; one that points at neither is shown without a button, because it is a notice rather than a way in. The portal shows one banner at a time — the first live one that matches the firm, preferring a banner aimed at a machine they own. A banner with no line runs everywhere; one with dates runs only between them.</Note>
     </div>
   </>;
 }
@@ -168,9 +168,9 @@ function BannerForm({ ad, onSaved }: { ad?: Ad; onSaved: () => void }) {
           {lines?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </select>
       </Field>
-      <Field label="Tapping it opens" hint="Optional — otherwise it is just a notice">
+      <Field label="Tapping it opens" hint={f.itemId ? "That item, ready to book" : f.lineId ? "That line's catalogue" : "Nothing — it will not look like a button"}>
         <select value={f.itemId} onChange={(e) => setF({ ...f, itemId: e.target.value })}>
-          <option value="">Nothing</option>
+          <option value="">{f.lineId ? "The line's catalogue" : "Nothing — just a notice"}</option>
           {its.slice(0, 300).map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}
         </select>
       </Field>
