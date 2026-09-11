@@ -104,6 +104,41 @@ router.get("/scan", asyncHandler(async (req, res) => {
   res.json(items.map((i) => pub(i, price(i, i.moq).rate)));
 }));
 
+// "Tell me when it's back." Marks the short search the firm just made, so the
+// sweeper can raise a callback the moment there is enough stock to cover what
+// they actually asked for.
+router.post("/notify-me", asyncHandler(async (req, res) => {
+  const c = await me(req);
+  const b = z.object({ itemId: z.string(), qty: z.number().int().positive() }).parse(req.body);
+  const it = await loadItemView(b.itemId);
+  if (!it || !(c.linesEnabled as string[]).includes(it.lineId)) throw notFound("Item not found");
+  // The short search is already on record from the sheet; mark the most recent
+  // one rather than writing a second row that would double-count the demand.
+  const last = await prisma.stockoutSearch.findFirst({
+    where: { customerId: c.id, itemId: b.itemId, notifiedAt: null },
+    orderBy: { at: "desc" },
+  });
+  if (last) await prisma.stockoutSearch.update({ where: { id: last.id }, data: { notifyWanted: true, reqQty: Math.max(last.reqQty, b.qty) } });
+  else await prisma.stockoutSearch.create({ data: { itemId: b.itemId, customerId: c.id, reqQty: b.qty, availQty: it.available, notifyWanted: true } });
+  res.status(201).json({ ok: true, reqQty: b.qty });
+}));
+
+// What this firm is waiting on, and what has already come back for them.
+router.get("/waiting", asyncHandler(async (req, res) => {
+  const c = await me(req);
+  const rows = await prisma.stockoutSearch.findMany({
+    where: { customerId: c.id, notifyWanted: true },
+    include: { item: { select: { id: true, sku: true, designNo: true, name: true, nameHi: true, uom: true, artSeed: true, lineId: true, imageUrl: true } } },
+    orderBy: { at: "desc" }, take: 20,
+  });
+  const out = [];
+  for (const r of rows) {
+    const avail = await stock.availAll(prisma, r.itemId);
+    out.push({ id: r.id, item: r.item, reqQty: r.reqQty, available: avail, back: avail >= r.reqQty, askedAt: r.at, notifiedAt: r.notifiedAt });
+  }
+  res.json(out);
+}));
+
 router.get("/items/:id", asyncHandler(async (req, res) => {
   const c = await me(req);
   const qty = Number(req.query.qty || 0);

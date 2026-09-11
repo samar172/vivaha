@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { money, money2, num, fDT, daysTo } from "@vivaha/shared";
 import { useApi, useDebounced } from "@/lib/hooks";
-import { useUI } from "@/lib/ui";
+import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
 import { usePortal, type PItem } from "./PortalContext";
 import { LineChip, Hold } from "../ui";
@@ -54,7 +54,13 @@ function ItemSheet({ id }: { id: string }) {
         {data.alternates.length ? data.alternates.map((a) => <div className="altrow" key={a.item.id}><img className="th cw" src={thumb(a.item, 56, 72)} alt="" style={{ border: "1px solid var(--bd)", borderRadius: 4 }} /><div className="in"><div className={lang === "hi" ? "hi" : ""} style={{ fontSize: 14, fontWeight: 600 }}>{itemName(a.item, lang)}</div><div className="sm">{a.item.designNo || a.item.sku} · {Object.values(a.item.attrs).slice(0, 2).join(" · ")}</div><div style={{ marginTop: 4, fontSize: 14 }}><b>₹{a.rate}</b> · <span style={{ color: a.avail >= q ? "var(--ok)" : "var(--wa)" }}>{num(a.avail)} उपलब्ध</span></div></div><button className="b b-o b-s hi" onClick={() => P.openSheet(a.item.id, q)}>{t("view")}</button></div>) : <div className="sm hi">{t("noAlternatives")}</div>}
         {data.alternates.length > 0 && b.qty > 0 && <div className="split"><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }} className="hi">या मिला-जुला लें</div><div style={{ fontSize: 14, color: "var(--t6)" }}>{num(b.qty)} × {it.designNo || it.sku} + {num(q - b.qty)} × {data.alternates[0].item.designNo || data.alternates[0].item.sku} = {num(q)} {it.uom.toLowerCase()}</div><button className="b b-p hi" style={{ width: "100%", marginTop: 9 }} onClick={() => split(data.alternates[0].item, b.qty, q - b.qty)}>दोनों बुक करें</button></div>}</div>}
     </div>
-    <div className="shf"><div style={{ flex: 1 }}><div className="sm">{t("total")}</div><div style={{ fontSize: 18.5, fontWeight: 700 }} className="tab">{money(pr.rate * Math.min(q, short ? b.qty : q))}</div></div>{b.canBook ? <button className="b b-p hi" style={{ height: 44, padding: "0 26px", fontSize: 16.5 }} onClick={book}>{short ? t("bookAvailable") : t("book")}</button> : <button className="b b-o hi" style={{ height: 44, padding: "0 20px" }} onClick={() => { toast("हम आपको सूचित करेंगे", "s"); P.closeSheet(); }}>{t("notifyMe")}</button>}</div>
+    <div className="shf"><div style={{ flex: 1 }}><div className="sm">{t("total")}</div><div style={{ fontSize: 18.5, fontWeight: 700 }} className="tab">{money(pr.rate * Math.min(q, short ? b.qty : q))}</div></div>{b.canBook ? <button className="b b-p hi" style={{ height: 44, padding: "0 26px", fontSize: 16.5 }} onClick={book}>{short ? t("bookAvailable") : t("book")}</button> : <button className="b b-o hi" style={{ height: 44, padding: "0 20px" }} onClick={async () => {
+      try {
+        await post("/api/portal/notify-me", { itemId: it.id, qty: Math.max(q, it.moq) });
+        toast(lang === "hi" ? `स्टॉक आते ही बताएंगे — ${num(Math.max(q, it.moq))} ${it.uom.toLowerCase()}` : `We will tell you when ${num(Math.max(q, it.moq))} ${it.uom.toLowerCase()} is back`, "s");
+        P.closeSheet(); P.reload();
+      } catch (e) { toast(errMsg(e), "e"); }
+    }}>{t("notifyMe")}</button>}</div>
   </>;
 }
 

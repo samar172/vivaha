@@ -924,6 +924,13 @@ model StockoutSearch {
   reqQty     Int
   availQty   Int
   at         DateTime @default(now())
+  // The firm asked to be told when this comes back. Every short search is
+  // already recorded here for the demand report; this marks the ones where
+  // somebody actually wants a call, and when that call was raised, so it is
+  // raised once and not every time the sweeper looks.
+  notifyWanted Boolean  @default(false)
+  notifiedAt   DateTime?
 
   @@index([itemId, at])
+  @@index([notifyWanted, notifiedAt])
 }

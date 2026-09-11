@@ -7,10 +7,48 @@ import { useUI } from "@/lib/ui";
 import { apiFetch, post } from "@/lib/api";
 import { usePortal, type PItem } from "@/components/portal/PortalContext";
 import { CatGrid, Sect, HitRows } from "@/components/portal/Bits";
+import { useLang, itemName } from "@/lib/i18n";
 import { LineChip } from "@/components/ui";
 import { thumb } from "@/lib/art";
 
 interface Home { reorder: { orderId: string; lines: { item: PItem; qty: number }[] } | null; nudge: { item: PItem; qty: number; amount: number; machine: string | null } | null; ad: { id: string; title: string; sub: string } | null; newItems: PItem[]; hits: { item: PItem; sold: number; district: number }[] }
+interface Waiting { id: string; item: PItem; reqQty: number; available: number; back: boolean; askedAt: string; notifiedAt: string | null }
+
+// What this firm asked to be told about. When it is back the row says so and
+// opens straight into the sheet at the quantity they wanted — the point of
+// asking was to finish the order, not to read a notice.
+function WaitingList() {
+  const P = usePortal(); const { lang } = useLang();
+  const { data } = useApi<Waiting[]>("/api/portal/waiting");
+  if (!data?.length) return null;
+  const back = data.filter((w) => w.back);
+  const still = data.filter((w) => !w.back);
+  return <>
+    <Sect t={lang === "hi" ? "आपके इंतज़ार वाले माल" : "What you are waiting for"} />
+    <div className="blk">
+      {back.map((w) => <div className="altrow" key={w.id}>
+        <img className="th cw" src={thumb(w.item, 56, 72)} alt="" style={{ border: "1px solid var(--bd)", borderRadius: 4 }} />
+        <div className="in">
+          <div className={lang === "hi" ? "hi" : ""} style={{ fontSize: 14, fontWeight: 600 }}>{itemName(w.item, lang)}</div>
+          <div className="sm">{w.item.designNo || w.item.sku}</div>
+          <div style={{ marginTop: 4, fontSize: 14, color: "var(--ok)", fontWeight: 700 }}>
+            {lang === "hi" ? `वापस आ गया — ${num(w.available)} उपलब्ध` : `Back in stock — ${num(w.available)} available`}
+          </div>
+        </div>
+        <button className="b b-p b-s hi" onClick={() => P.openSheet(w.item.id, w.reqQty)}>{lang === "hi" ? "बुक करें" : "Book"}</button>
+      </div>)}
+      {still.map((w) => <div className="altrow" key={w.id}>
+        <img className="th cw" src={thumb(w.item, 56, 72)} alt="" style={{ border: "1px solid var(--bd)", borderRadius: 4, opacity: .65 }} />
+        <div className="in">
+          <div className={lang === "hi" ? "hi" : ""} style={{ fontSize: 14, fontWeight: 600 }}>{itemName(w.item, lang)}</div>
+          <div className="sm">{lang === "hi" ? `${num(w.reqQty)} चाहिए · अभी ${num(w.available)}` : `${num(w.reqQty)} wanted · ${num(w.available)} now`}</div>
+        </div>
+        <span className="bd b-nu">{lang === "hi" ? "इंतज़ार" : "Waiting"}</span>
+      </div>)}
+    </div>
+  </>;
+}
+
 export default function PortalHome() {
   const P = usePortal(); const { toast } = useUI(); const router = useRouter(); const [scan, setScan] = useState<PItem[] | null>(null); const [sv, setSv] = useState("");
   const { data } = useApi<Home>(`/api/portal/home?line=${P.line}`); const c = P.me!.firm, L = P.me!.lines.find((l) => l.id === P.line);
@@ -24,6 +62,7 @@ export default function PortalHome() {
     {data?.reorder && <><Sect t="फिर से ऑर्डर करें" more="सब जोड़ें" onMore={() => reorder(data.reorder!.orderId)} /><div className="strip">{data.reorder.lines.map((l) => <div className="it" key={l.item.id} onClick={() => P.openSheet(l.item.id, l.qty)}><img className="cw" src={thumb(l.item, 80, 100)} alt="" /><div className="n">{l.item.designNo || l.item.sku}</div><div className="q">{num(l.qty)} {l.item.uom.toLowerCase()}</div></div>)}</div></>}
     {data?.nudge && <div className="nudge"><img className="cw" src={thumb(data.nudge.item, 54, 54)} alt="" style={{ width: 44 }} /><div className="b1"><div className="t hi">स्याही ख़त्म होने वाली है</div><div className="s">{data.nudge.item.name} · {data.nudge.qty} {data.nudge.item.uom} · {money(data.nudge.amount)}</div><div className="sm" style={{ marginTop: 3, fontFamily: "inherit" }}>{data.nudge.machine ?? "your machine"} — 5 दिन में लगेगी</div></div><button className="b b-p b-s" onClick={async () => { if (await P.addLine(data.nudge!.item.id, data.nudge!.qty)) toast("Added to cart", "s"); }}><span className="hi">जोड़ें</span></button></div>}
     {data?.ad && <div className="adslot"><div style={{ flex: 1 }}><div className="l">विज्ञापन</div><div className="t">{data.ad.title}</div><div className="s">{data.ad.sub}</div></div><button className="b b-o b-s" style={{ background: "rgba(255,255,255,.14)", borderColor: "rgba(255,255,255,.24)", color: "#fff" }} onClick={() => toast("Advertiser landing page", "i")}>देखें</button></div>}
+    <WaitingList />
     <Sect t={`${L?.nameHi ?? ""} — नया माल`} more="सब देखें" onMore={() => router.push("/portal/cat")} />{data && <CatGrid list={data.newItems} />}
     <Sect t="इस सीज़न के हिट डिज़ाइन" more="सब देखें" onMore={() => router.push("/portal/hits")} /><div className="blk">{data && <HitRows rows={data.hits} />}</div>
     <div className="blk" style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 11 }}><div style={{ flex: 1 }}><div style={{ fontSize: 15, fontWeight: 700 }} className="hi">रेफ़र करें और कमाएं</div><div style={{ fontSize: 13.5, color: "var(--t6)" }} className="hi">हर नए ग्राहक के पहले भुगतान पर ₹2,000 खाते में जमा</div></div><button className="b b-o b-s" onClick={() => router.push("/portal/refer")}><span className="hi">खोलें</span></button></div>
