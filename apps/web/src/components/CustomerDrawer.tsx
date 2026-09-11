@@ -10,7 +10,7 @@ import { Icon } from "./icons";
 import type { Customer, ItemView } from "./types";
 
 const SPEC: Record<string, string> = { colours: "Colours", ink: "Ink brand", company: "Machine company", roller: "Roller cloth", chem: "Chemicals brand", industry: "Industry", model: "Model" };
-type Full = Customer & { multiplier: number; outstanding: number; statement: { id: string; date: string; particular: string; debit: number; credit: number; bal: number }[]; ageing: { buckets: number[]; labels: string[] }; orders: { id: string; total: number; status: string; createdAt: string }[]; overrides: { itemId: string; sku: string; name: string; rate: number; slabRate: number; groupRate: number; floor: number }[] };
+type Full = Customer & { multiplier: number; outstanding: number; statement: { id: string; date: string; particular: string; debit: number; credit: number; bal: number }[]; ageing: { buckets: number[]; labels: string[] }; orders: { id: string; total: number; status: string; createdAt: string }[]; overrides: { itemId: string; sku: string; name: string; rate: number; slabRate: number; groupRate: number; floor: number; mode?: "FLAT" | "PERCENT"; pct?: number | null }[] };
 
 export function CustomerDrawer({ id }: { id: string }) {
   const { data: c } = useApi<Full>(`/api/customers/${id}`); const { closeDrawer, openModal, toast } = useUI(); const { can } = useAuth(); const { data: lines } = useLines();
@@ -19,7 +19,7 @@ export function CustomerDrawer({ id }: { id: string }) {
   const unblock = async () => { try { await post(`/api/customers/${id}/unblock`); toast("Block lifted", "s"); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <DrawerFrame onClose={closeDrawer} head={<><span className="rid" style={{ fontSize: 14.5 }}>{c.name}</span><Pill s={c.blockReason ? "Blocked" : "Active"} /></>}
     actions={<>{can("cust.edit") && <button className="b b-o b-s" onClick={() => openModal(<CustomerForm customer={c} />, "w")}>Edit</button>}{can("cust.price") && <button className="b b-o b-s" onClick={() => openModal(<OverrideModal c={c} />)}>Price overrides</button>}{can("payment.create") && <button className="b b-o b-s" onClick={() => openModal(<PaymentModal customerId={id} />)}>Record payment</button>}{can("cust.block") && (c.blockReason ? <button className="b b-o b-s" onClick={unblock}>Lift block</button> : <button className="b b-d b-s" onClick={() => openModal(<BlockModal c={c} />, "n")}>Temporary block</button>)}</>}>
-    <Section t="Firm"><DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} /><DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} /><DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} /><DF k="Deals in" v={c.linesEnabled.map((l) => lines?.find((x) => x.id === l)?.name ?? l).join(", ")} /></Section>
+    <Section t="Firm"><DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} /><DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} />{!!c.priceAdjPct && <DF k="Firm discount" v={`${c.priceAdjPct}% off the group rate`} />}<DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} /><DF k="Deals in" v={c.linesEnabled.map((l) => lines?.find((x) => x.id === l)?.name ?? l).join(", ")} /></Section>
     {c.blockReason && <Note k="w"><b>Blocked</b> by {c.blockedBy} on {fDate(c.blockedAt)} — {c.blockReason}{c.blockUntil ? ` · auto-lift ${fDate(c.blockUntil)}` : ""}</Note>}
     <Section t="Contacts & logins">{c.contacts.map((ct) => <DF key={ct.id} k={<>{ct.name} <span className="sm">{ct.role}</span></>} v={<>{ct.phone} {ct.hasLogin && <span className="bd b-ok" style={{ marginLeft: 4 }}>login</span>}</>} mono />)}<div className="sm" style={{ marginTop: 6 }}>Owner authority may approve a credit-breaching order; Staff cannot — it routes to the owner.</div></Section>
     <Section t="Credit gate · time or amount, whichever first"><DF k="Credit limit" v={money(c.creditLimit)} mono /><DF k="Outstanding" v={<span style={{ color: g.amountBreach ? "var(--er)" : undefined }}>{money(g.out)}</span>} mono /><DF k="Credit days" v={c.creditDays || "Advance"} mono /><DF k="Oldest unpaid" v={<span style={{ color: g.timeBreach ? "var(--er)" : undefined }}>{g.oldestAge ? g.oldestAge + " days" : "—"}</span>} mono /><DF k="Gate mode" v={c.gateMode} /><div style={{ marginTop: 8 }}><Bar pct={g.util * 100} color={g.restricted ? "var(--er)" : g.util > .85 ? "var(--wa)" : "var(--ok)"} /></div><div className="sm" style={{ marginTop: 5 }}>{Math.round(g.util * 100)}% of limit used{g.restricted ? ` — ${g.amountBreach ? "amount breached" : ""}${g.amountBreach && g.timeBreach ? " and " : ""}${g.timeBreach ? "credit days exceeded" : ""}` : ""}</div></Section>
@@ -38,15 +38,53 @@ function BlockModal({ c }: { c: Customer }) {
 
 function OverrideModal({ c }: { c: Full }) {
   const { closeModal, toast } = useUI(); const { data: items } = useApi<{ items: ItemView[] }>("/api/items"); const { data: full, mutate } = useApi<Full>(`/api/customers/${c.id}`);
-  const its = (items?.items ?? []).filter((i) => i.status === "ACTIVE" && c.linesEnabled.includes(i.lineId));
-  const [iid, setIid] = useState(""); const [rate, setRate] = useState(55);
+  const { data: lines } = useLines();
+  // Cards are sold from one published list; only the negotiated lines carry
+  // per-firm pricing, and the line master is what says which is which.
+  const negotiable = (id: string) => lines?.find((l) => l.id === id)?.allowCustomPricing !== false;
+  const its = (items?.items ?? []).filter((i) => i.status === "ACTIVE" && c.linesEnabled.includes(i.lineId) && negotiable(i.lineId));
+  const [iid, setIid] = useState(""); const [mode, setMode] = useState<"FLAT" | "PERCENT">("FLAT");
+  const [rate, setRate] = useState(55); const [pct, setPct] = useState(5); const [reason, setReason] = useState("");
+  const [adj, setAdj] = useState(full?.priceAdjPct ?? c.priceAdjPct ?? 0);
   const list = full?.overrides ?? c.overrides;
-  const add = async () => { try { const r = await put<{ belowFloor: boolean; floor: number }>(`/api/customers/${c.id}/overrides/${iid || its[0]?.id}`, { rate: Number(rate) }); toast(r.belowFloor ? `Set at ${money(rate)} — below floor ${money(r.floor)}, logged in audit` : "Override set", r.belowFloor ? "w" : "s"); mutate(); refresh("/api/customers"); } catch (e) { toast(errMsg(e), "e"); } };
+  const sel = its.find((i) => i.id === (iid || its[0]?.id));
+
+  const add = async () => {
+    try {
+      const body = mode === "FLAT" ? { mode, rate: Number(rate), reason } : { mode, pct: Number(pct), reason };
+      const r = await put<{ belowFloor: boolean; floor: number; effective: number; listRate: number }>(`/api/customers/${c.id}/overrides/${iid || its[0]?.id}`, body);
+      toast(r.belowFloor ? `Set at ${money(r.effective)} — below floor ${money(r.floor)}, logged in audit` : `Set at ${money(r.effective)} against a list rate of ${money(r.listRate)}`, r.belowFloor ? "w" : "s");
+      mutate(); refresh("/api/customers");
+    } catch (e) { toast(errMsg(e), "e"); }
+  };
   const rm = async (itemId: string) => { await del(`/api/customers/${c.id}/overrides/${itemId}`); toast("Override removed", "s"); mutate(); refresh("/api/customers"); };
-  return <ModalFrame title={"Price overrides — " + c.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Close</button><button className="b b-p" onClick={add}>Set override</button></>}>
-    <Note style={{ marginBottom: 13 }}>An override outranks the quantity slab and the group multiplier. It still cannot go below the margin floor without an authorised override.</Note>
-    {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Override</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{o.sku} {o.name}</td><td className="n tab">{money(o.slabRate)}</td><td className="n tab">{money(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{money(o.rate)}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No overrides set for this firm.</div>}
-    <div className="fg"><Field label="Item"><select value={iid || its[0]?.id || ""} onChange={(e) => setIid(e.target.value)}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field><Field label="Override rate (₹ per unit)"><input type="number" value={rate} onChange={(e) => setRate(Number(e.target.value))} /></Field></div>
+  const saveAdj = async () => {
+    try { await patch(`/api/customers/${c.id}`, { priceAdjPct: Number(adj) }); toast(adj ? `${adj}% off everything this firm buys` : "Firm-wide discount cleared", "s"); mutate(); refresh("/api/"); }
+    catch (e) { toast(errMsg(e), "e"); }
+  };
+
+  return <ModalFrame title={"Pricing — " + c.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Close</button><button className="b b-p" disabled={!its.length} onClick={add}>Set item price</button></>}>
+    <div className="st">Firm-wide</div>
+    <div className="sm" style={{ marginBottom: 8 }}>Applies to everything this firm buys, on top of the <b>{c.group}</b> group multiplier of ×{c.multiplier}. A per-item arrangement below outranks it.</div>
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 15 }}>
+      <Field label="Discount off the group rate (%)"><input type="number" value={adj} onChange={(e) => setAdj(Number(e.target.value))} /></Field>
+      <button className="b b-o" style={{ marginBottom: 2 }} onClick={saveAdj}>Save</button>
+    </div>
+
+    <div className="st">Per item</div>
+    <Note style={{ marginBottom: 13 }}>A per-item price outranks the quantity slab, the group multiplier and the firm-wide discount. It still cannot go below the margin floor without an authorised override. <b>Cards are not listed</b> — that line is sold from a fixed price list, so its rates are changed on the item itself.</Note>
+    {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Agreed</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{o.sku} {o.name}</td><td className="n tab">{money(o.slabRate)}</td><td className="n tab">{money(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{money(o.rate)}{o.mode === "PERCENT" && o.pct != null ? <div className="sm">{o.pct}% off list</div> : null}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No per-item pricing set for this firm.</div>}
+    {its.length ? <>
+      <div className="fg">
+        <Field label="Item" full><select value={iid || its[0]?.id || ""} onChange={(e) => setIid(e.target.value)}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
+        <Field label="How it was agreed"><select value={mode} onChange={(e) => setMode(e.target.value as "FLAT" | "PERCENT")}><option value="FLAT">A fixed rate</option><option value="PERCENT">A discount off list</option></select></Field>
+        {mode === "FLAT"
+          ? <Field label="Agreed rate (₹ per unit)"><input type="number" value={rate} onChange={(e) => setRate(Number(e.target.value))} /></Field>
+          : <Field label="Discount (%)" hint="Follows the price list, so it stays right when rates move"><input type="number" value={pct} onChange={(e) => setPct(Number(e.target.value))} /></Field>}
+        <Field label="Reason" full><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Volume commitment for the season" /></Field>
+      </div>
+      {sel && <div className="sm" style={{ marginTop: 7 }}>{sel.sku} landed cost {money(sel.landedCost)} · MOQ {sel.moq} {sel.uom}</div>}
+    </> : <div className="sm">This firm deals only in lines that use the fixed price list.</div>}
   </ModalFrame>;
 }
 
@@ -78,6 +116,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
     address: customer?.address ?? "", linesEnabled: customer?.linesEnabled ?? ["L1"], group: customer?.group ?? "Regular",
     salesExecId: customer?.salesExecId ?? "", creditLimit: customer?.creditLimit ?? 150000, creditDays: customer?.creditDays ?? 30,
     gateMode: (customer?.gateMode ?? "WARN") as "WARN" | "BLOCK",
+    priceAdjPct: customer?.priceAdjPct ?? 0,
   });
   const [contacts, setContacts] = useState<FormContact[]>(
     customer?.contacts?.length
@@ -108,6 +147,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
       <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div></Field>
       <Field label="Pricing group"><select value={f.group} onChange={(e) => setF({ ...f, group: e.target.value })}>{groups?.map((g) => <option key={g.name} value={g.name}>{g.name} — ×{g.multiplier}</option>)}</select></Field><Field label="Sales executive"><select value={f.salesExecId} onChange={(e) => setF({ ...f, salesExecId: e.target.value })}><option value="">—</option>{execs?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
       <Field label="Credit limit (₹)" hint="Suggested ₹1,80,000 from machine capacity"><input type="number" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: Number(e.target.value) })} /></Field><Field label="Credit days" hint="Time or amount, whichever breaches first"><input type="number" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: Number(e.target.value) })} /></Field>
+      <Field label="Firm discount (%)" hint="Off the group rate, on everything they buy. Per-item prices are set from the drawer."><input type="number" value={f.priceAdjPct} onChange={(e) => setF({ ...f, priceAdjPct: Number(e.target.value) })} /></Field>
       <Field label="Gate mode" full><select value={f.gateMode} onChange={(e) => setF({ ...f, gateMode: e.target.value as "WARN" | "BLOCK" })}><option value="WARN">WARN — allow with a recorded reason</option><option value="BLOCK">BLOCK — needs an authorised override</option></select></Field></div>
 
     <div className="st" style={{ marginTop: 16 }}>Numbers &amp; staff</div>

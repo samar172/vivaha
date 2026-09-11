@@ -27,11 +27,41 @@ export function ItemDrawer({ id }: { id: string }) {
           <div className="sm" style={{ marginTop: 7 }}>MIN SET QTY for {L?.name} = {num(L?.minSetQty ?? 0)} {L?.uom} (global per line)</div>
         </Section>}
       {!svc && <Section t="Godown split"><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Godown</th><th className="n">On hand</th><th className="n">Res</th><th className="n">Hold</th><th className="n">Dmg</th><th className="n">Avail</th></tr></thead><tbody>{(godowns ?? []).map((g) => { const r = i.godowns.find((x) => x.godownId === g.id) ?? { onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0 }; return <tr key={g.id} style={{ cursor: "default" }}><td>{g.short}</td><td className="n tab">{num(r.onHand)}</td><td className="n tab">{num(r.reserved)}</td><td className="n tab">{num(r.hold)}</td><td className="n tab" style={{ color: "var(--er)" }}>{num(r.damaged + r.quarantined)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{num(r.available)}</td></tr>; })}</tbody></table></Section>}
-      <Section t="Quantity slabs Â· rate before customer multiplier"><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Margin at Regular Ã—1.25</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = Math.round(s.rate * 1.25); const m = ((r - i.landedCost) / r) * 100; return <tr key={x} style={{ cursor: "default" }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "âˆž" : num(s.toQty)}</td><td className="n tab">{money(s.rate)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table><div className="sm" style={{ marginTop: 7 }}>Landed cost {money(i.landedCost)} Â· floor {money(marginFloor(i.landedCost, i.minMargin))} Â· HSN {i.hsn} Â· GST {i.gstPct}%</div></Section>
+      <Section t={<>Quantity slabs · rate before customer multiplier</>}>
+        <div className="sm" style={{ marginBottom: 7 }}>The highlighted row is the slab an order of the minimum quantity ({num(i.moq)} {i.uom}) falls in.</div>
+        <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Margin at Regular Ã—1.25</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = Math.round(s.rate * 1.25); const m = ((r - i.landedCost) / r) * 100; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--bg-sel, #FFF8E6)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "âˆž" : num(s.toQty)}</td><td className="n tab">{money(s.rate)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table><div className="sm" style={{ marginTop: 7 }}>Landed cost {money(i.landedCost)} Â· floor {money(marginFloor(i.landedCost, i.minMargin))} Â· HSN {i.hsn} Â· GST {i.gstPct}%</div></Section>
+      <PriceHistorySection itemId={i.id} />
       <CodesSection itemId={i.id} name={i.name} />
       <Section t="Recent movements">{i.txns.length ? i.txns.map((t) => <div className="ti" key={t.id}><span className="dt" /><div><div><span className="wo">{t.type}</span> {num(t.qty)} {i.uom} Â· {t.godownId}{t.batchNo && t.batchNo !== "-" ? " Â· " + t.batchNo : ""}</div><div className="wn">{fDT(t.at)} Â· {t.by}{t.reason ? " Â· " + t.reason : ""}</div></div></div>) : <div className="sm">No movements yet.</div>}</Section>
     </DrawerFrame>
   );
+}
+
+interface PriceChange { id: string; field: string; oldValue: number; newValue: number; change: number; pct: number; by: string; reason: string; at: string }
+
+// What this item used to cost and what it costs now, straight off the record of
+// actual changes. Nothing is estimated, and an item nobody has repriced simply
+// says so rather than inventing a trend.
+const FIELD_LABEL: Record<string, string> = { slab1: "Slab 1 rate", landedCost: "Landed cost" };
+function PriceHistorySection({ itemId }: { itemId: string }) {
+  const { data } = useApi<PriceChange[]>(`/api/items/${itemId}/price-history`);
+  if (!data) return null;
+  if (!data.length) return <Section t="Price history"><div className="sm">No price change recorded yet. Every future change to the slab 1 rate or the landed cost is logged here with who made it and when.</div></Section>;
+  const rises = data.filter((d) => d.field === "slab1" && d.change > 0).length;
+  const falls = data.filter((d) => d.field === "slab1" && d.change < 0).length;
+  return <Section t="Price history">
+    <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Changed</th><th>What</th><th className="n">From</th><th className="n">To</th><th className="n">Change</th><th>By</th></tr></thead><tbody>
+      {data.map((d) => <tr key={d.id} style={{ cursor: "default" }}>
+        <td className="sm">{fDT(d.at)}</td>
+        <td>{FIELD_LABEL[d.field] ?? d.field}{d.reason ? <div className="sm">{d.reason}</div> : null}</td>
+        <td className="n tab">{money(d.oldValue)}</td>
+        <td className="n tab" style={{ fontWeight: 600 }}>{money(d.newValue)}</td>
+        <td className="n tab" style={{ color: d.change > 0 ? "var(--er)" : "var(--ok)" }}>{d.change > 0 ? "+" : ""}{money(d.change)}<div className="sm" style={{ color: "inherit" }}>{d.pct > 0 ? "+" : ""}{d.pct.toFixed(1)}%</div></td>
+        <td className="sm">{d.by}</td>
+      </tr>)}
+    </tbody></table>
+    <div className="sm" style={{ marginTop: 7 }}>{data.length} change{data.length === 1 ? "" : "s"} recorded · slab 1 raised {rises} time{rises === 1 ? "" : "s"}, reduced {falls} time{falls === 1 ? "" : "s"}.</div>
+  </Section>;
 }
 
 interface Code { id: string; code: string; kind: "OWN" | "MANUFACTURER"; status: "ACTIVE" | "REPLACED"; note: string | null; by: string; createdAt: string; replacedAt: string | null; vendor: { id: string; name: string } | null }

@@ -27,6 +27,16 @@ router.get("/", requirePerm("item.view"), asyncHandler(async (req, res) => {
   res.json({ items: rows, minMargin: await getMinMargin() });
 }));
 
+// Price movements for one item, newest first — previous, current, the change
+// and who made it. Read straight off ItemPriceHistory; nothing is estimated.
+router.get("/:id/price-history", requirePerm("item.view"), asyncHandler(async (req, res) => {
+  const rows = await prisma.itemPriceHistory.findMany({ where: { itemId: req.params.id }, orderBy: { at: "desc" }, take: 50 });
+  res.json(rows.map((r) => {
+    const oldV = D(r.oldValue), newV = D(r.newValue);
+    return { id: r.id, field: r.field, oldValue: oldV, newValue: newV, change: newV - oldV, pct: oldV ? ((newV - oldV) / oldV) * 100 : 0, by: r.by, reason: r.reason, at: r.at };
+  }));
+}));
+
 router.get("/:id", requirePerm("item.view"), asyncHandler(async (req, res) => {
   const v = await loadItemView(req.params.id);
   if (!v) throw notFound("Item not found");
@@ -66,9 +76,21 @@ router.patch("/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => 
   const before = await prisma.item.findUnique({ where: { id: req.params.id } });
   if (!before) throw notFound("Item not found");
   const { slabs, ...rest } = b;
+  const beforeSlabs = await prisma.priceSlab.findMany({ where: { itemId: before.id }, orderBy: { fromQty: "asc" } });
   await prisma.$transaction(async (tx) => {
     await tx.item.update({ where: { id: before.id }, data: { ...rest, vendorId: rest.vendorId === undefined ? undefined : rest.vendorId } });
     if (slabs) { await tx.priceSlab.deleteMany({ where: { itemId: before.id } }); await tx.priceSlab.createMany({ data: slabs.map((s) => ({ ...s, itemId: before.id })) }); }
+
+    // "Why is this dearer than last season" needs an answer with a name and a
+    // date on it. The audit log carries the same facts as prose; this is the
+    // shape a screen can chart. Only actual movements are written.
+    const hist: { field: string; oldValue: number; newValue: number }[] = [];
+    const oldBase = beforeSlabs[0] ? D(beforeSlabs[0].rate) : null;
+    const newBase = slabs?.[0]?.rate ?? null;
+    if (oldBase != null && newBase != null && oldBase !== newBase) hist.push({ field: "slab1", oldValue: oldBase, newValue: newBase });
+    if (rest.landedCost != null && D(before.landedCost) !== rest.landedCost) hist.push({ field: "landedCost", oldValue: D(before.landedCost), newValue: rest.landedCost });
+    if (hist.length) await tx.itemPriceHistory.createMany({ data: hist.map((h) => ({ ...h, itemId: before.id, by: req.user!.name, reason: (req.body as { reason?: string }).reason ?? "" })) });
+
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: b.status && b.status !== before.status ? "Item " + b.status.toLowerCase() : "Item updated", entityType: "Item", entityId: before.sku, oldValue: b.landedCost != null ? "cost " + D(before.landedCost) : before.status, newValue: b.landedCost != null ? "cost " + b.landedCost : b.status ?? "edited" });
   });
   res.json(await loadItemView(before.id));

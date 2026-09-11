@@ -62,6 +62,7 @@ const custSchema = z.object({
   name: z.string().min(1), contactName: z.string().min(1), phone: z.string().min(5), tehsil: z.string().min(1), gstin: z.string().optional(), firmType: z.string().default("Registered"),
   address: z.string().default(""), linesEnabled: z.array(z.string()).min(1), group: z.string().default("Regular"), salesExecId: z.string().nullable().optional(),
   creditLimit: z.number().min(0).default(0), creditDays: z.number().int().min(0).default(0), gateMode: z.enum(["WARN", "BLOCK"]).default("WARN"),
+  priceAdjPct: z.number().min(0, "A discount cannot be negative").max(90, "That is not a discount, that is a giveaway").default(0),
   machines: z.array(z.object({ type: z.string(), spec: z.record(z.string()).default({}) })).default([]),
   contacts: z.array(contactSchema).default([]),
 });
@@ -77,7 +78,7 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
       ? b.contacts.map(({ id: _drop, ...ct }) => ct)
       : [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }];
     if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" });
-    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
+    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer created", entityType: "Customer", entityId: b.name, newValue: `${b.group} · limit ₹${b.creditLimit}`, reason: "New onboarding" });
     return c;
   });
@@ -132,16 +133,41 @@ router.post("/:id/unblock", requirePerm("cust.block"), asyncHandler(async (req, 
 }));
 
 router.put("/:id/overrides/:itemId", requirePerm("cust.price"), asyncHandler(async (req, res) => {
-  const { rate, reason } = z.object({ rate: z.number().positive("Enter a valid rate"), reason: z.string().default("Negotiated rate") }).parse(req.body);
-  const [c, it, minMargin] = await Promise.all([prisma.customer.findUnique({ where: { id: req.params.id } }), prisma.item.findUnique({ where: { id: req.params.itemId } }), getMinMargin()]);
+  const b = z.object({
+    mode: z.enum(["FLAT", "PERCENT"]).default("FLAT"),
+    rate: z.number().positive("Enter a valid rate").optional(),
+    pct: z.number().min(0, "A discount cannot be negative").max(90, "That is not a discount, that is a giveaway").optional(),
+    reason: z.string().default("Negotiated rate"),
+  }).parse(req.body);
+  const [c, it, minMargin] = await Promise.all([
+    prisma.customer.findUnique({ where: { id: req.params.id } }),
+    prisma.item.findUnique({ where: { id: req.params.itemId }, include: { line: true, slabs: { orderBy: { fromQty: "asc" } } } }),
+    getMinMargin(),
+  ]);
   if (!c || !it) throw notFound();
+
+  // Cards go out on one published price list; only the negotiated lines carry
+  // per-firm pricing. Which is which is configuration on the business line.
+  if (!it.line.allowCustomPricing) throw badRequest(`${it.line.name} is sold from a fixed price list — per-firm pricing is not used on this line. Change the slab rates on the item instead.`);
+
+  // Whichever way it was entered, the floor is checked against the rupee figure
+  // the firm would actually pay at this item's minimum order quantity.
+  const mult = await groupMultiplier(c.group);
+  const listRate = Math.round(slabRate(it.slabs.map((s) => ({ fromQty: s.fromQty, toQty: s.toQty, rate: D(s.rate) })), it.moq) * mult);
+  if (b.mode === "FLAT" && b.rate == null) throw badRequest("Enter the agreed rate");
+  if (b.mode === "PERCENT" && b.pct == null) throw badRequest("Enter the agreed discount");
+  const effective = b.mode === "FLAT" ? b.rate! : Math.round(listRate * (1 - b.pct! / 100));
+
   const floor = marginFloor(D(it.landedCost), minMargin);
-  if (rate < floor && !can(req, "margin.override")) throw forbidden(`₹${rate} is below the margin floor of ₹${floor} — your role cannot override it`);
+  if (effective < floor && !can(req, "margin.override")) throw forbidden(`₹${effective} is below the margin floor of ₹${floor} — your role cannot override it`);
+
+  const shown = b.mode === "FLAT" ? `₹${effective}` : `${b.pct}% off (₹${effective} at MOQ)`;
   await prisma.$transaction(async (tx) => {
-    await tx.priceOverride.upsert({ where: { customerId_itemId: { customerId: c.id, itemId: it.id } }, create: { customerId: c.id, itemId: it.id, rate, reason, setBy: req.user!.name }, update: { rate, reason, setBy: req.user!.name } });
-    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer price override set", entityType: "Customer", entityId: c.name, oldValue: "—", newValue: `${it.sku} = ₹${rate}`, reason: rate < floor ? `Below margin floor ₹${floor}, overridden by ${req.user!.role}` : reason });
+    const data = { mode: b.mode, rate: effective, pct: b.mode === "PERCENT" ? b.pct! : null, reason: b.reason, setBy: req.user!.name };
+    await tx.priceOverride.upsert({ where: { customerId_itemId: { customerId: c.id, itemId: it.id } }, create: { customerId: c.id, itemId: it.id, ...data }, update: data });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer price override set", entityType: "Customer", entityId: c.name, oldValue: `list ₹${listRate}`, newValue: `${it.sku} = ${shown}`, reason: effective < floor ? `Below margin floor ₹${floor}, overridden by ${req.user!.role}` : b.reason });
   });
-  res.json({ ok: true, belowFloor: rate < floor, floor });
+  res.json({ ok: true, belowFloor: effective < floor, floor, effective, listRate });
 }));
 router.delete("/:id/overrides/:itemId", requirePerm("cust.price"), asyncHandler(async (req, res) => {
   await prisma.priceOverride.deleteMany({ where: { customerId: req.params.id, itemId: req.params.itemId } });

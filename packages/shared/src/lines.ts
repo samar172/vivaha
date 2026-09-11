@@ -22,6 +22,8 @@ export interface BusinessLineConfig {
   workflow: LineWorkflow;
   facets: string[];
   sortOrder: number;
+  /** Cards are sold from one published list; the negotiated lines carry per-firm pricing. */
+  allowCustomPricing?: boolean;
 }
 
 export const isServiceLine = (l: Pick<BusinessLineConfig, "workflow">) => l.workflow === "JOBWORK";

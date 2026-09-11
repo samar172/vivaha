@@ -21,30 +21,68 @@ export function marginFloor(landedCost: number, minMargin = DEFAULT_MIN_MARGIN):
   return Math.round(landedCost * (1 + minMargin));
 }
 
+// A per-item arrangement with one firm. FLAT freezes the rupee figure; PERCENT
+// keeps a negotiated discount riding on top of the published slab, so it stays
+// correct the next time the price list moves.
+export type PriceAdjust =
+  | { mode: "FLAT"; rate: number }
+  | { mode: "PERCENT"; pct: number };
+
 export interface PriceResult {
   rate: number;
-  src: "override" | "slab";
+  /** Where the final rate came from — shown to the operator so a price is never unexplained. */
+  src: "override" | "override-pct" | "customer" | "slab";
   slab: number;
   mult: number;
+  /** The band the quantity fell in, so a screen can say which slab applied. */
+  slabFrom: number;
+  slabTo: number;
+  /** The published rate before any firm-specific arrangement. */
+  listRate: number;
+  /** Firm-wide percentage adjustment that was applied, if any. */
+  adjPct: number;
   floor: number;
   belowFloor: boolean;
   margin: number;
 }
 
+const pctOff = (base: number, pct: number) => Math.round(base * (1 - pct / 100));
+
 export function priceFor(
   item: PriceableItem,
   groupMultiplier: number,
   qty: number,
-  override?: number | null,
-  minMargin = DEFAULT_MIN_MARGIN
+  override?: PriceAdjust | number | null,
+  minMargin = DEFAULT_MIN_MARGIN,
+  customerAdjPct = 0
 ): PriceResult {
-  const slab = slabRate(item.slabs, qty || item.moq);
+  const q = qty || item.moq;
+  const band = item.slabs.find((x) => q >= x.fromQty && q <= x.toQty) ?? item.slabs[0];
+  const slab = band ? band.rate : 0;
   const mult = groupMultiplier ?? 1.25;
-  let rate: number, src: PriceResult["src"];
-  if (override != null) { rate = override; src = "override"; }
-  else { rate = Math.round(slab * mult); src = "slab"; }
+
+  // The published rate: quantity slab times the firm's group multiplier.
+  const listRate = Math.round(slab * mult);
+  // A firm-wide arrangement applies to everything they buy...
+  const adjPct = customerAdjPct || 0;
+  const afterAdj = adjPct ? pctOff(listRate, adjPct) : listRate;
+
+  // ...and a per-item one outranks it.
+  let rate = afterAdj;
+  let src: PriceResult["src"] = adjPct ? "customer" : "slab";
+  if (override != null) {
+    if (typeof override === "number") { rate = override; src = "override"; }
+    else if (override.mode === "FLAT") { rate = override.rate; src = "override"; }
+    else { rate = pctOff(listRate, override.pct); src = "override-pct"; }
+  }
+
   const floor = marginFloor(item.landedCost, minMargin);
-  return { rate, src, slab, mult, floor, belowFloor: rate < floor, margin: rate > 0 ? (rate - item.landedCost) / rate : 0 };
+  return {
+    rate, src, slab, mult,
+    slabFrom: band?.fromQty ?? 0, slabTo: band?.toQty ?? 0,
+    listRate, adjPct,
+    floor, belowFloor: rate < floor, margin: rate > 0 ? (rate - item.landedCost) / rate : 0,
+  };
 }
 
 // Weighted-average landed cost after a goods receipt (freight apportioned).
