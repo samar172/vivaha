@@ -13,11 +13,11 @@ const minsAhead = (n: number) => new Date(Date.now() + n * 60_000);
 const PASSWORD = "demo123";
 
 const LINES = [
-  { id: "L1", code: "cards", name: "Cards", nameHi: "कार्ड", icon: "🪔", color: "#A81F52", bg: "#FCEEF3", uom: "PCS", packUoms: ["Box", "Packet", "Dozen"], minSetQty: 500, holdMins: 30, gstPct: 12, stockDims: ["design"], batchTracked: false, pricingModel: "SLAB", workflow: "FULFIL", facets: ["community", "occasion", "paper", "size", "fold"], sortOrder: 1, allowCustomPricing: false },
-  { id: "L2", code: "consumables", name: "Ink & Chemicals", nameHi: "स्याही व केमिकल", icon: "🛢️", color: "#0E7490", bg: "#ECFAFD", uom: "KG", packUoms: ["Tin", "Drum", "Roll", "Nos"], minSetQty: 25, holdMins: 45, gstPct: 18, stockDims: ["batch"], batchTracked: true, pricingModel: "SLAB", workflow: "FULFIL", facets: ["machine", "brand", "grade"], sortOrder: 2 },
-  { id: "L3", code: "signage", name: "Flex", nameHi: "फ़्लेक्स", icon: "🪧", color: "#4338CA", bg: "#EEF0FE", uom: "SQ.FT", packUoms: ["Sheet", "Roll"], minSetQty: 200, holdMins: 45, gstPct: 18, stockDims: ["lot"], batchTracked: false, pricingModel: "AREA", workflow: "FULFIL", facets: ["material", "thickness", "finish"], sortOrder: 3 },
-  { id: "L5", code: "acp", name: "ACP", nameHi: "एसीपी", icon: "▭", color: "#B45309", bg: "#FEF6EC", uom: "SQ.FT", packUoms: ["Sheet"], minSetQty: 32, holdMins: 45, gstPct: 18, stockDims: ["lot"], batchTracked: false, pricingModel: "AREA", workflow: "FULFIL", facets: ["material", "thickness", "finish"], sortOrder: 4 },
-  { id: "L4", code: "jobwork", name: "Job Work", nameHi: "जॉब वर्क", icon: "🖨️", color: "#15803D", bg: "#ECFDF3", uom: "JOB", packUoms: [], minSetQty: 0, holdMins: 0, gstPct: 18, stockDims: [], batchTracked: false, pricingModel: "QUOTE", workflow: "JOBWORK", facets: ["process", "colours"], sortOrder: 5 },
+  { id: "L1", code: "cards", name: "Cards", nameHi: "कार्ड", icon: "🪔", color: "#A81F52", bg: "#FCEEF3", uom: "PCS", packUoms: ["Box", "Packet", "Dozen"], minSetQty: 500, holdMins: 30, gstPct: 12, stockDims: ["design"], batchTracked: false, pricingModel: "SLAB", workflow: "FULFIL", facets: ["community", "occasion", "paper", "size", "fold"], sortOrder: 1, allowCustomPricing: false, invoicePrefix: "VC" },
+  { id: "L2", code: "consumables", name: "Ink & Chemicals", nameHi: "स्याही व केमिकल", icon: "🛢️", color: "#0E7490", bg: "#ECFAFD", uom: "KG", packUoms: ["Tin", "Drum", "Roll", "Nos"], minSetQty: 25, holdMins: 45, gstPct: 18, stockDims: ["batch"], batchTracked: true, pricingModel: "SLAB", workflow: "FULFIL", facets: ["machine", "brand", "grade"], sortOrder: 2, invoicePrefix: "VCN" },
+  { id: "L3", code: "signage", name: "Flex", nameHi: "फ़्लेक्स", icon: "🪧", color: "#4338CA", bg: "#EEF0FE", uom: "SQ.FT", packUoms: ["Sheet", "Roll"], minSetQty: 200, holdMins: 45, gstPct: 18, stockDims: ["lot"], batchTracked: false, pricingModel: "AREA", workflow: "FULFIL", facets: ["material", "thickness", "finish"], sortOrder: 3, invoicePrefix: "VFX" },
+  { id: "L5", code: "acp", name: "ACP", nameHi: "एसीपी", icon: "▭", color: "#B45309", bg: "#FEF6EC", uom: "SQ.FT", packUoms: ["Sheet"], minSetQty: 32, holdMins: 45, gstPct: 18, stockDims: ["lot"], batchTracked: false, pricingModel: "AREA", workflow: "FULFIL", facets: ["material", "thickness", "finish"], sortOrder: 4, invoicePrefix: "VAC" },
+  { id: "L4", code: "jobwork", name: "Job Work", nameHi: "जॉब वर्क", icon: "🖨️", color: "#15803D", bg: "#ECFDF3", uom: "JOB", packUoms: [], minSetQty: 0, holdMins: 0, gstPct: 18, stockDims: [], batchTracked: false, pricingModel: "QUOTE", workflow: "JOBWORK", facets: ["process", "colours"], sortOrder: 5, invoicePrefix: "VJW" },
 ] as const;
 const GODOWNS = [
   { id: "GD-A", name: "Godown A — Junagarh Road", short: "GD-A", manager: "Rahin Qureshi", address: "Plot 14, Junagarh Road Industrial Area, Bikaner" },
@@ -178,7 +178,7 @@ async function main() {
   await prisma.sequence.create({ data: { name: "TRF", value: 2202 } });
 
   /* orders */
-  await prisma.sequence.create({ data: { name: "INV-" + fy(), value: 411 } });
+  await prisma.sequence.create({ data: { name: "INV-L1-" + fy(), value: 411 } });
   const plan: [number, string, string[], number, number][] = [[0, "DELIVERED", ["L1"], 38, -20], [1, "DELIVERED", ["L1", "L2"], 34, -18], [2, "DELIVERED", ["L1"], 30, -14], [6, "DELIVERED", ["L1"], 27, -12], [7, "DELIVERED", ["L1"], 24, -10], [8, "DELIVERED", ["L1", "L2"], 21, -8], [3, "DISPATCHED", ["L1"], 9, 3], [5, "DISPATCHED", ["L1"], 7, 4], [1, "PARTIALLY_DISPATCHED", ["L1"], 6, 5], [2, "READY_TO_DISPATCH", ["L1", "L2"], 5, 6], [9, "PACKED", ["L1"], 4, 7], [10, "PICKING", ["L1"], 4, 9], [11, "ALLOCATED", ["L1"], 3, 11], [12, "RESERVED", ["L1", "L3", "L5"], 3, 13], [13, "APPROVED", ["L1"], 2, 14], [0, "BOOKED", ["L1"], 0, 6], [4, "BOOKED", ["L1"], 0, 9], [14, "BOOKED", ["L1"], 0, 16], [15, "BOOKED", ["L1", "L2"], 0, 12], [3, "REJECTED", ["L1"], 12, 0], [5, "LAPSED", ["L1"], 5, 0], [9, "CANCELLED", ["L1"], 16, 0]];
   let on = 1061;
   const WHY: Record<string, string> = { RESERVED: "Temporary hold converted to firm reservation", ALLOCATED: "Godown allocation confirmed", PICKING: "Pick list generated", PICKED: "All lines picked", PACKED: "Packed into boxes", READY_TO_DISPATCH: "Staged at dispatch bay", DISPATCHED: "Dispatched via transporter", DELIVERED: "Delivery confirmed by customer" };
@@ -253,8 +253,10 @@ async function main() {
       const at = daysAgo(Math.max(0, p[3] - 2));
       const invLines = lrows.filter((l) => shipped.find((s) => s.itemId === l.itemId)).map((l) => { const q = shipped.find((s) => s.itemId === l.itemId)!.qty; return { l, qty: q, amount: q * Number(l.rate) }; });
       const t = invoiceTotals(invLines.map((x) => ({ amount: x.amount, gstPct: x.l.gstPct })), c.gstin);
-      const no = await nextInvoiceNo(prisma);
-      await prisma.invoice.create({ data: { no, orderId: id, customerId: c.id, date: at, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: invLines.map((x) => ({ itemId: x.l.itemId, itemName: item(x.l.itemId).name, sku: item(x.l.itemId).sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })) } } });
+      // Seeded orders are all cards, so they bill on the cards series.
+      const series = await prisma.businessLine.findUniqueOrThrow({ where: { id: lrows[0].lineId } });
+      const no = await nextInvoiceNo(prisma, series);
+      await prisma.invoice.create({ data: { no, lineId: series.id, orderId: id, customerId: c.id, date: at, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: invLines.map((x) => ({ itemId: x.l.itemId, itemName: item(x.l.itemId).name, sku: item(x.l.itemId).sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })) } } });
       await prisma.ledgerEntry.create({ data: { customerId: c.id, date: at, type: "INVOICE", ref: no, particular: `Tax Invoice ${no} · ${id}`, debit: t.total, credit: 0 } });
       await prisma.dispatch.create({ data: { orderId: id, transporter: ["Rajasthan Roadways Cargo", "Marudhar Transport Co.", "Bikaner Fast Freight", "Shree Balaji Carriers"][i % 4], lr: "LR-" + (55120 + i * 17), tracking: "TRK" + (904100 + i * 271), packages: lines.length + 1, freight: 400 + i * 35, lines: shipped, invoiceNo: no, at, by: "Farhan Sheikh" } });
     }

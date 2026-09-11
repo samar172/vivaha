@@ -145,8 +145,12 @@ export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
     }
     const invLines = o.lines.filter((l) => (inp.ship[l.itemId] ?? 0) > 0).map((l) => ({ l, qty: inp.ship[l.itemId], amount: inp.ship[l.itemId] * D(l.rate) }));
     const t = invoiceTotals(invLines.map((x) => ({ amount: x.amount, gstPct: x.l.gstPct })), o.customer.gstin, homeState);
-    const no = await nextInvoiceNo(tx);
-    await tx.invoice.create({ data: { no, orderId: o.id, customerId: o.customerId, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: invLines.map((x) => ({ itemId: x.l.itemId, itemName: x.l.item.name, sku: x.l.item.sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })) } } });
+    // An order is confined to one business line, so the invoice bills on that
+    // line's own series and carries the line for the register to filter on.
+    const lineId = o.lines[0]?.lineId;
+    const series = await tx.businessLine.findUniqueOrThrow({ where: { id: lineId } });
+    const no = await nextInvoiceNo(tx, series);
+    await tx.invoice.create({ data: { no, lineId, orderId: o.id, customerId: o.customerId, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: invLines.map((x) => ({ itemId: x.l.itemId, itemName: x.l.item.name, sku: x.l.item.sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })) } } });
     await tx.ledgerEntry.create({ data: { customerId: o.customerId, date: new Date(), type: "INVOICE", ref: no, particular: `Tax Invoice ${no} · ${o.id}`, debit: t.total, credit: 0 } });
     const d = await tx.dispatch.create({ data: { orderId: o.id, transporter: inp.transporter, lr: inp.lr, tracking: inp.tracking ?? "", packages: inp.packages ?? 1, freight: inp.freight ?? 0, ewb: inp.ewb ?? null, lines: shippedLines, invoiceNo: no, by: actor.name } });
     const fresh = await tx.orderLine.findMany({ where: { orderId: o.id } });

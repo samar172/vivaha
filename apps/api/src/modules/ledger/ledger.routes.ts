@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma, D } from "../../db";
+import { fyCode } from "../../services/sequence";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { gatesForAll, customerFinance } from "../../services/credit";
@@ -27,9 +28,41 @@ router.get("/customers/:id", requirePerm("ledger.view", "cust.view"), asyncHandl
   res.json({ customer: { ...c, creditLimit: D(c.creditLimit) }, ...(await customerFinance(c)) });
 }));
 
-router.get("/invoices", requirePerm("ledger.view"), asyncHandler(async (_req, res) => {
-  const rows = await prisma.invoice.findMany({ include: { customer: { select: { name: true, gstin: true, firmType: true } } }, orderBy: { date: "desc" } });
+// The invoice register. Each line bills on its own series, so the register is
+// filtered by line the way every other screen is — the line switcher in the
+// topbar is the same control here as on items or orders.
+router.get("/invoices", requirePerm("ledger.view"), asyncHandler(async (req, res) => {
+  const q = z.object({ line: z.string().optional(), q: z.string().optional(), from: z.string().optional(), to: z.string().optional() }).parse(req.query);
+  const rows = await prisma.invoice.findMany({
+    where: {
+      ...(q.line && q.line !== "ALL" ? { lineId: q.line } : {}),
+      ...(q.from || q.to ? { date: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to + "T23:59:59") } : {}) } } : {}),
+      ...(q.q ? { OR: [{ no: { contains: q.q, mode: "insensitive" } }, { customer: { name: { contains: q.q, mode: "insensitive" } } }, { orderId: { contains: q.q, mode: "insensitive" } }] } : {}),
+    },
+    include: { customer: { select: { name: true, gstin: true, firmType: true, tehsil: true } }, line: { select: { id: true, name: true } } },
+    orderBy: { date: "desc" },
+  });
   res.json(rows.map((i) => ({ ...i, taxable: D(i.taxable), cgst: D(i.cgst), sgst: D(i.sgst), igst: D(i.igst), total: D(i.total), tax: D(i.cgst) + D(i.sgst) + D(i.igst) })));
+}));
+
+// What the next invoice on each line will be numbered — shown in Settings so
+// the series and its starting number can be checked before the first one goes
+// out, and read-only because changing a number after the fact is not a thing
+// you do to a tax invoice.
+router.get("/invoice-series", requirePerm("ledger.view"), asyncHandler(async (_req, res) => {
+  const lines = await prisma.businessLine.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } });
+  const fy = fyCode();
+  const seqs = await prisma.sequence.findMany({ where: { name: { startsWith: "INV-" } } });
+  res.json(lines.map((l) => {
+    const cur = seqs.find((s) => s.name === `INV-${l.id}-${fy}`)?.value ?? null;
+    const next = cur == null ? l.invoiceStart : cur + 1;
+    return {
+      lineId: l.id, name: l.name, prefix: l.invoicePrefix, start: l.invoiceStart,
+      fy, issued: cur == null ? 0 : Math.max(0, cur - l.invoiceStart + 1),
+      nextNo: `${l.invoicePrefix}/${fy}/${String(next).padStart(4, "0")}`,
+      started: cur != null,
+    };
+  }));
 }));
 
 router.get("/payments", requirePerm("ledger.view"), asyncHandler(async (_req, res) => {

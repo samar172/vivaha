@@ -4,6 +4,8 @@ import { prisma, D } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { audit } from "../../services/audit";
+import { badRequest } from "../../utils/httpError";
+import { fyCode } from "../../services/sequence";
 
 const router = Router();
 
@@ -16,11 +18,23 @@ const lineSchema = z.object({
   name: z.string().min(1).optional(), nameHi: z.string().optional(), icon: z.string().optional(), minSetQty: z.number().int().min(0).optional(),
   holdMins: z.number().int().min(0).optional(), gstPct: z.number().int().min(0).max(28).optional(), packUoms: z.array(z.string()).optional(),
   facets: z.array(z.string()).optional(), isActive: z.boolean().optional(),
+  allowCustomPricing: z.boolean().optional(),
+  // The invoice series for this line. The prefix is letters only — it becomes
+  // part of a tax invoice number, which is printed and filed.
+  invoicePrefix: z.string().regex(/^[A-Za-z]{1,6}$/, "Use one to six letters, e.g. VC or VFX").optional(),
+  invoiceStart: z.number().int().min(1, "An invoice series starts at 1 or above").optional(),
 });
 router.patch("/lines/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
   const body = lineSchema.parse(req.body);
   const before = await prisma.businessLine.findUniqueOrThrow({ where: { id: req.params.id } });
-  const line = await prisma.businessLine.update({ where: { id: req.params.id }, data: body });
+  // The starting number only governs a series that has not begun. Once an
+  // invoice has been raised on it, moving the start would re-issue numbers that
+  // are already on documents, so it is refused rather than silently ignored.
+  if (body.invoiceStart != null && body.invoiceStart !== before.invoiceStart) {
+    const started = await prisma.sequence.findUnique({ where: { name: `INV-${before.id}-${fyCode()}` } });
+    if (started) throw badRequest(`${before.name} has already billed on ${before.invoicePrefix}/${fyCode()} — the starting number cannot move once a series is in use. It applies to the next financial year.`);
+  }
+  const line = await prisma.businessLine.update({ where: { id: req.params.id }, data: { ...body, invoicePrefix: body.invoicePrefix?.toUpperCase() } });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Business line updated", entityType: "Line", entityId: line.name, oldValue: JSON.stringify({ minSetQty: before.minSetQty, holdMins: before.holdMins, gstPct: before.gstPct }), newValue: JSON.stringify(body) });
   res.json(line);
 }));

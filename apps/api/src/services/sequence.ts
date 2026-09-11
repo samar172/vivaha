@@ -15,7 +15,23 @@ export function fyCode(d: Date = new Date()): string {
   return `${String(y).slice(2)}-${String(y + 1).slice(2)}`;
 }
 
-export const nextInvoiceNo = async (db: Db) => `VC/${fyCode()}/${String(await nextSeq(db, "INV-" + fyCode())).padStart(4, "0")}`;
+// A counter that begins at a configured number rather than at 1. The first
+// call returns `start` itself; afterwards it behaves like any other sequence.
+export async function nextSeqFrom(db: Db, name: string, start: number): Promise<number> {
+  const rows = await db.$queryRaw<{ value: number }[]>`
+    INSERT INTO "Sequence" ("name", "value") VALUES (${name}, ${Math.max(1, start)})
+    ON CONFLICT ("name") DO UPDATE SET "value" = "Sequence"."value" + 1
+    RETURNING "value"`;
+  return rows[0].value;
+}
+
+// Each business line bills on its own series — a flex invoice and a card
+// invoice are never the same number — and each series restarts every financial
+// year. The prefix and the number to start from are set in Settings against the
+// line, so a new line needs no code.
+export interface InvoiceSeries { id: string; invoicePrefix: string; invoiceStart: number }
+export const nextInvoiceNo = async (db: Db, line: InvoiceSeries) =>
+  `${line.invoicePrefix}/${fyCode()}/${String(await nextSeqFrom(db, `INV-${line.id}-${fyCode()}`, line.invoiceStart)).padStart(4, "0")}`;
 export const nextCreditNoteNo = async (db: Db) => `CN/${fyCode()}/${String(await nextSeq(db, "CN-" + fyCode())).padStart(3, "0")}`;
 export const nextOrderNo = async (db: Db) => `ORD-${await nextSeq(db, "ORD")}`;
 export const nextPurchaseNo = async (db: Db) => `PO-${await nextSeq(db, "PO")}`;

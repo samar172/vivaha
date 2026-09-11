@@ -191,10 +191,16 @@ model BusinessLine {
   // Cards go out on a fixed published price list; flex, ACP and the rest are
   // negotiated per firm. Which is which is configuration, not code.
   allowCustomPricing Boolean @default(true)
+  // Each line bills on its own series, so a flex invoice and a card invoice are
+  // never the same number. The prefix and the number to start from are set in
+  // Settings; the series itself restarts every financial year.
+  invoicePrefix      String  @default("VC")
+  invoiceStart       Int     @default(1)
 
   items      Item[]
   attributes AttributeDef[]
   orderLines OrderLine[]
+  invoices   Invoice[]
 }
 
 // "Or any other" / "future option to add more fields" — every classification
@@ -663,6 +669,12 @@ model Dispatch {
 
 model Invoice {
   no         String   @id // VC/26-27/0412
+  // The line this invoice bills for, copied from the order at the moment it is
+  // raised. An order is confined to one business line, so this is unambiguous,
+  // and it is stored rather than joined so the invoice register can be filtered
+  // by line without walking every order line.
+  lineId     String?
+  line       BusinessLine? @relation(fields: [lineId], references: [id])
   orderId    String
   order      Order    @relation(fields: [orderId], references: [id])
   customerId String
@@ -678,6 +690,7 @@ model Invoice {
   lines      InvoiceLine[]
 
   @@index([customerId, date])
+  @@index([lineId, date])
 }
 
 model InvoiceLine {
