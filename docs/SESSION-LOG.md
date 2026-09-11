@@ -140,6 +140,25 @@ were reinstalled. `docs/DEPLOY.md` now says plainly never to use that flag.
 - README "Not yet done" otherwise unchanged: server-side Excel/PDF exports,
   physical stock-count session, real camera scanning in the portal.
 
+### Zero errors and zero warnings (`bc07eb1`)
+
+`eslint`, `tsc --noEmit` and `next build` are all clean on the whole web
+package — note `npx eslint src` misses `next.config.ts`; run `npx eslint .`.
+
+The long-standing `react-hooks/set-state-in-effect` error in `Qr.tsx` is gone:
+the cached bitmap is now read in the render that asks for it (adjusting state
+during render when value or size changes) instead of in an effect, which also
+saves a second render pass on each of the fourteen codes a stock page draws.
+
+Devanagari moved from a `<link>` to fonts.googleapis.com onto `next/font`, so
+it is self-hosted with the face CSS inlined; `--dev` resolves to
+`var(--font-dev)` and keeps the installed system faces behind it.
+
+`@next/next/no-img-element` is off in `eslint.config.mjs`, in one place with
+the reason: every `<img>` here is a `data:` URL, an already-sized Cloudinary
+URL, or `/api/uploads` — `next/image` cannot take the first and would bill a
+Vercel transform per card photograph for the rest.
+
 ### Route audit and installable apps (`8ed945d`)
 
 Audited all 32 built routes against the nav, every internal link target and
