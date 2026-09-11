@@ -155,7 +155,7 @@ function Palette({ initial, onClose, setGodown, godowns }: { initial: string; on
           {ql.startsWith("godown") && <><div className="plg">Godown</div>{[{ id: "ALL", name: "All godowns" }, ...godowns].map((g) => <div className="pli" key={g.id} onClick={() => setGodown(g.id)}><span className="ic"><Icon n="pin" s={15} /></span>{g.name}</div>)}</>}
           {data?.orders.length ? <><div className="plg">Orders</div>{data.orders.map((o) => <div className="pli" key={o.id} onClick={() => go(`/orders?open=${o.id}`)}><span className="ic"><Icon n="receipt" s={15} /></span>{o.id} — {o.firm}<kbd>{o.status.replace(/_/g, " ")}</kbd></div>)}</> : null}
           {data?.items.length ? <><div className="plg">Items</div>{data.items.map((i) => <div className="pli" key={i.id} onClick={() => go(`/items/${i.id}`)}><span className="ic"><Icon n="tag" s={15} /></span>{i.sku} — {i.name}<kbd>{num(i.available)}</kbd></div>)}</> : null}
-          {data?.customers.length ? <><div className="plg">Customers</div>{data.customers.map((c) => <div className="pli" key={c.id} onClick={() => go(`/customers?open=${c.id}`)}><span className="ic"><Icon n="users" s={15} /></span>{c.name}<kbd>{money(c.outstanding)}</kbd></div>)}</> : null}
+          {data?.customers.length ? <><div className="plg">Customers</div>{data.customers.map((c) => <div className="pli" key={c.id} onClick={() => go(`/customers/${c.id}`)}><span className="ic"><Icon n="users" s={15} /></span>{c.name}<kbd>{money(c.outstanding)}</kbd></div>)}</> : null}
           {!nav.length && !data?.orders.length && !data?.items.length && !data?.customers.length && !ql.startsWith("godown") && <div className="plg">No matches</div>}
         </div></div>
     </div>

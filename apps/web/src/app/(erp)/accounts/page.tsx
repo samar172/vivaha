@@ -8,7 +8,7 @@ import { useUI } from "@/lib/ui";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { KPI, DF, Section, DrawerFrame, Note, Panel } from "@/components/ui";
-import { PaymentModal } from "@/components/CustomerDrawer";
+import { PaymentModal } from "@/components/CustomerDetail";
 import { InvoiceModal } from "@/components/InvoiceModal";
 import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";

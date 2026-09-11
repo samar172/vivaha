@@ -12,7 +12,7 @@ import { useFooter, usePager } from "@/components/Shell";
 import { Pill, LineChip, GateDot, Hold, Empty, Bar, Note } from "@/components/ui";
 import { OrderDrawer, useOrderActions } from "@/components/OrderDrawer";
 import { NewOrderModal } from "@/components/NewOrderModal";
-import { CustomerDrawer } from "@/components/CustomerDrawer";
+import { useRouter } from "next/navigation";
 import type { Order } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";
@@ -63,13 +63,13 @@ interface AbandonedCart { customer: { id: string; name: string; tehsil: string; 
 // see one. A firm that filled a basket and stopped is the warmest lead there
 // is — this is that list, read off the same rows, with the number to ring.
 function AbandonedCarts({ rows }: { rows: AbandonedCart[] }) {
-  const { openDrawer, openModal } = useUI();
+  const { openModal } = useUI(); const router = useRouter();
   if (!rows.length) return <Empty t="No baskets left open" d="Every firm that started a basket in the portal has either ordered or emptied it." />;
   const value = rows.reduce((s, r) => s + r.value, 0);
   return <>
     <div className="tbar"><span style={{ fontSize: 12.5, color: "var(--t4)" }}>{rows.length} firm{rows.length === 1 ? "" : "s"} left a basket without booking · {money(value)} sitting in them</span></div>
     <div className="gw"><table className="dg"><thead><tr><th>Firm</th><th>Left in the basket</th><th className="n">Lines</th><th className="n">Value</th><th className="n">Idle</th><th>Sales executive</th><th></th></tr></thead><tbody>
-      {rows.map((r) => <tr key={r.customer.id} onClick={() => openDrawer(<CustomerDrawer id={r.customer.id} />)}>
+      {rows.map((r) => <tr key={r.customer.id} onClick={() => router.push(`/customers/${r.customer.id}`)}>
         <td className="w">{r.customer.name}<div className="sm">{r.customer.tehsil} · {r.customer.phone}</div></td>
         <td className="w">{r.lines.slice(0, 3).map((l) => <div key={l.itemId} className="sm"><span className="rid">{l.sku}</span> × {num(l.qty)}{l.short ? <span style={{ color: "var(--er)" }}> · only {num(l.available)} left</span> : ""}</div>)}{r.lines.length > 3 ? <div className="sm">+{r.lines.length - 3} more</div> : null}</td>
         <td className="n tab">{r.count}</td>
