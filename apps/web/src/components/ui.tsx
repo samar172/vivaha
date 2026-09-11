@@ -71,8 +71,5 @@ export const fmtMoney = money; export const fmtNum = num; export const fmtDT = f
 export function ModalFrame({ title, children, actions, onClose }: { title: ReactNode; children: ReactNode; actions: ReactNode; onClose: () => void }) {
   return <><div className="mh"><h3>{title}</h3><button className="b b-g b-s" onClick={onClose}><Icon n="x" s={13} /></button></div><div className="mbd">{children}</div><div className="ma">{actions}</div></>;
 }
-export function DrawerFrame({ head, children, actions, onClose }: { head: ReactNode; children: ReactNode; actions?: ReactNode; onClose: () => void }) {
-  return <><div className="drh">{head}<button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}><Icon n="x" s={13} /></button></div><div className="drb">{children}</div><div className="dra">{actions}<button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button></div></>;
-}
 export const Field = ({ label, children, hint, full }: { label: string; children: ReactNode; hint?: ReactNode; full?: boolean }) => <div className={"fd" + (full ? " f" : "")}><label>{label}</label>{children}{hint && <div className="hint">{hint}</div>}</div>;
 export const Note = ({ k, children, style }: { k?: "w" | "i" | "o"; children: ReactNode; style?: React.CSSProperties }) => <div className={"note " + (k ?? "")} style={style}>{children}</div>;

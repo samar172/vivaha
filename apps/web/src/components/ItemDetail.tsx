@@ -177,11 +177,11 @@ function PrintLabelModal({ code, name }: { code: string; name: string }) {
 }
 
 export function AdjustModal({ itemId }: { itemId?: string }) {
-  const { data } = useApi<{ items: ItemView[] }>("/api/items"); const { data: godowns } = useGodowns(); const { closeModal, closeDrawer, toast } = useUI(); const { data: lines } = useLines(); const { line } = useAppState();
+  const { data } = useApi<{ items: ItemView[] }>("/api/items"); const { data: godowns } = useGodowns(); const { closeModal, toast } = useUI(); const { data: lines } = useLines(); const { line } = useAppState();
   const [f, setF] = useState({ itemId: itemId ?? "", godownId: "GD-A", dir: "damage", qty: 24, reason: "" });
   // Scoped to the module the operator is standing in — no cross-line picking.
   const its = (data?.items ?? []).filter((i) => lines?.find((l) => l.id === i.lineId)?.workflow !== "JOBWORK" && (line === "ALL" || i.lineId === line));
-  const submit = async () => { try { await post("/api/stock/adjust", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Adjustment posted — ${num(f.qty)} ${f.dir}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const submit = async () => { try { await post("/api/stock/adjust", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Adjustment posted — ${num(f.qty)} ${f.dir}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Stock adjustment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-d" onClick={submit}>Post adjustment</button></>}>
     <div className="fg">
       <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
@@ -195,12 +195,12 @@ export function AdjustModal({ itemId }: { itemId?: string }) {
 }
 
 export function TransferModal({ itemId }: { itemId?: string }) {
-  const { data } = useApi<{ items: ItemView[] }>("/api/items"); const { data: godowns } = useGodowns(); const { closeModal, closeDrawer, toast } = useUI(); const { data: lines } = useLines(); const { line } = useAppState();
+  const { data } = useApi<{ items: ItemView[] }>("/api/items"); const { data: godowns } = useGodowns(); const { closeModal, toast } = useUI(); const { data: lines } = useLines(); const { line } = useAppState();
   // Scoped to the module the operator is standing in — no cross-line picking.
   const its = (data?.items ?? []).filter((i) => lines?.find((l) => l.id === i.lineId)?.workflow !== "JOBWORK" && (line === "ALL" || i.lineId === line));
   const [f, setF] = useState({ itemId: itemId ?? "", fromId: "GD-A", toId: "GD-B", qty: 200 });
   const cur = its.find((i) => i.id === (f.itemId || its[0]?.id)); const av = cur?.godowns.find((g) => g.godownId === f.fromId)?.available ?? 0;
-  const submit = async () => { try { const t = await post<{ id: string }>("/api/stock/transfers", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Transfer ${t.id} raised — ${num(f.qty)} in transit to ${f.toId}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const submit = async () => { try { const t = await post<{ id: string }>("/api/stock/transfers", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Transfer ${t.id} raised — ${num(f.qty)} in transit to ${f.toId}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Godown transfer" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Raise transfer</button></>}>
     <div className="fg">
       <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
@@ -213,7 +213,7 @@ export function TransferModal({ itemId }: { itemId?: string }) {
 }
 
 export function ItemForm({ item }: { item?: ItemView }) {
-  const { data: lines } = useLines(); const { data: vendors } = useApi<{ id: string; name: string }[]>("/api/masters/vendors"); const { closeModal, closeDrawer, toast } = useUI();
+  const { data: lines } = useLines(); const { data: vendors } = useApi<{ id: string; name: string }[]>("/api/masters/vendors"); const { closeModal, toast } = useUI();
   const [f, setF] = useState({ lineId: item?.lineId ?? "", name: item?.name ?? "", nameHi: item?.nameHi ?? "", designNo: item?.designNo ?? "", attrs: item?.attrs ?? {}, uom: item?.uom ?? "PCS", packUom: item?.packUom ?? "Box", perPack: item?.perPack ?? 50, moq: item?.moq ?? 250, landedCost: item?.landedCost ?? 30, hsn: item?.hsn ?? "4817", gstPct: item?.gstPct ?? 12, vendorId: item?.vendorId ?? "", batchTracked: item?.batchTracked ?? false, status: item?.status ?? "ACTIVE", base: item?.slabs[0]?.rate ?? 50 });
   const { data: attrs } = useApi<{ lineId: string | null; key: string; label: string; values: string[] }[]>("/api/masters/attributes");
   const L = lines?.find((l) => l.id === (f.lineId || lines?.[0]?.id));
@@ -230,7 +230,7 @@ export function ItemForm({ item }: { item?: ItemView }) {
   const submit = async () => {
     const slabs = [{ fromQty: 1, toQty: 499, rate: f.base }, { fromQty: 500, toQty: 1999, rate: Math.round(f.base * .89) }, { fromQty: 2000, toQty: 4999, rate: Math.round(f.base * .8) }, { fromQty: 5000, toQty: 1e9, rate: Math.round(f.base * .74) }];
     const body = { ...f, lineId: f.lineId || lines?.[0]?.id, reason: reason.trim() || undefined, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
-    try { if (item) await (await import("@/lib/api")).patch(`/api/items/${item.id}`, body); else await post("/api/items", body); toast(item ? "Item updated" : "Item created", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); }
+    try { if (item) await (await import("@/lib/api")).patch(`/api/items/${item.id}`, body); else await post("/api/items", body); toast(item ? "Item updated" : "Item created", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); }
   };
   return <ModalFrame title={item ? "Edit item — " + item.sku : "New item"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Save item</button></>}>
     <div className="fg">

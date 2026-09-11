@@ -6,8 +6,6 @@ import { useAppState } from "@/lib/app-state";
 import { PageHead } from "@/components/PageHead";
 import { useFooter } from "@/components/Shell";
 import { KPI, Panel, Bar, Hold, GateDot, ZoomThumb, Empty } from "@/components/ui";
-import { useUI } from "@/lib/ui";
-import { useOrderActions } from "@/components/OrderDetail";
 
 import { exportCsv } from "@/lib/csv";
 import { Icon, KIND_ICON } from "@/components/icons";
@@ -23,7 +21,7 @@ const ORDER_TAB: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const { line } = useAppState(); const { data: lines } = useLines(); const router = useRouter(); const { openDrawer } = useUI();
+  const { line } = useAppState(); const { data: lines } = useLines(); const router = useRouter();
   const { data: d, mutate } = useApi<Dash>(`/api/dashboard?line=${line}`, { refreshInterval: 30000 });
   useFooter(d?.totalOrders ?? null);
   if (!d) return <div className="loading" style={{ height: 300 }}>Loading…</div>;

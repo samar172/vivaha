@@ -13,9 +13,8 @@ import { Icon } from "./icons";
 import type { Order, Invoice } from "./types";
 import { InvoiceModal } from "./InvoiceModal";
 
-export function useOrderActions() {
-  const { toast, closeModal, closeDrawer, openModal } = useUI(); const { can, user } = useAuth();
-  const done = (msg: string, k: "s" | "w" = "s") => { toast(msg, k); closeModal(); closeDrawer(); refresh("/api/"); };
+export function useOrderActions() { const { toast, closeModal, openModal } = useUI(); const { can, user } = useAuth();
+  const done = (msg: string, k: "s" | "w" = "s") => { toast(msg, k); closeModal(); refresh("/api/"); };
   const run = async (fn: () => Promise<unknown>, msg: string) => { try { await fn(); done(msg); } catch (e) { toast(errMsg(e), "e"); } };
   const approve = (o: Order) => {
     if (o.gate.restricted) { if (o.gate.mode === "BLOCK" && !can("credit.override")) return openModal(<GateModal o={o} canOv={false} />, "n"); return openModal(<GateModal o={o} canOv />, "n"); }
@@ -129,9 +128,9 @@ export function OrderDetail({ id }: { id: string }) {
 }
 
 function GateModal({ o, canOv }: { o: Order; canOv: boolean }) {
-  const { closeModal, toast, closeDrawer } = useUI(); const [r, setR] = useState(""); const { user } = useAuth(); const A = useOrderActions();
+  const { closeModal, toast } = useUI(); const [r, setR] = useState(""); const { user } = useAuth(); const A = useOrderActions();
   const c = o.customer, g = o.gate;
-  const go = async () => { if (!r.trim()) return toast("A reason is required to override the credit gate", "e"); try { await post(`/api/orders/${o.id}/approve`, { reason: r }); toast("Approved with override — logged in audit", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const go = async () => { if (!r.trim()) return toast("A reason is required to override the credit gate", "e"); try { await post(`/api/orders/${o.id}/approve`, { reason: r }); toast("Approved with override — logged in audit", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Credit gate — " + c.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button>{canOv && <button className="b b-p" onClick={go}>Approve with override</button>}<button className="b b-d" onClick={() => { closeModal(); A.reject(o); }}>Reject order</button></>}>
     <Note k={c.gateMode === "BLOCK" ? "w" : undefined} style={{ marginBottom: 13 }}>{g.amountBreach && <div><b>Amount breached.</b> Outstanding {money(g.out)} + this order {money(o.total)} = {money(g.out + o.total)} against a limit of {money(c.creditLimit)}.</div>}{g.timeBreach && <div style={{ marginTop: 6 }}><b>Credit days exceeded.</b> Oldest unpaid invoice is {g.oldestAge} days old against agreed terms of {c.creditDays} days.</div>}<div style={{ marginTop: 7 }}>Gate mode for this firm is <b>{c.gateMode}</b>.</div></Note>
     {canOv ? <Field label="Reason for proceeding (required, audited)"><textarea value={r} onChange={(e) => setR(e.target.value)} placeholder="e.g. Cheque in hand, clearing Monday — approved by owner" /></Field> : <Note k="w">Your role ({user?.role}) cannot override a BLOCK gate. An Accounts Manager or Super Admin must approve this order.</Note>}
@@ -143,22 +142,20 @@ export function ReasonModal({ title, label, ph, btn, danger, onSubmit, extra }: 
   return <ModalFrame title={title} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className={"b " + (danger ? "b-d" : "b-p")} onClick={() => r.trim() ? onSubmit(r.trim()) : toast("A reason is required", "e")}>{btn}</button></>}>{extra}<Field label={label}><textarea value={r} onChange={(e) => setR(e.target.value)} placeholder={ph} /></Field></ModalFrame>;
 }
 
-function AllocModal({ o }: { o: Order }) {
-  const { closeModal, closeDrawer, toast } = useUI(); const { data: godowns } = useGodowns(); const { data: items } = useApi<{ items: { id: string; godowns: { godownId: string; available: number }[] }[] }>("/api/items");
+function AllocModal({ o }: { o: Order }) { const { closeModal, toast } = useUI(); const { data: godowns } = useGodowns(); const { data: items } = useApi<{ items: { id: string; godowns: { godownId: string; available: number }[] }[] }>("/api/items");
   const [al, setAl] = useState<Record<string, Record<string, number>>>(Object.fromEntries(o.lines.map((l) => [l.itemId, { ...l.alloc }])));
   const sum = (iid: string) => Object.values(al[iid] || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-  const save = async () => { if (o.lines.some((l) => sum(l.itemId) !== l.qty)) return toast("Every line must allocate to exactly its ordered quantity", "e"); try { await post(`/api/orders/${o.id}/allocate`, { alloc: al }); toast("Allocation saved", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const save = async () => { if (o.lines.some((l) => sum(l.itemId) !== l.qty)) return toast("Every line must allocate to exactly its ordered quantity", "e"); try { await post(`/api/orders/${o.id}/allocate`, { alloc: al }); toast("Allocation saved", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Godown allocation — " + o.id} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={save}>Confirm allocation</button></>}>
     <Note style={{ marginBottom: 13 }}>Auto-proposed by highest availability. Every line must allocate to exactly its ordered quantity before you can confirm.</Note>
     {o.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 7 }}>{l.item.sku} — {l.item.name} · need {num(l.qty)} {l.item.uom}</div><div style={{ display: "flex", gap: 8 }}>{godowns?.map((g) => { const av = (items?.items.find((i) => i.id === l.itemId)?.godowns.find((x) => x.godownId === g.id)?.available ?? 0) + (l.alloc[g.id] || 0); return <div key={g.id} style={{ flex: 1 }}><div className="sm" style={{ marginBottom: 3 }}>{g.short} · avail {num(av)}</div><input type="number" value={al[l.itemId]?.[g.id] ?? 0} onChange={(e) => setAl({ ...al, [l.itemId]: { ...al[l.itemId], [g.id]: Number(e.target.value) || 0 } })} style={{ width: "100%", height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></div>; })}</div><div className="sm" style={{ marginTop: 6 }}>{sum(l.itemId) === l.qty ? <span style={{ color: "var(--ok)", fontWeight: 700 }}><Icon n="check" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(sum(l.itemId))} / {num(l.qty)} allocated</span> : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(sum(l.itemId))} / {num(l.qty)} — must equal the ordered quantity</span>}</div></div>)}
   </ModalFrame>;
 }
 
-function DispatchModal({ o }: { o: Order }) {
-  const { closeModal, closeDrawer, toast, openModal } = useUI();
+function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openModal } = useUI();
   const [ship, setShip] = useState<Record<string, number>>(Object.fromEntries(o.lines.map((l) => [l.itemId, l.qty - l.shipped])));
   const [f, setF] = useState(() => ({ transporter: "Rajasthan Roadways Cargo", lr: "LR-" + (56000 + Math.floor(Math.random() * 3000)), tracking: "TRK" + (905000 + Math.floor(Math.random() * 9000)), packages: o.lines.length + 1, freight: 650, ewb: o.total > 50000 ? "EWB-" + (721400 + Math.floor(Math.random() * 900)) : "" }));
-  const go = async () => { try { const r = await post<{ invoiceNo: string; total: number; full: boolean }>(`/api/orders/${o.id}/dispatch`, { ship, ...f, packages: Number(f.packages), freight: Number(f.freight), ewb: f.ewb || undefined }); toast(r.full ? `Dispatched · invoice ${r.invoiceNo} posted for ${money2(r.total)}` : `Partially dispatched · invoice ${r.invoiceNo} for shipped quantity only, backorder stays reserved`, "s"); closeModal(); closeDrawer(); refresh("/api/"); setTimeout(() => openModal(<InvoiceModal no={r.invoiceNo} orderId={o.id} />, "w"), 300); } catch (e) { toast(errMsg(e), "e"); } };
+  const go = async () => { try { const r = await post<{ invoiceNo: string; total: number; full: boolean }>(`/api/orders/${o.id}/dispatch`, { ship, ...f, packages: Number(f.packages), freight: Number(f.freight), ewb: f.ewb || undefined }); toast(r.full ? `Dispatched · invoice ${r.invoiceNo} posted for ${money2(r.total)}` : `Partially dispatched · invoice ${r.invoiceNo} for shipped quantity only, backorder stays reserved`, "s"); closeModal(); refresh("/api/"); setTimeout(() => openModal(<InvoiceModal no={r.invoiceNo} orderId={o.id} />, "w"), 300); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Dispatch — " + o.id} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Confirm dispatch</button></>}>
     <Note style={{ marginBottom: 13 }}>Enter the quantity actually shipped per line. Anything short creates a <b>backorder</b> that stays reserved — the invoice is raised only for what leaves the godown.</Note>
     <table className="dg" style={{ marginBottom: 14 }}><thead><tr><th>Item</th><th className="n">Ordered</th><th className="n">Already shipped</th><th className="n">Ship now</th></tr></thead><tbody>{o.lines.map((l) => <tr key={l.id} style={{ cursor: "default" }}><td className="w">{l.item.sku}<div className="sm">{l.item.name}</div></td><td className="n tab">{num(l.qty)}</td><td className="n tab">{num(l.shipped)}</td><td className="n"><input type="number" value={ship[l.itemId]} min={0} max={l.qty - l.shipped} onChange={(e) => setShip({ ...ship, [l.itemId]: Number(e.target.value) || 0 })} style={{ width: 92, height: 29, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} /></td></tr>)}</tbody></table>

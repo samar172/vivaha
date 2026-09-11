@@ -18,12 +18,12 @@ import { Icon } from "@/components/icons";
 
 const CLOSED = ["LAPSED", "REJECTED", "CANCELLED"];
 export default function OrdersPage() {
-  const { line } = useAppState(); const { data: lines } = useLines(); const { openDrawer, openModal, toast } = useUI(); const { can } = useAuth(); const router = useRouter(); const sp = useSearchParams(); const A = useOrderActions();
+  const { line } = useAppState(); const { data: lines } = useLines(); const { openModal, toast } = useUI(); const { can } = useAuth(); const router = useRouter(); const sp = useSearchParams(); const A = useOrderActions();
   const [tab, setTab] = useState(() => sp.get("tab") ?? "approve"); const [q, setQ] = useState(""); const [sel, setSel] = useState<Set<string>>(new Set()); const [sort, setSort] = useState<{ k: string; d: 1 | -1 } | null>(null);
   // The dashboard links straight into a stage, e.g. /orders?tab=active&status=PICKING.
   const [status, setStatus] = useState<string | null>(() => sp.get("status"));
   const { data, mutate } = useApi<{ orders: Order[]; counts: Record<string, number> }>(`/api/orders?tab=${tab}&line=${line}&q=${encodeURIComponent(q)}`, { refreshInterval: 20000 });
-  useEffect(() => { const o = sp.get("open"); if (o) router.push(`/orders/${o}`); }, [sp, openDrawer]);
+  useEffect(() => { const o = sp.get("open"); if (o) router.push(`/orders/${o}`); }, [sp, router]);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { const t = sp.get("tab"); if (t) setTab(t); setStatus(sp.get("status")); }, [sp]);
   let rows = data?.orders ?? []; if (status) rows = rows.filter((o) => o.status === status);

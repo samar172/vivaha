@@ -222,12 +222,11 @@ function NewItemInline({ line, vendorId, onDone }: { line: { id: string; name: s
   </div>;
 }
 
-function ReceiveModal({ p }: { p: PO }) {
-  const { closeModal, closeDrawer, toast } = useUI(); const { data: godowns } = useGodowns();
+function ReceiveModal({ p }: { p: PO }) { const { closeModal, toast } = useUI(); const { data: godowns } = useGodowns();
   const [al, setAl] = useState<Record<string, Record<string, number>>>(Object.fromEntries(p.lines.map((l) => [l.itemId, { "GD-A": l.qty, "GD-B": 0, "GD-C": 0 }])));
   const [batch, setBatch] = useState<Record<string, string>>({});
   const [mfr, setMfr] = useState<Record<string, string>>(() => Object.fromEntries(p.lines.map((l) => [l.itemId, l.mfrCode ?? ""])));
-  const go = async () => { try { await post(`/api/purchases/${p.id}/receive`, { lines: p.lines.map((l) => ({ itemId: l.itemId, alloc: al[l.itemId], batchNo: batch[l.itemId] || undefined, mfrCode: mfr[l.itemId] || undefined })) }); toast("Goods received — stock landed, landed cost recomputed", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const go = async () => { try { await post(`/api/purchases/${p.id}/receive`, { lines: p.lines.map((l) => ({ itemId: l.itemId, alloc: al[l.itemId], batchNo: batch[l.itemId] || undefined, mfrCode: mfr[l.itemId] || undefined })) }); toast("Goods received — stock landed, landed cost recomputed", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Receive — " + p.invNo} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Post GRN</button></>}>
     {p.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 7 }}>{l.item.sku} — {l.item.name} · {num(l.qty)} {l.item.uom}</div><AllocInputs godowns={godowns ?? []} alloc={al[l.itemId]} setAlloc={(a) => setAl({ ...al, [l.itemId]: a })} qty={l.qty} /><Field label="Batch (if batch-tracked)"><input value={batch[l.itemId] ?? ""} onChange={(e) => setBatch({ ...batch, [l.itemId]: e.target.value })} /></Field><Field label="Manufacturer QR / label code on the cartons"><input value={mfr[l.itemId] ?? ""} onChange={(e) => setMfr({ ...mfr, [l.itemId]: e.target.value })} placeholder="Scan or type — e.g. SGP-4113" /></Field></div>)}
     <Note style={{ marginTop: 4 }}>Whatever label arrives on the cartons is filed against the item here. It stays scannable even after the office sticks its own code over it.</Note>

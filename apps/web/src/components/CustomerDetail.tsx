@@ -138,9 +138,8 @@ function LocationSection({ id }: { id: string }) {
   </Section>;
 }
 
-function BlockModal({ c }: { c: Customer }) {
-  const { closeModal, closeDrawer, toast } = useUI(); const [r, setR] = useState(""); const [d, setD] = useState("");
-  const go = async () => { if (!r.trim()) return toast("A reason is required", "e"); try { await post(`/api/customers/${c.id}/block`, { reason: r, until: d || undefined }); toast("Block applied — ordering suspended, ledger stays open", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+function BlockModal({ c }: { c: Customer }) { const { closeModal, toast } = useUI(); const [r, setR] = useState(""); const [d, setD] = useState("");
+  const go = async () => { if (!r.trim()) return toast("A reason is required", "e"); try { await post(`/api/customers/${c.id}/block`, { reason: r, until: d || undefined }); toast("Block applied — ordering suspended, ledger stays open", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Temporary block — " + c.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-d" onClick={go}>Apply block</button></>}><Note k="w" style={{ marginBottom: 13 }}>A block suspends <b>new orders only</b>. Ledger, statements and payment stay open so the firm can clear dues and be unblocked — BR-05.</Note><Field label="Reason (required)"><textarea value={r} onChange={(e) => setR(e.target.value)} placeholder="e.g. Two cheques returned, awaiting clearance" /></Field><Field label="Auto-lift on (optional)"><input type="date" value={d} onChange={(e) => setD(e.target.value)} /></Field></ModalFrame>;
 }
 
@@ -222,10 +221,9 @@ function OverrideModal({ c }: { c: Full }) {
   </ModalFrame>;
 }
 
-export function PaymentModal({ customerId }: { customerId?: string }) {
-  const { closeModal, closeDrawer, toast } = useUI(); const { data: custs } = useApi<Customer[]>("/api/customers");
+export function PaymentModal({ customerId }: { customerId?: string }) { const { closeModal, toast } = useUI(); const { data: custs } = useApi<Customer[]>("/api/customers");
   const [f, setF] = useState(() => ({ customerId: customerId ?? "", amount: 25000, method: "UPI", ref: "REF" + (880900 + Math.floor(Math.random() * 900)), date: new Date().toISOString().slice(0, 10) }));
-  const go = async () => { try { const r = await post<{ receiptNo: string; outstanding: number; autoLifted: boolean }>("/api/ledger/payments", { ...f, customerId: f.customerId || custs?.[0]?.id, amount: Number(f.amount) }); toast(`Receipt ${r.receiptNo} posted · outstanding now ${money(r.outstanding)}${r.autoLifted ? " · block auto-lifted" : ""}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const go = async () => { try { const r = await post<{ receiptNo: string; outstanding: number; autoLifted: boolean }>("/api/ledger/payments", { ...f, customerId: f.customerId || custs?.[0]?.id, amount: Number(f.amount) }); toast(`Receipt ${r.receiptNo} posted · outstanding now ${money(r.outstanding)}${r.autoLifted ? " · block auto-lifted" : ""}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Record payment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Post receipt</button></>}>
     <div className="fg"><Field label="Firm" full><select value={f.customerId || custs?.[0]?.id || ""} onChange={(e) => setF({ ...f, customerId: e.target.value })}>{custs?.map((c) => <option key={c.id} value={c.id}>{c.name} — outstanding {money(c.gate.out)}</option>)}</select></Field><Field label="Amount (₹)"><input type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: Number(e.target.value) })} /></Field><Field label="Method"><select value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}><option>UPI</option><option>NEFT</option><option>Cheque</option><option>Cash</option></select></Field><Field label="Reference"><input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} /></Field><Field label="Date"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field></div>
     <Note style={{ marginTop: 11 }}>Receipts allocate oldest-invoice-first by default. Any unallocated amount sits as on-account credit.</Note>
@@ -241,8 +239,7 @@ type FormMachine = { type: string; spec: Record<string, string> };
 // their staff, and the machines on their floor. Creating and editing are the
 // same form — an edit that could not reach half the record is how the machine
 // list went stale in the first place.
-export function CustomerForm({ customer }: { customer?: Customer } = {}) {
-  const { closeModal, closeDrawer, toast } = useUI(); const { data: lines } = useLines(); const { data: tehsils } = useApi<string[]>("/api/masters/tehsils"); const { data: execs } = useApi<{ id: string; name: string }[]>("/api/masters/sales-execs"); const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups");
+export function CustomerForm({ customer }: { customer?: Customer } = {}) { const { closeModal, toast } = useUI(); const { data: lines } = useLines(); const { data: tehsils } = useApi<string[]>("/api/masters/tehsils"); const { data: execs } = useApi<{ id: string; name: string }[]>("/api/masters/sales-execs"); const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups");
   const edit = !!customer;
   const [f, setF] = useState({
     name: customer?.name ?? "", contactName: customer?.contactName ?? "", phone: customer?.phone ?? "",
@@ -272,7 +269,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
     if (contacts.length !== clean.length) return toast("Every extra number needs a name and a phone — remove the blank rows", "e");
     const body = { ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type) };
     try {
-      if (edit) { await patch(`/api/customers/${customer!.id}`, body); toast("Customer updated", "s"); closeDrawer(); }
+      if (edit) { await patch(`/api/customers/${customer!.id}`, body); toast("Customer updated", "s"); }
       else { await post("/api/customers", body); toast("Customer created — refer code issued", "s"); }
       closeModal(); refresh("/api/");
     } catch (e) { toast(errMsg(e), "e"); }
