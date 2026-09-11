@@ -255,6 +255,15 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
   // hold window and the dispatch queue are both per line, so a mixed order
   // would inherit whichever line happened to sort first.
   if (q.lineIds.length > 1) throw badRequest("An order covers one business line — raise a separate order for the other line");
+
+  // Job work is quoted and produced, not sold off the shelf: it has its own
+  // model and screen, carries no stock, and its line is configured with no hold
+  // window. Checked before the stock and MOQ guards, which would otherwise
+  // report "0 available" and send the operator hunting for stock that will
+  // never exist.
+  const line = await prisma.businessLine.findUniqueOrThrow({ where: { id: q.lineIds[0] } });
+  if (line.workflow === "JOBWORK") throw badRequest(`${line.name} is produced to order — raise it from Jobs, not as a stock order`);
+
   const short = q.lines.find((l) => l.short);
   if (short) throw badRequest(`Only ${short.available.toLocaleString("en-IN")} of ${short.sku} available — reduce the quantity`);
   const below = q.lines.find((l) => l.belowMoq);
@@ -267,7 +276,6 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
     if (!input.overrideReason?.trim()) throw badRequest("This firm is past its credit gate — a reason is required to book anyway");
   }
 
-  const line = await prisma.businessLine.findUniqueOrThrow({ where: { id: q.lineIds[0] } });
   const bookedBy = `${actor.name} (assisted)`;
   const orderId = await prisma.$transaction(async (tx) => {
     const id = await nextOrderNo(tx);
@@ -289,7 +297,9 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
       id, customerId: q.customer.id, status: "BOOKED",
       subtotal: q.totals.taxable, tax: q.totals.tax, total: q.totals.total,
       requiredBy: input.requiredBy ? new Date(input.requiredBy) : new Date(Date.now() + 14 * 864e5),
-      holdUntil: new Date(Date.now() + line.holdMins * 60_000),
+      // A zero hold window means the line does not hold stock at all. Writing
+      // `now` would leave an order the sweeper lapses on its next pass.
+      holdUntil: line.holdMins > 0 ? new Date(Date.now() + line.holdMins * 60_000) : null,
       bookedBy, source: "office",
       lines: { create: lineData },
       events: { create: { from: null, to: "BOOKED", by: bookedBy, why } },
@@ -310,8 +320,14 @@ export async function orderCatalogue(customerId: string, lineId?: string, q?: st
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
   if (!customer) throw notFound("Firm not found");
   const price = await pricerFor(customer);
+  if (lineId && lineId !== "ALL") {
+    const l = await prisma.businessLine.findUnique({ where: { id: lineId } });
+    if (l?.workflow === "JOBWORK") throw badRequest(`${l.name} is produced to order — raise it from Jobs, not as a stock order`);
+  }
   const where: Prisma.ItemWhereInput = {
     status: "ACTIVE",
+    // Job-work items carry no stock, so they can never satisfy an order.
+    line: { workflow: "FULFIL" },
     ...(lineId && lineId !== "ALL" ? { lineId } : {}),
     ...(q ? { OR: [{ sku: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { designNo: { contains: q, mode: "insensitive" } }, { codes: { some: { code: { contains: q, mode: "insensitive" } } } }] } : {}),
   };

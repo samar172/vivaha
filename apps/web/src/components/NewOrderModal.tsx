@@ -32,8 +32,12 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   const [busy, setBusy] = useState(false);
 
   const firm = customers?.find((c) => c.id === cid);
-  // The firm's own enabled lines come first — that is what it actually buys.
-  const enabled = useMemo(() => firm?.linesEnabled ?? [], [firm]);
+  // The firm's own enabled lines, minus job work: that is quoted and produced
+  // from Jobs, carries no stock, and could never be satisfied as a stock order.
+  const enabled = useMemo(
+    () => (firm?.linesEnabled ?? []).filter((id) => lines?.find((l) => l.id === id)?.workflow !== "JOBWORK"),
+    [firm, lines],
+  );
   // Derived, not stored: until the operator picks a line it is the firm's first.
   const effLine = lineId || enabled[0] || "";
   // Changing firm re-prices everything, so the basket cannot carry over.
@@ -95,7 +99,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
       </Field>
       <Field label="Business line" hint="One line per order — the hold window is set by the line">
         <select value={effLine} onChange={(e) => { setLineId(e.target.value); setCart({}); }} disabled={!firm}>
-          {(enabled.length ? enabled : lines?.map((l) => l.id) ?? []).map((id) => <option key={id} value={id}>{lines?.find((l) => l.id === id)?.name ?? id}</option>)}
+          {(enabled.length ? enabled : lines?.filter((l) => l.workflow !== "JOBWORK").map((l) => l.id) ?? []).map((id) => <option key={id} value={id}>{lines?.find((l) => l.id === id)?.name ?? id}</option>)}
         </select>
       </Field>
       <Field label="Required by"><input type="date" value={requiredBy} onChange={(e) => setRequiredBy(e.target.value)} /></Field>
