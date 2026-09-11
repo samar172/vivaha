@@ -1,3 +1,4 @@
+import { M } from "@vivaha/shared";
 import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -39,7 +40,7 @@ router.get("/:id/price-history", requirePerm("item.view"), asyncHandler(async (r
 
 router.get("/:id", requirePerm("item.view"), asyncHandler(async (req, res) => {
   const v = await loadItemView(req.params.id);
-  if (!v) throw notFound("Item not found");
+  if (!v) throw notFound(M.itemNotFound());
   const [txns, minMargin, vendor] = await Promise.all([
     prisma.stockTxn.findMany({ where: { itemId: v.id }, orderBy: { at: "desc" }, take: 12 }),
     getMinMargin(),
@@ -74,7 +75,7 @@ router.post("/", requirePerm("item.edit"), asyncHandler(async (req, res) => {
 router.patch("/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => {
   const b = itemSchema.partial().parse(req.body);
   const before = await prisma.item.findUnique({ where: { id: req.params.id } });
-  if (!before) throw notFound("Item not found");
+  if (!before) throw notFound(M.itemNotFound());
   const { slabs, ...rest } = b;
   const beforeSlabs = await prisma.priceSlab.findMany({ where: { itemId: before.id }, orderBy: { fromQty: "asc" } });
   await prisma.$transaction(async (tx) => {
@@ -118,10 +119,10 @@ router.get("/:id/images", requirePerm("item.view"), asyncHandler(async (req, res
 router.post("/:id/image", requirePerm("item.edit"), asyncHandler(async (req, res) => {
   const { data, label } = z.object({ data: z.string().min(1), label: z.string().max(40).default("") }).parse(req.body);
   const it = await prisma.item.findUnique({ where: { id: req.params.id }, include: { images: true } });
-  if (!it) throw notFound("Item not found");
-  if (it.images.length >= 12) throw badRequest("Twelve pages is already more than any card has — remove one first");
+  if (!it) throw notFound(M.itemNotFound());
+  if (it.images.length >= 12) throw badRequest(M.tooManyPages());
   const img = await storeItemImage(it.id, data);
-  if (it.images.some((x) => x.url === img.url)) throw badRequest("That is the same photograph as one already on this item");
+  if (it.images.some((x) => x.url === img.url)) throw badRequest(M.samePhoto());
   const next = it.images.reduce((m, x) => Math.max(m, x.sortOrder), -1) + 1;
   await prisma.itemImage.create({ data: { itemId: it.id, url: img.url, label: label.trim(), sortOrder: next, by: req.user!.name } });
   const cover = await syncCover(prisma, it.id);

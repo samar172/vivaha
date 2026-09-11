@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { Icon, KIND_ICON } from "@/components/icons";
+import { ApiError } from "@/lib/api";
 
 type ToastKind = "s" | "e" | "w" | "i";
 interface Toast { id: number; msg: string; k: ToastKind }
@@ -29,4 +30,17 @@ export function UIProvider({ children }: { children: ReactNode }) {
   );
 }
 export function useUI() { const c = useContext(Ctx); if (!c) throw new Error("useUI outside UIProvider"); return c; }
-export const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// The panel's language, read from the office setting and kept here so any
+// toast can reach it without every caller threading it through. Set once when
+// the shell loads; English until it is known, which is the default anyway.
+let panelLang: "en" | "hi" = "en";
+export const setPanelLang = (l: "en" | "hi") => { panelLang = l; };
+export const getPanelLang = () => panelLang;
+
+// A refusal from the API arrives in both languages when the server had a Hindi
+// form for it. Everything else — an unexpected failure, a browser error — has
+// only the one, and showing English is better than showing nothing.
+export const errMsg = (e: unknown) => {
+  if (e instanceof ApiError && panelLang === "hi" && e.messageHi) return e.messageHi;
+  return e instanceof Error ? e.message : String(e);
+};

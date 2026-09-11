@@ -1,3 +1,4 @@
+import { M } from "@vivaha/shared";
 import { v2 as cloudinary } from "cloudinary";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile, unlink } from "node:fs/promises";
@@ -35,13 +36,13 @@ const MAX_BYTES = 8 * 1024 * 1024;
 
 function decode(dataUrl: string): { buf: Buffer; type: string; ext: string } {
   const m = /^data:([a-z/+.-]+);base64,(.+)$/i.exec(dataUrl.trim());
-  if (!m) throw badRequest("That does not look like an image file");
+  if (!m) throw badRequest(M.notAnImage());
   const [, type, b64] = m;
   const ext = EXT[type.toLowerCase()];
   if (!ext) throw badRequest(`${type} is not an image format we store — use JPEG, PNG or WebP`);
   const buf = Buffer.from(b64, "base64");
   if (!buf.length) throw badRequest("The image came through empty");
-  if (buf.length > MAX_BYTES) throw badRequest(`That image is ${(buf.length / 1024 / 1024).toFixed(1)} MB — the limit is ${MAX_BYTES / 1024 / 1024} MB`);
+  if (buf.length > MAX_BYTES) throw badRequest(M.imageTooBig((buf.length / 1024 / 1024).toFixed(1), MAX_BYTES / 1024 / 1024));
   return { buf, type, ext };
 }
 

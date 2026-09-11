@@ -50,6 +50,28 @@ const GLOSSARY: Record<string, string> = {
   zari: "ज़री", rajwada: "राजवाड़ा", panache: "पनाश", ambience: "एम्बिएंस",
   heritage: "हेरिटेज", royal: "रॉयल", classic: "क्लासिक", vintage: "विंटेज",
   scroll: "स्क्रॉल", star: "स्टार", crown: "क्राउन", regal: "रीगल",
+
+  // Indic words and names, where "d" and "t" are dental — आदिल, not आडिल.
+  // English loanwords take the retroflex ड and ट (डिजिटल, कार्ड), which is what
+  // the phonetic pass below assumes, because this catalogue is mostly English
+  // product vocabulary. A word of Indian origin has to be listed here for the
+  // machine to know the difference; it cannot hear it.
+  aadil: "आदिल", adil: "आदिल", deepak: "दीपक", devendra: "देवेंद्र", dev: "देव",
+  mohit: "मोहित", rohit: "रोहित", amit: "अमित", sumit: "सुमित", punit: "पुनित",
+  ajit: "अजित", ranjit: "रणजीत", harjit: "हरजीत", samar: "समर", vikram: "विक्रम",
+  anil: "अनिल", sunil: "सुनील", vinod: "विनोद", dinesh: "दिनेश", mahesh: "महेश",
+  ramesh: "रमेश", suresh: "सुरेश", rajesh: "राजेश", naresh: "नरेश", mukesh: "मुकेश",
+  aditya: "आदित्य", aditi: "अदिति", madhur: "मधुर", madhu: "मधु", sudha: "सुधा",
+  radha: "राधा", indira: "इंदिरा", chandan: "चंदन", chandra: "चंद्र", sunder: "सुंदर",
+  mandir: "मंदिर", moti: "मोती", sita: "सीता", gita: "गीता", geeta: "गीता",
+  preeti: "प्रीति", priti: "प्रीति", smriti: "स्मृति", shanti: "शांति", kranti: "क्रांति",
+  bharat: "भारत", vasant: "वसंत", basant: "बसंत", sangeet: "संगीत", vivah: "विवाह",
+  vivaha: "विवाह", shaadi: "शादी", shadi: "शादी", baraat: "बारात", barat: "बारात",
+  tilak: "तिलक", haldi: "हल्दी", sagan: "सगन", mandap: "मंडप",
+  pandit: "पंडित", prasad: "प्रसाद", laddu: "लड्डू", mithai: "मिठाई", thali: "थाली",
+  diya: "दीया", rangoli: "रंगोली", toran: "तोरण", kundan: "कुंदन", meenakari: "मीनाकारी",
+  banarasi: "बनारसी", jaipuri: "जयपुरी", marwari: "मारवाड़ी", rajasthani: "राजस्थानी",
+  sitara: "सितारा", chunri: "चुनरी", dupatta: "दुपट्टा", sindoor: "सिंदूर",
 };
 
 // Left alone: anything that is not plainly a word — 510, 3mm, 605×745, ACP,

@@ -5,7 +5,7 @@ import { prisma } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { allRolePerms, invalidatePermCache } from "../../services/permissions";
-import { getMinMargin, getCompany, setSetting } from "../../services/settings";
+import { getMinMargin, getCompany, getPanelLang, setSetting } from "../../services/settings";
 import { audit } from "../../services/audit";
 import { badRequest, notFound } from "../../utils/httpError";
 import bcrypt from "bcryptjs";
@@ -142,12 +142,13 @@ router.post("/restore", requirePerm("settings.manage"), asyncHandler(async (req,
   res.json({ ...report, signOutRequired: !stillHere, restoredThrough: file });
 }));
 
-router.get("/", asyncHandler(async (_req, res) => res.json({ minMargin: await getMinMargin(), company: await getCompany() })));
+router.get("/", asyncHandler(async (_req, res) => res.json({ minMargin: await getMinMargin(), company: await getCompany(), panelLang: await getPanelLang() })));
 router.put("/", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
-  const b = z.object({ minMargin: z.number().min(0).max(0.9).optional(), company: z.object({ name: z.string(), address: z.string(), gstin: z.string(), state: z.string().length(2), phone: z.string() }).optional() }).parse(req.body);
+  const b = z.object({ minMargin: z.number().min(0).max(0.9).optional(), company: z.object({ name: z.string(), address: z.string(), gstin: z.string(), state: z.string().length(2), phone: z.string() }).optional(), panelLang: z.enum(["en", "hi"]).optional() }).parse(req.body);
   if (b.minMargin != null) { const before = await getMinMargin(); await setSetting("MIN_MARGIN", b.minMargin); await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Margin floor changed", entityType: "Settings", entityId: "MIN_MARGIN", oldValue: before * 100 + "%", newValue: b.minMargin * 100 + "%" }); }
   if (b.company) await setSetting("COMPANY", b.company);
-  res.json({ minMargin: await getMinMargin(), company: await getCompany() });
+  if (b.panelLang) { const before = await getPanelLang(); await setSetting("PANEL_LANG", b.panelLang); await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Panel language changed", entityType: "Settings", entityId: "PANEL_LANG", oldValue: before, newValue: b.panelLang }); }
+  res.json({ minMargin: await getMinMargin(), company: await getCompany(), panelLang: await getPanelLang() });
 }));
 router.get("/permissions", asyncHandler(async (_req, res) => res.json({ perms: PERMS, roles: ROLES.filter((r) => r !== "CUSTOMER"), matrix: await allRolePerms() })));
 router.put("/permissions/:role", requirePerm("settings.manage"), asyncHandler(async (req, res) => {

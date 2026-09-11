@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { invoiceTotals, ORDER_FLOW, type OrderStatus } from "@vivaha/shared";
+import { invoiceTotals, ORDER_FLOW, type OrderStatus, M } from "@vivaha/shared";
 import { prisma, D, type Db } from "../../db";
 import * as stock from "../../services/stock";
 import { audit } from "../../services/audit";
@@ -224,7 +224,7 @@ export interface QuoteLine {
 // shortfall — before committing.
 export async function quoteOrder(input: { customerId: string; lines: NewOrderLine[] }) {
   const customer = await prisma.customer.findUnique({ where: { id: input.customerId } });
-  if (!customer) throw notFound("Firm not found");
+  if (!customer) throw notFound(M.firmNotFound());
   const wanted = input.lines.filter((l) => l.qty > 0);
   const [price, homeState] = await Promise.all([pricerFor(customer), getHomeState()]);
   const views = wanted.length ? await loadItemViews({ id: { in: wanted.map((l) => l.itemId) } }) : [];
@@ -252,13 +252,13 @@ export async function quoteOrder(input: { customerId: string; lines: NewOrderLin
 
 export async function createOrder(input: NewOrderInput, actor: Actor): Promise<OrderFull> {
   const q = await quoteOrder(input);
-  if (!q.lines.length) throw badRequest("Add at least one item");
-  if (q.customer.blockReason) throw badRequest(`${q.customer.name} is blocked — ${q.customer.blockReason}`);
+  if (!q.lines.length) throw badRequest(M.addAnItem());
+  if (q.customer.blockReason) throw badRequest(M.firmBlocked(q.customer.name, q.customer.blockReason));
 
   // One business line per order, the way a purchase invoice is one line: the
   // hold window and the dispatch queue are both per line, so a mixed order
   // would inherit whichever line happened to sort first.
-  if (q.lineIds.length > 1) throw badRequest("An order covers one business line — raise a separate order for the other line");
+  if (q.lineIds.length > 1) throw badRequest(M.oneLinePerOrder());
 
   // Job work is quoted and produced, not sold off the shelf: it has its own
   // model and screen, carries no stock, and its line is configured with no hold
@@ -266,18 +266,18 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
   // report "0 available" and send the operator hunting for stock that will
   // never exist.
   const line = await prisma.businessLine.findUniqueOrThrow({ where: { id: q.lineIds[0] } });
-  if (line.workflow === "JOBWORK") throw badRequest(`${line.name} is produced to order — raise it from Jobs, not as a stock order`);
+  if (line.workflow === "JOBWORK") throw badRequest(M.jobWorkNotStock(line.name));
 
   const short = q.lines.find((l) => l.short);
-  if (short) throw badRequest(`Only ${short.available.toLocaleString("en-IN")} of ${short.sku} available — reduce the quantity`);
+  if (short) throw badRequest(M.onlyAvailable(short.available, short.sku));
   const below = q.lines.find((l) => l.belowMoq);
-  if (below) throw badRequest(`${below.sku} has a minimum order of ${below.moq.toLocaleString("en-IN")}`);
+  if (below) throw badRequest(M.belowMoq(below.sku, below.moq));
 
   // Same rule the approval screen applies: a BLOCK gate needs credit.override,
   // and any restricted gate needs a reason on the record.
   if (q.gate.restricted) {
-    if (q.customer.gateMode === "BLOCK" && !actor.perms.includes("credit.override")) throw forbidden(`${q.customer.name} is over its credit limit and gated BLOCK. Your role (${actor.role}) cannot override it — an Accounts Manager or Super Admin must raise this order.`);
-    if (!input.overrideReason?.trim()) throw badRequest("This firm is past its credit gate — a reason is required to book anyway");
+    if (q.customer.gateMode === "BLOCK" && !actor.perms.includes("credit.override")) throw forbidden(M.creditBlocked(q.customer.name, actor.role));
+    if (!input.overrideReason?.trim()) throw badRequest(M.creditReasonNeeded());
   }
 
   const bookedBy = `${actor.name} (assisted)`;
@@ -291,9 +291,9 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
       avail.sort((a, b) => b.a - a.a);
       const map: stock.GodownMap = {}; let need = l.qty;
       for (const x of avail) { if (need <= 0) break; const take = Math.min(x.a, need); if (take > 0) { map[x.g] = take; need -= take; } }
-      if (need > 0) throw badRequest(`Stock moved while the order was being keyed — ${l.sku} is short by ${need}`);
+      if (need > 0) throw badRequest(M.stockMoved(l.sku, need));
       const r = await stock.tryHold(tx, l.itemId, map, id, bookedBy);
-      if (!r.ok) throw badRequest(`Stock moved while the order was being keyed — re-check ${l.sku}`);
+      if (!r.ok) throw badRequest(M.stockMovedRecheck(l.sku));
       lineData.push({ itemId: l.itemId, lineId: l.lineId, qty: l.qty, rate: l.rate, slabRate: l.slabRate, mult: l.mult, priceSrc: l.priceSrc, amount: l.amount, gstPct: l.gstPct, hsn: l.hsn, alloc: map });
     }
     const why = input.note?.trim() ? `Booked at the office — ${input.note.trim()}` : "Booked at the office";
@@ -416,11 +416,11 @@ export async function recordChase(
 
 export async function orderCatalogue(customerId: string, lineId?: string, q?: string) {
   const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-  if (!customer) throw notFound("Firm not found");
+  if (!customer) throw notFound(M.firmNotFound());
   const price = await pricerFor(customer);
   if (lineId && lineId !== "ALL") {
     const l = await prisma.businessLine.findUnique({ where: { id: lineId } });
-    if (l?.workflow === "JOBWORK") throw badRequest(`${l.name} is produced to order — raise it from Jobs, not as a stock order`);
+    if (l?.workflow === "JOBWORK") throw badRequest(M.jobWorkNotStock(l.name));
   }
   const where: Prisma.ItemWhereInput = {
     status: "ACTIVE",

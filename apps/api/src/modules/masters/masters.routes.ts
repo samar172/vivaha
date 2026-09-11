@@ -1,3 +1,4 @@
+import { M } from "@vivaha/shared";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma, D } from "../../db";
@@ -33,7 +34,7 @@ router.patch("/lines/:id", requirePerm("settings.manage"), asyncHandler(async (r
   // are already on documents, so it is refused rather than silently ignored.
   if (body.invoiceStart != null && body.invoiceStart !== before.invoiceStart) {
     const started = await prisma.sequence.findUnique({ where: { name: `INV-${before.id}-${fyCode()}` } });
-    if (started) throw badRequest(`${before.name} has already billed on ${before.invoicePrefix}/${fyCode()} — the starting number cannot move once a series is in use. It applies to the next financial year.`);
+    if (started) throw badRequest(M.seriesInUse(before.name, before.invoicePrefix, fyCode()));
   }
   const line = await prisma.businessLine.update({ where: { id: req.params.id }, data: { ...body, invoicePrefix: body.invoicePrefix?.toUpperCase() } });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Business line updated", entityType: "Line", entityId: line.name, oldValue: JSON.stringify({ minSetQty: before.minSetQty, holdMins: before.holdMins, gstPct: before.gstPct }), newValue: JSON.stringify(body) });

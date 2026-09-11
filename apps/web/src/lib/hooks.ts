@@ -24,4 +24,4 @@ export interface Line extends BusinessLineConfig { itemCount?: number; isActive:
 export interface Godown { id: string; name: string; short: string; manager: string; address: string }
 export const useLines = () => useApi<Line[]>("/api/masters/lines");
 export const useGodowns = () => useApi<Godown[]>("/api/masters/godowns");
-export const useSettings = () => useApi<{ minMargin: number; company: { name: string; address: string; gstin: string; state: string } }>("/api/settings");
+export const useSettings = () => useApi<{ minMargin: number; company: { name: string; address: string; gstin: string; state: string }; panelLang?: "en" | "hi" }>("/api/settings");

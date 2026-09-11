@@ -126,9 +126,21 @@ function CredentialsModal({ name, username, password, portal, reset }: { name: s
 }
 
 function PriceTab() {
-  const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups"); const { data: s, mutate } = useApi<{ minMargin: number }>("/api/settings"); const { toast } = useUI(); const { can } = useAuth();
+  const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups"); const { data: s, mutate } = useApi<{ minMargin: number; panelLang?: "en" | "hi" }>("/api/settings"); const { toast } = useUI(); const { can } = useAuth();
   const save = async (name: string, v: number) => { try { await put(`/api/masters/pricing-groups/${name}`, { multiplier: v }); toast(`${name} multiplier updated — future orders only`, "s"); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <div className="g2"><Panel t="Customer group multipliers" h="slab rate × multiplier"><div className="pnb"><div className="fg">{groups?.map((g) => <Field key={g.name} label={g.name}><input type="number" step="0.01" defaultValue={g.multiplier} onBlur={(e) => Number(e.target.value) !== g.multiplier && save(g.name, Number(e.target.value))} /></Field>)}</div><Note k="w" style={{ marginTop: 11 }}>Historical orders keep their price snapshot and never recalculate.</Note></div></Panel>
+    <Panel t="Panel language" h="what the office reads its warnings in"><div className="pnb">
+      <Field label="Warnings and refusals are shown in">
+        <select value={s?.panelLang ?? "en"} disabled={!can("settings.manage")} onChange={async (e) => {
+          try { await put("/api/settings", { panelLang: e.target.value }); toast(e.target.value === "hi" ? "पैनल की भाषा हिंदी कर दी गई" : "Panel language set to English", "s"); mutate(); refresh("/api/settings"); }
+          catch (er) { toast(errMsg(er), "e"); }
+        }}>
+          <option value="en">English</option>
+          <option value="hi">हिंदी</option>
+        </select>
+      </Field>
+      <Note style={{ marginTop: 9 }}>This changes the <b>warnings</b> — the refusals that stop somebody mid-task, like a stock shortfall, a credit gate or a minimum order quantity. Screen labels and headings stay in English, which is what the office reads them in. The customer portal has its own switch and is unaffected.</Note>
+    </div></Panel>
     <Panel t="Margin floor" h="the guard that stops silent under-pricing"><div className="pnb"><Field label="Minimum gross margin over landed cost (%)"><input type="number" defaultValue={(s?.minMargin ?? .18) * 100} disabled={!can("settings.manage")} onBlur={async (e) => { const v = Number(e.target.value) / 100; if (v !== s?.minMargin) { try { await put("/api/settings", { minMargin: v }); toast("Margin floor updated", "s"); mutate(); } catch (er) { toast(errMsg(er), "e"); } } }} /></Field><Note style={{ marginTop: 9 }}>A deep quantity slab stacked on a distributor multiplier can price below cost. The floor blocks the line and asks for an authorised override with a reason.</Note><div style={{ marginTop: 11 }}><div className="sm" style={{ marginBottom: 6, fontFamily: "inherit" }}>Worked example — a 6,000 pc distributor order</div><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Step</th><th className="n">Value</th></tr></thead><tbody>{[["Deepest slab rate", "₹36"], ["Distributor multiplier", "×1.12"], ["Computed rate", "₹40"], ["Landed cost", "₹35"], [`Floor at ${(s?.minMargin ?? .18) * 100}%`, "₹41"], ["Result", <span className="bd b-er" key="r">Blocked</span>]].map((r, i) => <tr key={i} style={{ cursor: "default" }}><td>{r[0]}</td><td className="n tab">{r[1]}</td></tr>)}</tbody></table></div></div></Panel></div>;
 }
 function RbacTab() {

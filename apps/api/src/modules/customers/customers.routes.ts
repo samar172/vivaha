@@ -12,7 +12,7 @@ import { groupMultiplier } from "../../services/pricing";
 import { getMinMargin } from "../../services/settings";
 import { badRequest, notFound, forbidden } from "../../utils/httpError";
 import { recordFix, validFix, metresBetween } from "../../services/geo";
-import { marginFloor, slabRate } from "@vivaha/shared";
+import { marginFloor, slabRate, M } from "@vivaha/shared";
 
 const router = Router();
 const custInclude = { contacts: true, machines: true, salesExec: { select: { id: true, name: true } }, users: { select: { username: true, isActive: true } } } as const;
@@ -178,18 +178,18 @@ router.put("/:id/overrides/:itemId", requirePerm("cust.price"), asyncHandler(asy
 
   // Cards go out on one published price list; only the negotiated lines carry
   // per-firm pricing. Which is which is configuration on the business line.
-  if (!it.line.allowCustomPricing) throw badRequest(`${it.line.name} is sold from a fixed price list — per-firm pricing is not used on this line. Change the slab rates on the item instead.`);
+  if (!it.line.allowCustomPricing) throw badRequest(M.fixedPriceList(it.line.name));
 
   // Whichever way it was entered, the floor is checked against the rupee figure
   // the firm would actually pay at this item's minimum order quantity.
   const mult = await groupMultiplier(c.group);
   const listRate = Math.round(slabRate(it.slabs.map((s) => ({ fromQty: s.fromQty, toQty: s.toQty, rate: D(s.rate) })), it.moq) * mult);
-  if (b.mode === "FLAT" && b.rate == null) throw badRequest("Enter the agreed rate");
-  if (b.mode === "PERCENT" && b.pct == null) throw badRequest("Enter the agreed discount");
+  if (b.mode === "FLAT" && b.rate == null) throw badRequest(M.enterRate());
+  if (b.mode === "PERCENT" && b.pct == null) throw badRequest(M.enterDiscount());
   const effective = b.mode === "FLAT" ? b.rate! : Math.round(listRate * (1 - b.pct! / 100));
 
   const floor = marginFloor(D(it.landedCost), minMargin);
-  if (effective < floor && !can(req, "margin.override")) throw forbidden(`₹${effective} is below the margin floor of ₹${floor} — your role cannot override it`);
+  if (effective < floor && !can(req, "margin.override")) throw forbidden(M.belowMarginFloor(effective, floor));
 
   const shown = b.mode === "FLAT" ? `₹${effective}` : `${b.pct}% off (₹${effective} at MOQ)`;
   await prisma.$transaction(async (tx) => {

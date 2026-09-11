@@ -17,4 +17,8 @@ export async function setSetting(key: string, value: unknown) {
 }
 export const getMinMargin = () => getSetting<number>("MIN_MARGIN", DEFAULT_MIN_MARGIN);
 export const getCompany = () => getSetting<CompanySettings>("COMPANY", DEFAULT_COMPANY);
+// The language the office panel reads its warnings in. English by default,
+// because that is what the ERP was written in; a floor that works in Hindi can
+// switch the whole panel with one setting.
+export const getPanelLang = () => getSetting<"en" | "hi">("PANEL_LANG", "en");
 export const getHomeState = async () => (await getCompany()).state;

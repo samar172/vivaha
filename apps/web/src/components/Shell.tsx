@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useAppState } from "@/lib/app-state";
-import { useApi, useGodowns, useLines } from "@/lib/hooks";
+import { useApi, useGodowns, useLines, useSettings } from "@/lib/hooks";
 import { post } from "@/lib/api";
-import { useUI, errMsg } from "@/lib/ui";
+import { useUI, errMsg, setPanelLang } from "@/lib/ui";
 import { Section, Field, Note } from "./ui";
 import { FirstLoginGate } from "./FirstLogin";
 import { money, num, fDT, type Perm } from "@vivaha/shared";
@@ -40,6 +40,10 @@ export function usePager<T>(rows: T[], size = 14) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
+  // The panel's warning language is an office setting; read it once here so a
+  // toast anywhere can use it without every caller threading it through.
+  const { data: settings } = useSettings();
+  useEffect(() => { setPanelLang(settings?.panelLang ?? "en"); }, [settings?.panelLang]);
   const { user, loading, logout, can } = useAuth(); const router = useRouter(); const pathname = usePathname();
   const { line, setLine, godown, setGodown, sbCol, toggleSb } = useAppState();
   const { data: lines } = useLines(); const { data: godowns } = useGodowns();
