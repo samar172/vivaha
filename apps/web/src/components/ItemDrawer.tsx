@@ -1,13 +1,14 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { money, num, fDT, marginFloor } from "@vivaha/shared";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
-import { post } from "@/lib/api";
+import { post, del } from "@/lib/api";
 import { Pill, BandPill, LineChip, Thumb, DF, Section, DrawerFrame, ModalFrame, Field, Note } from "./ui";
 import { Qr } from "./Qr";
+import { thumb } from "@/lib/art";
 import type { ItemView } from "./types";
 
 export function ItemDrawer({ id }: { id: string }) {
@@ -160,5 +161,78 @@ export function ItemForm({ item }: { item?: ItemView }) {
       <Field label="HSN"><input value={f.hsn} onChange={(e) => setF({ ...f, hsn: e.target.value })} /></Field>
       <Field label="GST %"><input type="number" value={f.gstPct} onChange={(e) => setF({ ...f, gstPct: Number(e.target.value) })} /></Field>
     </div>
+    <ItemPhoto item={item} />
   </ModalFrame>;
+}
+
+// A phone camera produces four thousand pixels across and several megabytes of
+// it; the catalogue shows the picture a few hundred pixels wide. Redrawing it
+// through a canvas before it leaves the browser is the difference between an
+// upload that works on a godown 4G connection and one that times out.
+const MAX_EDGE = 1400;
+function downscale(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("Could not read that file"));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That file is not an image we can read"));
+      img.onload = () => {
+        const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        const ctx = c.getContext("2d");
+        if (!ctx) return reject(new Error("Could not process that image"));
+        // Cards are photographed against paper; a white ground keeps a
+        // transparent PNG from turning black once it is flattened to JPEG.
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = String(fr.result);
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+function ItemPhoto({ item }: { item?: ItemView }) {
+  const { toast } = useUI();
+  const [url, setUrl] = useState<string | null>(item?.imageUrl ?? null);
+  const [busy, setBusy] = useState(false);
+  const pick = useRef<HTMLInputElement>(null);
+
+  // Uploading needs somewhere to attach the picture to.
+  if (!item) return <Note style={{ marginTop: 13 }}>Save the item first, then reopen it to add a photograph. Until one is added the catalogue draws generated artwork from the design number.</Note>;
+
+  const choose = async (file?: File) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const data = await downscale(file);
+      const r = await post<{ imageUrl: string }>(`/api/items/${item.id}/image`, { data });
+      setUrl(r.imageUrl); toast("Photograph saved", "s"); refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); if (pick.current) pick.current.value = ""; }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await del(`/api/items/${item.id}/image`); setUrl(null); toast("Photograph removed — showing generated artwork", "s"); refresh("/api/"); }
+    catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  return <>
+    <div className="st" style={{ marginTop: 16 }}>Photograph</div>
+    <div style={{ display: "flex", gap: 13, alignItems: "flex-start" }}>
+      <img src={thumb({ ...item, imageUrl: url }, 120, 156)} alt="" style={{ width: 96, border: "1px solid var(--bd)", borderRadius: 4, background: "#fff" }} />
+      <div style={{ flex: 1 }}>
+        <div className="sm" style={{ marginBottom: 8 }}>{url ? "This is the picture buyers see in the catalogue and the portal." : "No photograph yet — the catalogue is drawing generated artwork from the design number."}</div>
+        <input ref={pick} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: "none" }} onChange={(e) => choose(e.target.files?.[0])} />
+        <div style={{ display: "flex", gap: 7 }}>
+          <button className="b b-o b-s" disabled={busy} onClick={() => pick.current?.click()}>{busy ? "Working…" : url ? "Replace photo" : "Add photo"}</button>
+          {url && <button className="b b-g b-s" disabled={busy} onClick={remove}>Remove</button>}
+        </div>
+        <div className="sm" style={{ marginTop: 7 }}>JPEG, PNG or WebP. Large photographs are shrunk to {MAX_EDGE} px before they are sent.</div>
+      </div>
+    </div>
+  </>;
 }

@@ -12,11 +12,14 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts"
   },
-  "prisma": { "seed": "tsx prisma/seed.ts" },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
-    "@vivaha/shared": "*",
     "@prisma/client": "^5.19.1",
+    "@vivaha/shared": "*",
     "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.11.0",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

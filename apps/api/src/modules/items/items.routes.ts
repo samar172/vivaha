@@ -8,6 +8,7 @@ import { loadItemViews, loadItemView } from "../../services/items";
 import { audit } from "../../services/audit";
 import { notFound, badRequest } from "../../utils/httpError";
 import { getMinMargin } from "../../services/settings";
+import { storeItemImage, removeItemImage } from "../../services/uploads";
 
 const router = Router();
 
@@ -71,6 +72,33 @@ router.patch("/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => 
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: b.status && b.status !== before.status ? "Item " + b.status.toLowerCase() : "Item updated", entityType: "Item", entityId: before.sku, oldValue: b.landedCost != null ? "cost " + D(before.landedCost) : before.status, newValue: b.landedCost != null ? "cost " + b.landedCost : b.status ?? "edited" });
   });
   res.json(await loadItemView(before.id));
+}));
+
+// A card is bought by its picture. Item.imageUrl has always existed and
+// thumb() has always preferred a real photograph over the generated artwork —
+// nothing ever wrote to the field. Setting it here lights the picture up
+// everywhere at once: the item table, the drawer, the portal catalogue, the
+// order screen.
+router.post("/:id/image", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const { data } = z.object({ data: z.string().min(1) }).parse(req.body);
+  const it = await prisma.item.findUnique({ where: { id: req.params.id } });
+  if (!it) throw notFound("Item not found");
+  const img = await storeItemImage(it.id, data);
+  // Replacing: the old picture goes only once the new one is safely stored.
+  if (it.imageUrl && it.imageUrl !== img.url) await removeItemImage(it.imageUrl);
+  const updated = await prisma.item.update({ where: { id: it.id }, data: { imageUrl: img.url } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: it.imageUrl ? "Item photo replaced" : "Item photo added", entityType: "Item", entityId: it.sku, oldValue: it.imageUrl ?? "generated artwork", newValue: img.url });
+  res.status(201).json({ imageUrl: updated.imageUrl, bytes: img.bytes });
+}));
+
+router.delete("/:id/image", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const it = await prisma.item.findUnique({ where: { id: req.params.id } });
+  if (!it) throw notFound("Item not found");
+  if (!it.imageUrl) throw badRequest("This item has no photograph — it is showing generated artwork");
+  await prisma.item.update({ where: { id: it.id }, data: { imageUrl: null } });
+  await removeItemImage(it.imageUrl);
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Item photo removed", entityType: "Item", entityId: it.sku, oldValue: it.imageUrl, newValue: "generated artwork" });
+  res.status(204).send();
 }));
 
 router.post("/bulk", requirePerm("item.edit"), asyncHandler(async (req, res) => {

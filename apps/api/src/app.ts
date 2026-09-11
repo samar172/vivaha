@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import { env } from "./env";
 import { errorHandler } from "./middleware/errorHandler";
 import { requireAuth, requireInternal, requireCustomer } from "./middleware/auth";
+import { UPLOAD_ROOT } from "./services/uploads";
 
 import authRoutes from "./modules/auth/auth.routes";
 import mastersRoutes from "./modules/masters/masters.routes";
@@ -38,10 +39,19 @@ app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credential
 // A full-database restore is a whole business in one payload, so it gets its
 // own ceiling; everything else stays on the tight limit.
 app.use("/api/settings/restore", express.json({ limit: "128mb" }));
+// A photograph on an ordinary JSON body needs more headroom than a form post,
+// and rather less than a whole-database restore.
+app.use("/api/items/:id/image", express.json({ limit: "12mb" }));
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 app.use("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 30 }));
+
+// Item photographs, when they are kept on local disk rather than Cloudinary.
+// Served unauthenticated and deliberately: an <img> tag cannot carry a bearer
+// token, and a product picture is not a secret. Mounted under /api so it rides
+// the frontend's existing proxy and stays first-party to the browser.
+app.use("/api/uploads", express.static(UPLOAD_ROOT, { maxAge: "30d", index: false, redirect: false, dotfiles: "deny" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "vivaha-api" }));
 app.use("/api/auth", authRoutes);
