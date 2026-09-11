@@ -9,6 +9,7 @@ import { loadItemViews, loadItemView } from "../../services/items";
 import { audit } from "../../services/audit";
 import { notFound, badRequest } from "../../utils/httpError";
 import { getMinMargin } from "../../services/settings";
+import { fyCode } from "../../services/sequence";
 import { storeItemImage, removeItemImage } from "../../services/uploads";
 
 const router = Router();
@@ -78,8 +79,21 @@ router.patch("/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => 
   if (!before) throw notFound(M.itemNotFound());
   const { slabs, ...rest } = b;
   const beforeSlabs = await prisma.priceSlab.findMany({ where: { itemId: before.id }, orderBy: { fromQty: "asc" } });
+
+  // Cards run on the manufacturer's list, published once and standing for the
+  // whole financial year. Changing a rate inside that year is a revision of a
+  // published list — retailers have been quoting it since April — so it is
+  // allowed, because costs do move, but never silently: it needs a reason and
+  // it is marked as a revision. A first edit in a new financial year is simply
+  // the new list and needs nothing.
+  const fy = fyCode();
+  const reason = (req.body as { reason?: string }).reason?.trim() ?? "";
+  const line = await prisma.businessLine.findUniqueOrThrow({ where: { id: before.lineId } });
+  const slabsChanged = !!slabs && JSON.stringify(slabs.map((x) => [x.fromQty, x.toQty, x.rate])) !== JSON.stringify(beforeSlabs.map((x) => [x.fromQty, x.toQty, D(x.rate)]));
+  const midYearRevision = slabsChanged && line.priceListAnnual && before.priceListFy === fy;
+  if (midYearRevision && !reason) throw badRequest(M.annualListRevision(line.name, fy));
   await prisma.$transaction(async (tx) => {
-    await tx.item.update({ where: { id: before.id }, data: { ...rest, vendorId: rest.vendorId === undefined ? undefined : rest.vendorId } });
+    await tx.item.update({ where: { id: before.id }, data: { ...rest, vendorId: rest.vendorId === undefined ? undefined : rest.vendorId, ...(slabsChanged ? { priceListFy: fy } : {}) } });
     if (slabs) { await tx.priceSlab.deleteMany({ where: { itemId: before.id } }); await tx.priceSlab.createMany({ data: slabs.map((s) => ({ ...s, itemId: before.id })) }); }
 
     // "Why is this dearer than last season" needs an answer with a name and a
@@ -90,7 +104,7 @@ router.patch("/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => 
     const newBase = slabs?.[0]?.rate ?? null;
     if (oldBase != null && newBase != null && oldBase !== newBase) hist.push({ field: "slab1", oldValue: oldBase, newValue: newBase });
     if (rest.landedCost != null && D(before.landedCost) !== rest.landedCost) hist.push({ field: "landedCost", oldValue: D(before.landedCost), newValue: rest.landedCost });
-    if (hist.length) await tx.itemPriceHistory.createMany({ data: hist.map((h) => ({ ...h, itemId: before.id, by: req.user!.name, reason: (req.body as { reason?: string }).reason ?? "" })) });
+    if (hist.length) await tx.itemPriceHistory.createMany({ data: hist.map((h) => ({ ...h, itemId: before.id, by: req.user!.name, reason: midYearRevision ? `Mid-year revision of the ${fy} list — ${reason}` : reason })) });
 
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: b.status && b.status !== before.status ? "Item " + b.status.toLowerCase() : "Item updated", entityType: "Item", entityId: before.sku, oldValue: b.landedCost != null ? "cost " + D(before.landedCost) : before.status, newValue: b.landedCost != null ? "cost " + b.landedCost : b.status ?? "edited" });
   });

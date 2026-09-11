@@ -72,6 +72,10 @@ export const M = {
     en: `${lineName} is sold from a fixed price list — per-firm pricing is not used on this line. Change the slab rates on the item instead.`,
     hi: `${lineName} तय प्राइस लिस्ट पर बिकता है — इस लाइन में फ़र्म-वार रेट नहीं चलते। इसके बजाय आइटम की स्लैब दरें बदलें।`,
   }),
+  annualListRevision: (lineName: string, fy: string): Bilingual => ({
+    en: `${lineName} runs on the ${fy} price list, which is published for the whole year. Changing a rate inside the year is a revision — give the reason and it will be recorded against the item.`,
+    hi: `${lineName} ${fy} की प्राइस लिस्ट पर चलता है, जो पूरे साल के लिए जारी होती है। साल के बीच रेट बदलना एक संशोधन है — कारण बताएं, वह आइटम के साथ दर्ज हो जाएगा।`,
+  }),
   enterRate: (): Bilingual => ({ en: "Enter the agreed rate", hi: "तय रेट लिखें" }),
   enterDiscount: (): Bilingual => ({ en: "Enter the agreed discount", hi: "तय छूट लिखें" }),
 

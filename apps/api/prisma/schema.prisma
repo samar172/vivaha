@@ -188,9 +188,14 @@ model BusinessLine {
   facets       Json         @default("[]")
   sortOrder    Int          @default(0)
   isActive     Boolean      @default(true)
-  // Cards go out on a fixed published price list; flex, ACP and the rest are
-  // negotiated per firm. Which is which is configuration, not code.
+  // Whether a firm can be given its own price on this line. True everywhere:
+  // a card list being fixed is about the year it runs for, not about whether a
+  // dealer can be given a rate — see priceListAnnual.
   allowCustomPricing Boolean @default(true)
+  // The list on this line is the manufacturer's, published once and standing
+  // for the whole financial year. Changing a rate inside that year is a
+  // revision of a published list, not an ordinary edit, and is recorded as one.
+  priceListAnnual    Boolean @default(false)
   // Each line bills on its own series, so a flex invoice and a card invoice are
   // never the same number. The prefix and the number to start from are set in
   // Settings; the series itself restarts every financial year.
@@ -282,6 +287,10 @@ model Item {
   setupCharge  Decimal?     @db.Decimal(12, 2)
   artSeed      Int          @default(0)
   imageUrl     String?
+  // The financial year the current slabs belong to, stamped whenever they are
+  // set. On an annual line this is what tells a new year's list apart from a
+  // mid-year revision of the standing one.
+  priceListFy  String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 

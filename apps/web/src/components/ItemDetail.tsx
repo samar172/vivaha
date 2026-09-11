@@ -221,10 +221,15 @@ export function ItemForm({ item }: { item?: ItemView }) {
   // not touched it. An item that already has a Hindi name counts as touched, so
   // opening an old card to fix a typo never quietly rewrites its Hindi.
   const [hiTouched, setHiTouched] = useState(!!item?.nameHi);
+  // Changing a rate inside the year on an annual line is a revision of a
+  // published list, so the reason is collected where the change is made.
+  const [reason, setReason] = useState("");
+  const annual = !!lines?.find((l) => l.id === (f.lineId || lines?.[0]?.id))?.priceListAnnual;
+  const rateChanged = !!item && Number(f.base) !== Number(item.slabs?.[0]?.rate ?? 0);
   const setName = (name: string) => setF((x) => ({ ...x, name, ...(hiTouched ? {} : { nameHi: toHindi(name) }) }));
   const submit = async () => {
     const slabs = [{ fromQty: 1, toQty: 499, rate: f.base }, { fromQty: 500, toQty: 1999, rate: Math.round(f.base * .89) }, { fromQty: 2000, toQty: 4999, rate: Math.round(f.base * .8) }, { fromQty: 5000, toQty: 1e9, rate: Math.round(f.base * .74) }];
-    const body = { ...f, lineId: f.lineId || lines?.[0]?.id, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
+    const body = { ...f, lineId: f.lineId || lines?.[0]?.id, reason: reason.trim() || undefined, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
     try { if (item) await (await import("@/lib/api")).patch(`/api/items/${item.id}`, body); else await post("/api/items", body); toast(item ? "Item updated" : "Item created", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); }
   };
   return <ModalFrame title={item ? "Edit item — " + item.sku : "New item"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Save item</button></>}>
@@ -245,7 +250,8 @@ export function ItemForm({ item }: { item?: ItemView }) {
       <Field label="Per pack"><input type="number" value={f.perPack} onChange={(e) => setF({ ...f, perPack: Number(e.target.value) })} /></Field>
       <Field label="MOQ"><input type="number" value={f.moq} onChange={(e) => setF({ ...f, moq: Number(e.target.value) })} /></Field>
       <Field label="Landed cost (₹)"><input type="number" value={f.landedCost} onChange={(e) => setF({ ...f, landedCost: Number(e.target.value) })} /></Field>
-      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %"><input type="number" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
+      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %" hint={annual ? "This line runs on a yearly published list" : undefined}><input type="number" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
+      {annual && rateChanged && <Field label="Why the list is being revised mid-year *" full hint="Recorded against the item — retailers have been quoting this list since April"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Manufacturer revised the paper rate in October" /></Field>}
       <Field label="HSN"><input value={f.hsn} onChange={(e) => setF({ ...f, hsn: e.target.value })} /></Field>
       <Field label="GST %"><input type="number" value={f.gstPct} onChange={(e) => setF({ ...f, gstPct: Number(e.target.value) })} /></Field>
     </div>

@@ -21,6 +21,7 @@ const lineSchema = z.object({
   holdMins: z.number().int().min(0).optional(), gstPct: z.number().int().min(0).max(28).optional(), packUoms: z.array(z.string()).optional(),
   facets: z.array(z.string()).optional(), isActive: z.boolean().optional(),
   allowCustomPricing: z.boolean().optional(),
+  priceListAnnual: z.boolean().optional(),
   // The invoice series for this line. The prefix is letters only — it becomes
   // part of a tax invoice number, which is printed and filed.
   invoicePrefix: z.string().regex(/^[A-Za-z]{1,6}$/, "Use one to six letters, e.g. VC or VFX").optional(),

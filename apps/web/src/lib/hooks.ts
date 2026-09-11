@@ -20,7 +20,7 @@ export function useDebounced<T>(value: T, ms = 350): T {
 export const refresh = (prefix: string) => globalMutate((key) => typeof key === "string" && key.startsWith(prefix), undefined, { revalidate: true });
 export const refreshAll = () => globalMutate(() => true, undefined, { revalidate: true });
 
-export interface Line extends BusinessLineConfig { itemCount?: number; isActive: boolean; invoicePrefix: string; invoiceStart: number }
+export interface Line extends BusinessLineConfig { itemCount?: number; isActive: boolean; invoicePrefix: string; invoiceStart: number; priceListAnnual?: boolean }
 export interface Godown { id: string; name: string; short: string; manager: string; address: string }
 export const useLines = () => useApi<Line[]>("/api/masters/lines");
 export const useGodowns = () => useApi<Godown[]>("/api/masters/godowns");

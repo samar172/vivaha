@@ -173,8 +173,8 @@ function GeoCapture({ lat, lng, accuracy, at, onFix }: { lat: number | null; lng
 function OverrideModal({ c }: { c: Full }) {
   const { closeModal, toast } = useUI(); const { data: items } = useApi<{ items: ItemView[] }>("/api/items"); const { data: full, mutate } = useApi<Full>(`/api/customers/${c.id}`);
   const { data: lines } = useLines();
-  // Cards are sold from one published list; only the negotiated lines carry
-  // per-firm pricing, and the line master is what says which is which.
+  // Every line carries per-firm pricing. A card list being fixed is about the
+  // year it runs for, not about whether a dealer can be given a rate.
   const negotiable = (id: string) => lines?.find((l) => l.id === id)?.allowCustomPricing !== false;
   const its = (items?.items ?? []).filter((i) => i.status === "ACTIVE" && c.linesEnabled.includes(i.lineId) && negotiable(i.lineId));
   const [iid, setIid] = useState(""); const [mode, setMode] = useState<"FLAT" | "PERCENT">("FLAT");
@@ -206,7 +206,7 @@ function OverrideModal({ c }: { c: Full }) {
     </div>
 
     <div className="st">Per item</div>
-    <Note style={{ marginBottom: 13 }}>A per-item price outranks the quantity slab, the group multiplier and the firm-wide discount. It still cannot go below the margin floor without an authorised override. <b>Cards are not listed</b> — that line is sold from a fixed price list, so its rates are changed on the item itself.</Note>
+    <Note style={{ marginBottom: 13 }}>A per-item price outranks the quantity slab, the group multiplier and the firm-wide discount. It still cannot go below the margin floor without an authorised override. On cards the published list is the manufacturer&apos;s and stands for the financial year — a firm&apos;s own rate here sits against that list and does not change it.</Note>
     {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Agreed</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{o.sku} {o.name}</td><td className="n tab">{money(o.slabRate)}</td><td className="n tab">{money(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{money(o.rate)}{o.mode === "PERCENT" && o.pct != null ? <div className="sm">{o.pct}% off list</div> : null}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No per-item pricing set for this firm.</div>}
     {its.length ? <>
       <div className="fg">
