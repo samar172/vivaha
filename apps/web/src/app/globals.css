@@ -418,6 +418,37 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .portal{height:100vh}
 .loading{display:flex;align-items:center;justify-content:center;height:100vh;color:var(--t4);font-size:14.5px}
 .sb.mob{position:fixed;left:0;top:46px;bottom:0;z-index:60;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+/* ── The portal on a desktop ─────────────────────────────────────────────────
+   Everything below was drawn for a phone first, which is right — the retailer
+   reads it on one. But the office and the sales desk open it on a laptop, and
+   a phone layout stretched across 1080px is not the same design: the cards
+   stayed postage-stamp sized six across, and the scan button became a
+   sixty-pixel crimson slab the width of the page. */
+@media(min-width:901px){
+  /* Cards get room to be read rather than counted. Four or five across with
+     the name on one line, instead of six cramped ones. */
+  .pgrid{grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:14px}
+  .pcd .nm{font-size:14.5px;height:auto;min-height:20px;margin-bottom:7px}
+  .pcd .bo{padding:11px 13px 13px}
+
+  /* Scanning is a phone affordance. On a desktop the typed design number is
+     the way in, so it leads and takes the width; the camera stays available
+     but stops shouting. */
+  .scan{display:flex;flex-wrap:wrap;align-items:center;gap:11px;padding:13px 14px}
+  .scan .scanb{width:auto;flex:0 0 auto;height:44px;padding:0 18px;font-size:15px;border-radius:9px;order:2}
+  .scan .scani{margin-top:0;flex:1;order:1;height:44px}
+  /* The result list sits under both, across the whole block. */
+  .scan > div{order:3;flex-basis:100%;margin-top:4px}
+
+  /* Section headings and rows can breathe at this width. */
+  .sect{font-size:15.5px;margin:20px 0 10px}
+  .hitr{padding:13px 0}
+  .blk{padding:15px 16px}
+  /* The bottom bar is a phone pattern; on a laptop the content should not be
+     hiding behind 58px of it. */
+  .pc{padding-bottom:78px}
+}
+
 /* ── The portal on real devices ──────────────────────────────────────────────
    A retailer reads this on a phone, a sales executive on a tablet in the shop,
    and the office on a laptop. The grid was already fluid; these are the places
