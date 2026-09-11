@@ -2,7 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { money, num, fDate, dueLbl, daysTo, JOB_STATUSES, JOB_STATUS_LABEL, type JobStatus } from "@vivaha/shared";
-import { useApi, useGodowns, refresh } from "@/lib/hooks";
+import { useApi, useGodowns, refresh, useLines } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
@@ -63,8 +63,14 @@ export function JobDetail({ id }: { id: string }) {
   </>;
 }
 function JobForm() {
-  const { closeModal, toast } = useUI(); const { data: custs } = useApi<Customer[]>("/api/customers"); const { data: items } = useApi<{ items: ItemView[] }>("/api/items");
-  const bases = (items?.items ?? []).filter((i) => i.lineId === "L1" && i.status === "ACTIVE"), procs = (items?.items ?? []).filter((i) => i.lineId === "L4");
+  const { closeModal, toast } = useUI(); const { data: custs } = useApi<Customer[]>("/api/customers"); const { data: items } = useApi<{ items: ItemView[] }>("/api/items"); const { data: lines } = useLines();
+  // Job work overprints a stock card with a process. Both sides are found by
+  // what the line *is* — the cards line, and whichever line does job work —
+  // rather than by an id that happens to be L1 and L4 today.
+  const cardsLineId = lines?.find((l) => l.code === "cards")?.id;
+  const jobLineIds = new Set((lines ?? []).filter((l) => l.workflow === "JOBWORK").map((l) => l.id));
+  const bases = (items?.items ?? []).filter((i) => i.lineId === cardsLineId && i.status === "ACTIVE");
+  const procs = (items?.items ?? []).filter((i) => jobLineIds.has(i.lineId));
   const [f, setF] = useState(() => ({ customerId: "", baseItemId: "", processItemId: "", qty: 500, requiredBy: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10), text: "", quote: 0 }));
   const go = async () => { try { await post("/api/jobs", { ...f, customerId: f.customerId || custs?.[0]?.id, baseItemId: f.baseItemId || bases[0]?.id, processItemId: f.processItemId || procs[0]?.id, qty: Number(f.qty), quote: f.quote || undefined }); toast("Job quoted", "s"); closeModal(); refresh("/api/jobs"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="New job order" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Create quote</button></>}><div className="fg"><Field label="Firm" full><select value={f.customerId || custs?.[0]?.id} onChange={(e) => setF({ ...f, customerId: e.target.value })}>{custs?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field><Field label="Base card"><select value={f.baseItemId || bases[0]?.id} onChange={(e) => setF({ ...f, baseItemId: e.target.value })}>{bases.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field><Field label="Process"><select value={f.processItemId || procs[0]?.id} onChange={(e) => setF({ ...f, processItemId: e.target.value })}>{procs.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></Field><Field label="Quantity"><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field><Field label="Required by"><input type="date" value={f.requiredBy} onChange={(e) => setF({ ...f, requiredBy: e.target.value })} /></Field><Field label="Quote (₹, blank = cost + 30%)"><input type="number" value={f.quote || ""} onChange={(e) => setF({ ...f, quote: Number(e.target.value) })} /></Field><Field label="Text to print" full><textarea value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} placeholder="Vikram weds Anjali · 28 Nov 2026 · Hotel Lallgarh Palace, Bikaner" /></Field></div></ModalFrame>;

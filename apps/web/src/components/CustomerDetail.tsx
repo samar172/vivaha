@@ -247,7 +247,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
   const [f, setF] = useState({
     name: customer?.name ?? "", contactName: customer?.contactName ?? "", phone: customer?.phone ?? "",
     tehsil: customer?.tehsil ?? "Bikaner", gstin: customer?.gstin ?? "", firmType: customer?.firmType ?? "Registered",
-    address: customer?.address ?? "", linesEnabled: customer?.linesEnabled ?? ["L1"], group: customer?.group ?? "Regular",
+    address: customer?.address ?? "", linesEnabled: customer?.linesEnabled ?? [], group: customer?.group ?? "Regular",
     salesExecId: customer?.salesExecId ?? "", creditLimit: customer?.creditLimit ?? 150000, creditDays: customer?.creditDays ?? 30,
     gateMode: (customer?.gateMode ?? "WARN") as "WARN" | "BLOCK",
     priceAdjPct: customer?.priceAdjPct ?? 0,
@@ -266,9 +266,11 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) {
 
   const go = async () => {
     if (!f.name || !f.contactName || !f.phone) return toast("Firm name, owner name and phone are required", "e");
+    const enabled = f.linesEnabled.length ? f.linesEnabled : (lines?.[0] ? [lines[0].id] : []);
+    if (!enabled.length) return toast("Tick at least one business line", "e");
     const clean = contacts.filter((c) => c.name.trim() && c.phone.trim());
     if (contacts.length !== clean.length) return toast("Every extra number needs a name and a phone — remove the blank rows", "e");
-    const body = { ...f, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type) };
+    const body = { ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type) };
     try {
       if (edit) { await patch(`/api/customers/${customer!.id}`, body); toast("Customer updated", "s"); closeDrawer(); }
       else { await post("/api/customers", body); toast("Customer created — refer code issued", "s"); }

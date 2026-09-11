@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { invoiceTotals, rankAlternates, nextSlab, ledgerWithBalance, ageing, creditGate, ORDER_STATUS_HI, type OrderStatus } from "@vivaha/shared";
+import { M, invoiceTotals, rankAlternates, nextSlab, ledgerWithBalance, ageing, creditGate, ORDER_STATUS_HI, type OrderStatus } from "@vivaha/shared";
 import { prisma, D } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { loadItemViews, loadItemView, type ItemView } from "../../services/items";
@@ -91,7 +91,10 @@ router.get("/home", asyncHandler(async (req, res) => {
   const ad = [...ads].sort((a, b) => a.sortOrder - b.sortOrder || machineMatch(b) - machineMatch(a) || b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
   if (ad) await prisma.ad.update({ where: { id: ad.id }, data: { impressions: { increment: 1 } } });
   let nudge: unknown = null;
-  if ((c.linesEnabled as string[]).includes("L2") && c.machines.length) {
+  // Keyed on the line's code, not its id: an id is an arbitrary primary key and
+  // a sixth line would renumber nothing, but "consumables" is what this line is.
+  const consumablesLine = await prisma.businessLine.findUnique({ where: { code: "consumables" }, select: { id: true } });
+  if (consumablesLine && (c.linesEnabled as string[]).includes(consumablesLine.id) && c.machines.length) {
     const m = c.machines.find((x) => x.type === "Offset"); const spec = (m?.spec as Record<string, string>) || {};
     const cons = await loadItemViews({ line: { code: "consumables" }, status: "ACTIVE" });
     const it = cons.find((i) => i.attrs.brand === (spec.ink || "SGL")) || cons[0];
@@ -108,6 +111,10 @@ router.get("/catalogue", asyncHandler(async (req, res) => {
   const q = z.object({ line: z.string(), q: z.string().optional(), facet: z.string().optional(), value: z.string().optional() }).parse(req.query);
   if (!(c.linesEnabled as string[]).includes(q.line)) throw badRequest("Line not enabled for this firm");
   const [line, price] = await Promise.all([prisma.businessLine.findUniqueOrThrow({ where: { id: q.line } }), pricerFor(c)]);
+  // Job work is quoted with the office and carries no stock. The switcher
+  // already leaves it out; this closes the same door on the endpoint, so a
+  // stale link cannot land a firm in a catalogue it can never order from.
+  if (line.workflow === "JOBWORK") throw badRequest(M.jobWorkNotStock(line.name));
   let items = await loadItemViews({ lineId: q.line, status: "ACTIVE" });
   const facet = (line.facets as string[])[0];
   const values = [...new Set(items.map((i) => i.attrs[facet]).filter(Boolean))];
@@ -120,7 +127,7 @@ router.get("/scan", asyncHandler(async (req, res) => {
   const c = await me(req);
   const q = String(req.query.q || "").trim().toLowerCase();
   const price = await pricerFor(c);
-  let items = await loadItemViews({ status: "ACTIVE", lineId: { in: c.linesEnabled as string[] } });
+  let items = await loadItemViews({ status: "ACTIVE", lineId: { in: c.linesEnabled as string[] }, line: { workflow: "FULFIL" } });
   if (q === "__random__") { const lineId = String(req.query.line || (c.linesEnabled as string[])[0]); const pool = items.filter((i) => i.lineId === lineId); items = pool.length ? [pool[Math.floor(Math.random() * pool.length)]] : []; }
   else if (q.length < 2) items = [];
   else {
@@ -172,7 +179,9 @@ router.get("/items/:id", asyncHandler(async (req, res) => {
   const c = await me(req);
   const qty = Number(req.query.qty || 0);
   const it = await loadItemView(req.params.id);
-  if (!it || !(c.linesEnabled as string[]).includes(it.lineId)) throw notFound("Item not found");
+  if (!it || !(c.linesEnabled as string[]).includes(it.lineId)) throw notFound(M.itemNotFound());
+  const itLine = await prisma.businessLine.findUnique({ where: { id: it.lineId }, select: { workflow: true } });
+  if (itLine?.workflow === "JOBWORK") throw notFound(M.itemNotFound());
   const price = await pricerFor(c);
   const pr = price(it, Math.max(qty, it.moq));
   const open = await prisma.order.findMany({ where: { customerId: c.id, status: "BOOKED", lines: { some: { itemId: it.id } } }, include: { lines: { where: { itemId: it.id } } } });
