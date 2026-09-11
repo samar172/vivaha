@@ -31,11 +31,17 @@ rsync -avn --delete -e ssh --exclude node_modules --exclude '.env*' \
   apps/api/src/ saangri:/opt/apps/vivaha/apps/api/src/
 rsync -avn --delete -e ssh apps/api/prisma/ saangri:/opt/apps/vivaha/apps/api/prisma/
 
-# 2. Back up the database first, always
-ssh saangri "pg_dump \"\$(grep DATABASE_URL /opt/apps/vivaha/apps/api/.env | cut -d'\"' -f2)\" \
-  -F c -f /opt/apps/vivaha/backups/vivaha_\$(date +%Y%m%d_%H%M%S).dump"
+# 2. Back up the database first, always.
+#    DATABASE_URL carries ?schema=public and pg_dump rejects it outright
+#    ("invalid URI query parameter"), so the query string is stripped first.
+ssh saangri 'U=$(grep DATABASE_URL /opt/apps/vivaha/apps/api/.env | cut -d\" -f2 | sed "s/?.*//"); \
+  pg_dump "$U" -F c -f /opt/apps/vivaha/backups/vivaha_$(date +%Y%m%d_%H%M%S).dump'
 
-# 3. Sync for real (add packages/shared/ too if the engine changed)
+# 3. Sync for real. packages/shared is NOT optional whenever it changed:
+#    the API imports the pricing engine, the permission list and the line
+#    config from it, so shipping src/ alone leaves the server running old
+#    rules against new callers. Check with:
+#      git diff --name-only <last deployed>..HEAD -- packages/shared
 rsync -a -e ssh --exclude node_modules --exclude '.env*' apps/api/src/ saangri:/opt/apps/vivaha/apps/api/src/
 rsync -a -e ssh apps/api/prisma/ saangri:/opt/apps/vivaha/apps/api/prisma/
 rsync -a -e ssh --exclude node_modules packages/shared/ saangri:/opt/apps/vivaha/packages/shared/
@@ -47,6 +53,19 @@ ssh saangri "cd /opt/apps/vivaha/apps/api && npx prisma migrate deploy && npx pr
 # 5. Restart and verify
 ssh saangri "pm2 restart vivaha-api && sleep 3 && pm2 show vivaha-api"
 curl https://vivaha-api.98.70.37.83.nip.io/health
+```
+
+### If a deploy adds a dependency
+
+Run `npm install` at `/opt/apps/vivaha` — **plain, never `--omit=dev`**. PM2 runs
+this API through `tsx` as its *interpreter* (there is no build step), and `tsx`
+is a devDependency: pruning dev packages deletes the interpreter and the API
+stops booting with a 502 until they are reinstalled. Learned on 11 Sep 2026, the
+hard way, with about two minutes of downtime.
+
+```bash
+ssh saangri "cd /opt/apps/vivaha && npm install"
+ssh saangri "ls /opt/apps/vivaha/node_modules/.bin/tsx"   # must exist before restarting
 ```
 
 Reseeding wipes and rebuilds the demo dataset — only run it deliberately:

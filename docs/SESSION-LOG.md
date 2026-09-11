@@ -6,6 +6,142 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-11 — The twenty-point update round
+
+A client list of twenty changes, under a standing instruction: analyse what
+exists, extend it, do not rebuild. The most useful finding was how much was
+already built and simply never connected.
+
+### What was already there
+
+`CustomerContact` modelled a firm's numbers with a role, a phone and an
+authority, and nothing had ever written to it. `Item.imageUrl` had existed since
+the first build and `thumb()` had always preferred a real photograph over the
+generated artwork — the field was never set. `priceFor()` was already the only
+place a rate was decided. `Referral` had a code on every firm, a portal
+submission screen and a reward on the row, with nothing able to read it back.
+`Cart`, `Ad`, `CustomerMachine`, `/api/codes/resolve` and the portal's bottom
+bar all existed. Because `BusinessLine` is pure configuration, separating Flex
+from ACP needed no pricing, order, stock or report code at all.
+
+Three things genuinely did not exist: geo-tagging, item price history, and any
+WhatsApp integration whatsoever — all eight "Send on WhatsApp" buttons were
+toasts that did nothing.
+
+### Bugs found and fixed — seven, all live
+
+**Manual order creation (the one reported).** A firm with job work enabled was
+offered it in the line picker, and every one of its five items refused with
+"Only 0 available", sending the operator hunting for stock that cannot exist.
+Job work is quoted and produced through `JobWork`; it holds no `StockBalance`
+rows. The order path never checked `BusinessLine.workflow`.
+
+**Zero-length holds.** `holdUntil` was `now + holdMins`, and a job-work line is
+configured `holdMins: 0` — an already-expired hold. `holdSweeper` lapses any
+BOOKED order past its hold and runs every fifteen seconds, so had such an item
+ever carried stock the order would have been auto-lapsed and its stock released
+within seconds, blaming the firm's sales executive in the alert. The portal
+booked through the identical expression.
+
+**A dated customer-id collision.** The `CUST` sequence was seeded to the number
+of seeded firms, sixteen, while their ids run CUST-101..CUST-116. New firms were
+numbered from CUST-17 and the eighty-fifth would have been handed CUST-101 — an
+id already in use — failing customer creation permanently from then on.
+
+**Portal logins returned 500 every time.** `await import("bcryptjs")` — the only
+dynamic import in the codebase — puts CommonJS exports behind `.default`, so
+`bcrypt.hash` was undefined. The route now also sets `mustChangePassword`, so a
+login issued from the customer screen follows the same temporary-password policy
+as one issued from Settings.
+
+**The portal's half of the job-work dead end**, same root cause, customer side.
+
+**The bottom navigation had never been styled.** Its rule named `.pnav button`
+while every tab rendered as a link.
+
+**Two faults in the runbooks themselves** — see below.
+
+### Pricing: five requirements, one engine
+
+Percentage arrangements, firm-wide discounts, the cards-versus-negotiated rule,
+price history and pricing-at-creation turned out to be one piece of work.
+`PriceOverride` gained a mode, so "eight per cent off list" stays correct when
+the list moves instead of being frozen into rupees by hand. `Customer` gained a
+firm-wide percentage. Whether a line carries per-firm pricing at all is now
+configuration — cards are a published list, flex and ACP are negotiated — rather
+than a rule people were expected to remember. `ItemPriceHistory` records
+movements of the slab 1 rate and the landed cost with a reason and a name.
+`priceFor()` was widened; no second calculation was added.
+
+### Flex and ACP
+
+L3 keeps its id and its code so nothing referencing it moves; only its display
+name narrows to Flex, and ACP becomes L5 with Sheet as its only pack unit and a
+minimum set of 32 rather than the 200 SQ.FT that suits a roll. Items followed
+the `material` attribute already in the catalogue. Acrylic and non-woven are
+neither, and the brief covered only that separation, so they stayed on the Flex
+line rather than being moved somewhere nobody asked for. **Note that the item
+form disables the business-line field once an item exists, so the office cannot
+reassign them from the UI.**
+
+### Item photographs
+
+Stored the way JMS stores product photographs on this same box, against the same
+Cloudinary account: Cloudinary when `CLOUDINARY_URL` is set, local disk when it
+is not. Vivaha writes under `vivaha/items/`, clear of JMS's `jms/products/`. The
+credential was copied server-side from JMS's `.env` and never printed. Pictures
+arrive as a data URL on a JSON body rather than multipart — the browser already
+redraws a phone photograph through a canvas to shrink it, so it holds a base64
+string either way, and this keeps a file-upload dependency off a server deployed
+by rsync. JMS's `sharp` dependency was skipped: the browser downscales and
+Cloudinary transforms by URL.
+
+### Things deliberately not built
+
+Promotional content needed nothing — the portal home already carried an ad slot,
+new arrivals, the district's best sellers and a consumables nudge read off the
+firm's own machine profile. "Only 60 available" already existed in the item
+sheet; only the cart still refused outright, so the shortfall now carries the
+number and the cart takes what there is.
+
+The portal's Hindi stayed the default. English was added beside it as one small
+dictionary — not a translation framework, for a few dozen strings.
+
+### Two faults in our own runbooks
+
+`docs/DEPLOY.md` and `docs/SAMAR_DEPLOY_2026-09-10.md` both carried a `pg_dump`
+line that could never have run: `DATABASE_URL` carries `?schema=public`, which
+`pg_dump` rejects outright. Both are corrected.
+
+`packages/shared` is not an optional rsync. The API imports the pricing engine,
+the permission list and the line config from it, so shipping `src/` alone leaves
+the server running old rules against new callers.
+
+### One outage, caused and fixed
+
+Deploying the Cloudinary round I ran `npm install --omit=dev` on the VM, which
+pruned `tsx` — and PM2 runs this API through `tsx` as its *interpreter*, there
+being no build step. The API 502'd for about two minutes until dev dependencies
+were reinstalled. `docs/DEPLOY.md` now says plainly never to use that flag.
+
+### Open after this session
+
+- **The new UI has never been seen in a browser.** The Chrome extension was not
+  connected, so the pricing modal, the geo button, the bottom bar, the language
+  toggle and the baskets tab are verified only through their APIs. Worth
+  clicking through, the bottom bar especially — its CSS changed.
+- `apps/web/.env` points local development at the production API. Anyone running
+  `npm run dev:web` is driving the live backend from their laptop.
+- Acrylic and non-woven sit on the Flex line and cannot be moved from the UI.
+- One pre-existing eslint error in `apps/web/src/components/Qr.tsx`. Does not
+  block the build.
+- The Vercel project is still not git-connected; every frontend release needs a
+  manual `vercel --prod` from the repo root.
+- README "Not yet done" otherwise unchanged: server-side Excel/PDF exports,
+  physical stock-count session, real camera scanning in the portal.
+
+---
+
 ## 2026-09-10 — Push to GitHub, deploy the 10 Sep round, office-raised orders
 
 ### 1. The repository reached GitHub

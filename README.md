@@ -58,12 +58,15 @@ packages/shared/src/            engine
 ```
 
 ## Not yet done
-- Real camera scanning in the portal (the scan button simulates a read; the design-number search is real)
+- Real camera scanning in the portal (the scan button simulates a read; the design-number search is real, and the office order screen accepts a scanner gun)
 - Server-side Excel/PDF exports (CSV works everywhere; Excel/PDF buttons are queued stubs)
-- WhatsApp delivery (invoice/statement/nudge buttons toast instead of sending)
-- Image upload for items (procedural artwork is used, `Item.imageUrl` is ready)
+- Automated WhatsApp sending (Share Bill picks the firm's number and opens the message ready-addressed; a person presses send — no Business API account is wired up)
 - Physical stock count session (button is a stub; adjustments and transfers are real)
-- Frontend deployment — the API is live at `https://vivaha-api.98.70.37.83.nip.io`; Vercel setup is in [docs/DEPLOY.md](docs/DEPLOY.md)
+
+Item photographs now upload to Cloudinary (local disk when `CLOUDINARY_URL` is
+unset), and both the API and the web app are deployed — the API at
+`https://vivaha-api.98.70.37.83.nip.io`, the web app at
+`https://vivaha-pi.vercel.app`. Runbook in [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Docs
 
