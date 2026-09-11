@@ -277,8 +277,8 @@ router.post("/book", asyncHandler(async (req, res) => {
     await tx.cart.deleteMany({ where: { customerId: c.id } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer booking submitted", entityType: "Order", entityId: id, newValue: "₹" + cv.totals.total.toFixed(2) });
     const text = `New booking ${id} from ${c.name} — ₹${cv.totals.total.toLocaleString("en-IN")}${cv.gate.restricted ? " · credit warning" : ""}`;
-    await notify(tx, { text, kind: "WARN", role: "SALES_EXECUTIVE", link: `/orders?open=${id}` });
-    if (c.salesExecId) await notify(tx, { text, kind: "WARN", userId: c.salesExecId, link: `/orders?open=${id}` });
+    await notify(tx, { text, kind: "WARN", role: "SALES_EXECUTIVE", link: `/orders/${id}` });
+    if (c.salesExecId) await notify(tx, { text, kind: "WARN", userId: c.salesExecId, link: `/orders/${id}` });
     return o;
   });
   res.status(201).json({ orderId: order.id, holdMins: line.holdMins, holdUntil: order.holdUntil });

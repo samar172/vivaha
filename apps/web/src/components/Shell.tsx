@@ -9,6 +9,7 @@ import { post } from "@/lib/api";
 import { useUI, errMsg, setPanelLang } from "@/lib/ui";
 import { Section, Field, Note } from "./ui";
 import { FirstLoginGate } from "./FirstLogin";
+import { InstallApp } from "./InstallApp";
 import { money, num, fDT, type Perm } from "@vivaha/shared";
 import { ROLE_LABELS } from "@vivaha/shared";
 import { Icon, KIND_ICON, type IconName } from "./icons";
@@ -100,6 +101,7 @@ export function Shell({ children }: { children: ReactNode }) {
         {prof && <ProfileDrawer onClose={() => setProf(false)} onSignOut={() => logout().then(() => router.replace("/login"))} />}
       </div>
       {pal !== null && <Palette initial={pal} onClose={() => setPal(null)} setGodown={(g) => { setGodown(g); setPal(null); }} godowns={godowns ?? []} />}
+      <InstallApp />
     </FootCtx.Provider>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { money, num, fDate } from "@vivaha/shared";
 import { useApi, useGodowns, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
@@ -36,7 +36,12 @@ function QrCell({ code, kind, name }: { code: string; kind: "OWN" | "MANUFACTURE
 }
 export default function StockPage() {
   const { line, godown, setGodown } = useAppState(); const { data: godowns } = useGodowns(); const { can } = useAuth(); const { openModal, toast } = useUI(); const router = useRouter();
-  const [tab, setTab] = useState("pos"); const [q, setQ] = useState(""); const [sortAvail, setSortAvail] = useState<0 | 1 | -1>(0);
+  const sp = useSearchParams(); const [tab, setTab] = useState(() => sp.get("tab") ?? "pos");
+  // Reports links in as /stock?tab=dead — honour it on arrival and on later
+  // navigations, the same way /accounts takes its tab and bucket.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { const t = sp.get("tab"); if (t) setTab(t); }, [sp]);
+   const [q, setQ] = useState(""); const [sortAvail, setSortAvail] = useState<0 | 1 | -1>(0);
   const { data } = useApi<Row[]>(`/api/stock/position?line=${line}&q=${encodeURIComponent(q)}&godown=${godown}`);
   const { data: trf } = useApi<{ id: string; item: { sku: string; name: string; uom: string }; fromId: string; toId: string; qty: number; at: string; by: string; status: string; receivedAt: string | null }[]>("/api/stock/transfers");
   let rows = data ?? []; if (sortAvail) rows = rows.slice().sort((a, b) => (a.available - b.available) * sortAvail);

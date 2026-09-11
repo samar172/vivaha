@@ -6,6 +6,7 @@ import { PortalProvider, usePortal } from "@/components/portal/PortalContext";
 import { SheetOverlay } from "@/components/portal/Sheet";
 import { FirstLoginGate } from "@/components/FirstLogin";
 import { LangProvider, useLang } from "@/lib/i18n";
+import { InstallApp } from "@/components/InstallApp";
 
 // Home | Shop | Cart | Orders | Profile, over the routes that already exist.
 // Cart is not a route — it is the sheet the header button has always opened —
@@ -27,6 +28,8 @@ function Frame({ children }: { children: React.ReactNode }) {
       ? <button key={h} className={"pnavb" + (P.cartOpen ? " on" : "")} onClick={P.openCart}><span className="i">{i}{!!P.cart?.count && <span className="nb">{P.cart.count}</span>}</span><span className={lang === "hi" ? "hi" : ""}>{t(key)}</span></button>
       : <Link key={h} href={h} className={path === h ? "on" : ""}><span className="i">{i}</span><span className={lang === "hi" ? "hi" : ""}>{t(key)}</span></Link>)}</nav>
     <SheetOverlay />
+    {/* The shop installs as its own app, in the language the shop is being read in. */}
+    <InstallApp hindi={lang === "hi"} manifest="/portal.webmanifest" />
   </div>;
 }
 export default function PortalLayout({ children }: { children: React.ReactNode }) {

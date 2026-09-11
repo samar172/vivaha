@@ -56,7 +56,7 @@ export async function approve(o: OrderFull, actor: Actor, overrideReason: string
     await transition(tx, o, "APPROVED", actor.name, g.restricted ? "Credit gate overridden: " + overrideReason : "Credit and stock verified");
     await audit(tx, { userId: actor.id, actor: actor.name, action: "Order approved", entityType: "Order", entityId: o.id, oldValue: "Booked", newValue: "Approved", reason: overrideReason ?? "" });
     if (g.restricted) await audit(tx, { userId: actor.id, actor: actor.name, action: "Credit gate overridden", entityType: "Customer", entityId: o.customer.name, oldValue: "Restricted", newValue: "Approved", reason: overrideReason! });
-    await notify(tx, { text: `Order ${o.id} approved for ${o.customer.name}`, kind: "OK", role: "GODOWN_MANAGER", link: `/orders?open=${o.id}` });
+    await notify(tx, { text: `Order ${o.id} approved for ${o.customer.name}`, kind: "OK", role: "GODOWN_MANAGER", link: `/orders/${o.id}` });
   });
 }
 
@@ -157,7 +157,7 @@ export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
     const full = fresh.every((l) => l.shipped >= l.qty);
     await transition(tx, o, full ? "DISPATCHED" : "PARTIALLY_DISPATCHED", actor.name, `Dispatched via ${inp.transporter}, LR ${inp.lr}`);
     await audit(tx, { userId: actor.id, actor: actor.name, action: "Order dispatched", entityType: "Order", entityId: o.id, oldValue: o.status, newValue: full ? "Dispatched" : "Partially Dispatched", reason: `Invoice ${no} for ₹${t.total.toFixed(2)}` });
-    await notify(tx, { text: `Order ${o.id} dispatched to ${o.customer.name} — LR ${inp.lr}`, kind: "OK", role: "SALES_EXECUTIVE", link: `/orders?open=${o.id}` });
+    await notify(tx, { text: `Order ${o.id} dispatched to ${o.customer.name} — LR ${inp.lr}`, kind: "OK", role: "SALES_EXECUTIVE", link: `/orders/${o.id}` });
     return { invoiceNo: no, total: t.total, full, dispatchId: d.id };
   });
 }
@@ -311,7 +311,7 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
     await audit(tx, { userId: actor.id, actor: actor.name, action: "Order booked at the office", entityType: "Order", entityId: id, newValue: "₹" + q.totals.total.toFixed(2), reason: input.overrideReason?.trim() || input.note?.trim() || "" });
     if (q.gate.restricted) await audit(tx, { userId: actor.id, actor: actor.name, action: "Order booked past the credit gate", entityType: "Customer", entityId: q.customer.name, oldValue: "Restricted", newValue: "Booked", reason: input.overrideReason!.trim() });
     const text = `Order ${id} booked for ${q.customer.name} by ${actor.name} — ₹${q.totals.total.toLocaleString("en-IN")}${q.gate.restricted ? " · credit warning" : ""}`;
-    await notify(tx, { text, kind: q.gate.restricted ? "WARN" : "OK", role: "SALES_EXECUTIVE", link: `/orders?open=${id}` });
+    await notify(tx, { text, kind: q.gate.restricted ? "WARN" : "OK", role: "SALES_EXECUTIVE", link: `/orders/${id}` });
     return id;
   });
   return getOrder(prisma, orderId);

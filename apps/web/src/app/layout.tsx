@@ -1,10 +1,21 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { UIProvider } from "@/lib/ui";
 import { AppStateProvider } from "@/lib/app-state";
 
-export const metadata: Metadata = { title: "Vivaha Cards ERP — Wholesale Operations Suite", description: "Wholesale operations suite for Vivaha Cards, Bikaner" };
+export const metadata: Metadata = {
+  title: "Vivaha Cards ERP — Wholesale Operations Suite",
+  description: "Wholesale operations suite for Vivaha Cards, Bikaner",
+  // The ERP manifest by default; the portal swaps this link for its own, since
+  // the two are separate installable apps sharing one origin.
+  manifest: "/manifest.webmanifest",
+  applicationName: "Vivaha Cards ERP",
+  appleWebApp: { capable: true, title: "Vivaha ERP", statusBarStyle: "default" },
+  icons: { apple: "/apple-touch-icon.png" },
+};
+
+export const viewport: Viewport = { themeColor: "#A81F52", width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

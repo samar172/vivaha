@@ -19,8 +19,8 @@ export async function sweepExpiredHolds(): Promise<number> {
       await tx.orderEvent.create({ data: { orderId: o.id, from: "BOOKED", to: "LAPSED", by: "System", why: `Hold expired before office approval — alert raised to ${execName}` } });
       await audit(tx, { actor: "System", action: "Reservation auto-released", entityType: "Order", entityId: o.id, oldValue: "Booked", newValue: "Lapsed", reason: `Hold expired · alert to ${execName}` });
       const text = `Order ${o.id} lapsed — stock released, alert raised to ${execName}`;
-      if (o.customer.salesExecId) await notify(tx, { text, kind: "WARN", userId: o.customer.salesExecId, link: `/orders?open=${o.id}` });
-      await notify(tx, { text, kind: "WARN", role: "SUPER_ADMIN", link: `/orders?open=${o.id}` });
+      if (o.customer.salesExecId) await notify(tx, { text, kind: "WARN", userId: o.customer.salesExecId, link: `/orders/${o.id}` });
+      await notify(tx, { text, kind: "WARN", role: "SUPER_ADMIN", link: `/orders/${o.id}` });
     });
   }
   return due.length;

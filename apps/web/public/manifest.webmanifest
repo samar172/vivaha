@@ -1,0 +1,26 @@
+{
+  "id": "vivaha-erp",
+  "name": "Vivaha Cards ERP",
+  "short_name": "Vivaha ERP",
+  "description": "Wholesale operations suite for Vivaha Cards, Bikaner",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FFFFFF",
+  "theme_color": "#A81F52",
+  "lang": "en-IN",
+  "dir": "ltr",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Orders", "url": "/orders", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Stock position", "url": "/stock?tab=pos", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Dispatch", "url": "/dispatch", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
