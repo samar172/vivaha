@@ -76,8 +76,8 @@ function AbandonedCarts({ rows, onChanged }: { rows: AbandonedCart[]; onChanged:
     <div className="gw"><table className="dg"><thead><tr>
       <th>Firm</th><th>Left in the basket</th><th className="n">Value</th><th className="n">Idle</th><th>Chased</th><th>Sales executive</th><th></th>
     </tr></thead><tbody>
-      {shown.map((r) => <tr key={r.customer.id} onClick={() => router.push(`/customers/${r.customer.id}`)}>
-        <td className="w">{r.customer.name}<div className="sm">{r.customer.tehsil} · {r.customer.phone}</div></td>
+      {shown.map((r) => <tr key={r.customer.id} onClick={() => openModal(<BasketModal cart={r} onChanged={onChanged} />, "w")} title="See the whole basket">
+        <td className="w" onClick={(e) => e.stopPropagation()}><a href={`/customers/${r.customer.id}`} onClick={(e) => { e.preventDefault(); router.push(`/customers/${r.customer.id}`); }}>{r.customer.name}</a><div className="sm">{r.customer.tehsil} · {r.customer.phone}</div></td>
         <td className="w">
           {r.lines.slice(0, 3).map((l) => <div key={l.itemId} className="sm">
             <span className="rid">{l.sku}</span> × {num(l.qty)}
@@ -102,6 +102,62 @@ function AbandonedCarts({ rows, onChanged }: { rows: AbandonedCart[]; onChanged:
 
     <Note k="i" style={{ marginTop: 11 }}>These are live portal baskets, not orders — no stock is held against them, and a basket can go short or stale while it sits. Chasing records who rang and when, so two people do not ring the same firm; booking raises an ordinary office order, which does hold stock.</Note>
   </>;
+}
+
+// The whole basket, which is what the row is about. Three lines fit on a row
+// and a firm can have a dozen — and before ringing anybody you want to see all
+// of it, including the lines that have gone short since they filled it.
+function BasketModal({ cart, onChanged }: { cart: AbandonedCart; onChanged: () => void }) {
+  const { closeModal, openModal } = useUI();
+  const router = useRouter();
+  const total = cart.lines.reduce((s, l) => s + l.amount, 0);
+  const fulfilable = cart.lines.reduce((s, l) => s + Math.min(l.qty, l.available) * l.rate, 0);
+
+  return <ModalFrame
+    title={`Basket — ${cart.customer.name}`}
+    onClose={closeModal}
+    actions={<>
+      <button className="b b-o" onClick={closeModal}>Close</button>
+      <button className="b b-o" onClick={() => { closeModal(); openModal(<ChaseModal cart={cart} onDone={onChanged} />, "n"); }}>Chase</button>
+      <button className="b b-p" onClick={() => { closeModal(); openModal(<NewOrderModal customerId={cart.customer.id} />, "w"); }}>Book it for them</button>
+    </>}>
+    <div className="sm" style={{ marginBottom: 10 }}>
+      Filled {cart.ageDays === 0 ? "today" : `${cart.ageDays} day${cart.ageDays === 1 ? "" : "s"} ago`} · {cart.customer.tehsil} · {cart.customer.phone}
+      {cart.customer.salesExec ? ` · covered by ${cart.customer.salesExec.name}` : ""}
+      {" · "}<a href={`/customers/${cart.customer.id}`} onClick={(e) => { e.preventDefault(); closeModal(); router.push(`/customers/${cart.customer.id}`); }}>open the firm</a>
+    </div>
+
+    {cart.lastChase && <Note style={{ marginBottom: 11 }}>
+      Chased {cart.chases === 1 ? "once" : `${cart.chases} times`} — last on {fDate(cart.lastChase.at)} by {cart.lastChase.by}{cart.lastChase.toName ? ` to ${cart.lastChase.toName}` : ""}.
+      {cart.lastChase.note ? <> Note: “{cart.lastChase.note}”</> : null}
+    </Note>}
+    {cart.recovered && <Note k="o" style={{ marginBottom: 11 }}>Already recovered — {cart.recoveredOrder?.id} was placed after the last chase.</Note>}
+
+    <div className="gw"><table className="dg"><thead><tr>
+      <th>Item</th><th className="n">Wanted</th><th className="n">Available</th><th className="n">Rate</th><th className="n">Amount</th>
+    </tr></thead><tbody>
+      {cart.lines.map((l) => <tr key={l.itemId} style={{ cursor: "pointer" }} onClick={() => { closeModal(); router.push(`/items/${l.itemId}`); }}>
+        <td className="w"><span className="rid">{l.sku}</span><div className="sm">{l.name}</div></td>
+        <td className="n tab">{num(l.qty)}</td>
+        <td className="n tab" style={{ color: l.gone ? "var(--er)" : l.short ? "var(--wa)" : undefined }}>
+          {l.gone ? "no longer sold" : num(l.available)}
+          {l.short && !l.gone ? <div className="sm" style={{ color: "var(--wa)" }}>short by {num(l.qty - l.available)}</div> : null}
+        </td>
+        <td className="n tab">{money(l.rate)}</td>
+        <td className="n tab" style={{ fontWeight: 600 }}>{money(l.amount)}</td>
+      </tr>)}
+    </tbody></table></div>
+
+    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><div style={{ minWidth: 230 }}>
+      <div className="df"><span className="k">Basket value</span><span className="v m">{money(total)}</span></div>
+      {fulfilable !== total && <div className="df"><span className="k">Fulfilable today</span><span className="v m" style={{ color: "var(--wa)" }}>{money(fulfilable)}</span></div>}
+    </div></div>
+
+    {!!cart.issues && <Note k="w" style={{ marginTop: 11 }}>
+      {cart.issues === 1 ? "One line" : `${cart.issues} lines`} cannot be filled as it stands. Worth knowing before you ring — the alternatives on the item page are the conversation to have.
+    </Note>}
+    <Note k="i" style={{ marginTop: 9 }}>This is a live portal basket, not an order — no stock is held against it, and it can change or go short while it sits. Booking raises an ordinary office order, which does hold stock.</Note>
+  </ModalFrame>;
 }
 
 // Chasing is a phone call or a WhatsApp message, not a system action. The
