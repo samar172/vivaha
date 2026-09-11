@@ -28,7 +28,6 @@ interface FootState { count: number | null; filter: string; page: number; pages:
 const FootCtx = createContext<{ set: (s: Partial<FootState>) => void; foot: FootState } | null>(null);
 export function useFooter(count: number | null, filter = "", page = 1, pages = 1, setPage: (p: number) => void = () => {}) {
   const c = useContext(FootCtx);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { c?.set({ count, filter, page, pages, setPage }); }, [count, filter, page, pages]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 export function usePager<T>(rows: T[], size = 14) {

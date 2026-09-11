@@ -1,5 +1,18 @@
 import type { Metadata, Viewport } from "next";
+import { Noto_Sans_Devanagari } from "next/font/google";
 import "./globals.css";
+
+// Latin text is Arial — a system face, nothing to download, and heavier than
+// Inter, which is what the operators asked for. Only Devanagari is fetched, and
+// through next/font so the file is served from this origin and self-hosted with
+// the CSS inlined: a raw <link> to fonts.googleapis.com costs a round trip to
+// two extra hosts before any Hindi text can paint.
+const devanagari = Noto_Sans_Devanagari({
+  subsets: ["devanagari", "latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-dev",
+});
 import { AuthProvider } from "@/lib/auth-context";
 import { UIProvider } from "@/lib/ui";
 import { AppStateProvider } from "@/lib/app-state";
@@ -19,14 +32,7 @@ export const viewport: Viewport = { themeColor: "#A81F52", width: "device-width"
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        {/* Latin text is Arial (a system face — no download, and the operators
-            asked for something heavier than Inter). Only Devanagari is fetched. */}
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap" />
-      </head>
+    <html lang="en" className={devanagari.variable}>
       <body><AuthProvider><AppStateProvider><UIProvider>{children}</UIProvider></AppStateProvider></AuthProvider></body>
     </html>
   );

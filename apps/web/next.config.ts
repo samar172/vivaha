@@ -10,7 +10,8 @@ const API_TARGET =
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@vivaha/shared"],
-  // @ts-ignore — dev-only: allow the ngrok demo origin
+  // Dev-only: lets the ngrok demo origin through the dev server. (NextConfig
+  // types this now, so the suppression this line used to carry is gone.)
   allowedDevOrigins: ["noncapriciously-unelated-kalyn.ngrok-free.dev", "*.ngrok-free.dev", "*.ngrok-free.app"],
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${API_TARGET}/api/:path*` }];

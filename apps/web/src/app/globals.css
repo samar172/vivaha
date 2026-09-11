@@ -18,8 +18,11 @@
   --L3:#4338CA; --L3bg:#EEF0FE; --L4:#15803D; --L4bg:#ECFDF3;
   --r:5px;
   --mono:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
-  --dev:'Noto Sans Devanagari','Nirmala UI','Kohinoor Devanagari',sans-serif;
-  --ui:Arial,'Helvetica Neue',Helvetica,'Liberation Sans','Segoe UI','Noto Sans Devanagari',sans-serif;
+  /* --font-dev is the self-hosted Noto Sans Devanagari the root layout loads
+     through next/font; the named faces after it are what Windows and macOS
+     already have, for the moment before it arrives. */
+  --dev:var(--font-dev),'Noto Sans Devanagari','Nirmala UI','Kohinoor Devanagari',sans-serif;
+  --ui:Arial,'Helvetica Neue',Helvetica,'Liberation Sans','Segoe UI',var(--font-dev),'Noto Sans Devanagari',sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
