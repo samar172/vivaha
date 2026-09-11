@@ -7,7 +7,7 @@ import { PageHead } from "@/components/PageHead";
 import { useFooter } from "@/components/Shell";
 import { KPI, Panel, Bar, Hold, GateDot, ZoomThumb, Empty } from "@/components/ui";
 import { useUI } from "@/lib/ui";
-import { OrderDrawer } from "@/components/OrderDrawer";
+import { useOrderActions } from "@/components/OrderDetail";
 
 import { exportCsv } from "@/lib/csv";
 import { Icon, KIND_ICON } from "@/components/icons";
@@ -42,7 +42,7 @@ export default function Dashboard() {
       <div className="g3"><div>
         <Panel t="Holds running out" h="Stock releases automatically and an alert is raised — BR-23">
           <div className="gw" style={{ border: "none", borderRadius: 0 }}><table className="dg"><thead><tr><th>Order</th><th>Firm</th><th className="n">Value</th><th>Required by</th><th>Credit</th><th className="n">Hold left</th></tr></thead><tbody>
-            {d.holds.length ? d.holds.map((o) => <tr key={o.id} onClick={() => openDrawer(<OrderDrawer id={o.id} />)}><td><span className="rid">{o.id}</span></td><td className="w">{o.firm}<div className="sm">{o.tehsil} · {o.group}</div></td><td className="n tab">{money(o.total)}</td><td>{fDate(o.requiredBy)}<div className="sm">{dueLbl(o.requiredBy)}</div></td><td><GateDot status={o.gate.status} /> {o.gate.restricted ? (o.gate.mode === "BLOCK" ? "Blocked" : "Warn") : "OK"}</td><td className="n"><Hold until={o.holdUntil} onExpire={() => setTimeout(() => mutate(), 16000)} /></td></tr>) : <tr><td colSpan={6}><Empty t="No live holds" d="Every booking has been approved or has lapsed." /></td></tr>}
+            {d.holds.length ? d.holds.map((o) => <tr key={o.id} onClick={() => router.push(`/orders/${o.id}`)}><td><span className="rid">{o.id}</span></td><td className="w">{o.firm}<div className="sm">{o.tehsil} · {o.group}</div></td><td className="n tab">{money(o.total)}</td><td>{fDate(o.requiredBy)}<div className="sm">{dueLbl(o.requiredBy)}</div></td><td><GateDot status={o.gate.status} /> {o.gate.restricted ? (o.gate.mode === "BLOCK" ? "Blocked" : "Warn") : "OK"}</td><td className="n"><Hold until={o.holdUntil} onExpire={() => setTimeout(() => mutate(), 16000)} /></td></tr>) : <tr><td colSpan={6}><Empty t="No live holds" d="Every booking has been approved or has lapsed." /></td></tr>}
           </tbody></table></div>
         </Panel>
         <Panel t="Order pipeline" h={<span className="pnmore" onClick={() => router.push("/orders?tab=all")}>All {d.totalOrders} orders →</span>}><div className="pnb">{d.pipeline.map((p) => <div key={p.status} className={"crow" + (p.count ? "" : " off")} title={p.count ? `Open ${p.count} ${ORDER_STATUS_LABEL[p.status as OrderStatus]} order${p.count === 1 ? "" : "s"}` : "None in this stage"} onClick={() => p.count && router.push(`/orders?tab=${ORDER_TAB[p.status] ?? "all"}&status=${p.status}`)}><div style={{ width: 132, fontSize: 13, color: "var(--t6)" }}>{ORDER_STATUS_LABEL[p.status as OrderStatus]}</div><div style={{ flex: 1 }}><Bar pct={(p.count / mx) * 100} color={["LAPSED", "REJECTED", "CANCELLED"].includes(p.status) ? "var(--er)" : undefined} /></div><div className="tab" style={{ width: 34, textAlign: "right", fontSize: 13, fontWeight: 700 }}>{p.count}</div></div>)}</div></Panel>

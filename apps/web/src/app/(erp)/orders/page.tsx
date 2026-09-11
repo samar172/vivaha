@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { money, fDate, dueLbl, daysTo, orderProgress, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
@@ -10,7 +10,7 @@ import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { Pill, LineChip, GateDot, Hold, Empty, Bar } from "@/components/ui";
-import { OrderDrawer, useOrderActions } from "@/components/OrderDrawer";
+import { useOrderActions } from "@/components/OrderDetail";
 import { NewOrderModal } from "@/components/NewOrderModal";
 import type { Order } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
@@ -18,12 +18,12 @@ import { Icon } from "@/components/icons";
 
 const CLOSED = ["LAPSED", "REJECTED", "CANCELLED"];
 export default function OrdersPage() {
-  const { line } = useAppState(); const { data: lines } = useLines(); const { openDrawer, openModal, toast } = useUI(); const { can } = useAuth(); const sp = useSearchParams(); const A = useOrderActions();
+  const { line } = useAppState(); const { data: lines } = useLines(); const { openDrawer, openModal, toast } = useUI(); const { can } = useAuth(); const router = useRouter(); const sp = useSearchParams(); const A = useOrderActions();
   const [tab, setTab] = useState(() => sp.get("tab") ?? "approve"); const [q, setQ] = useState(""); const [sel, setSel] = useState<Set<string>>(new Set()); const [sort, setSort] = useState<{ k: string; d: 1 | -1 } | null>(null);
   // The dashboard links straight into a stage, e.g. /orders?tab=active&status=PICKING.
   const [status, setStatus] = useState<string | null>(() => sp.get("status"));
   const { data, mutate } = useApi<{ orders: Order[]; counts: Record<string, number> }>(`/api/orders?tab=${tab}&line=${line}&q=${encodeURIComponent(q)}`, { refreshInterval: 20000 });
-  useEffect(() => { const o = sp.get("open"); if (o) openDrawer(<OrderDrawer id={o} />); }, [sp, openDrawer]);
+  useEffect(() => { const o = sp.get("open"); if (o) router.push(`/orders/${o}`); }, [sp, openDrawer]);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { const t = sp.get("tab"); if (t) setTab(t); setStatus(sp.get("status")); }, [sp]);
   let rows = data?.orders ?? []; if (status) rows = rows.filter((o) => o.status === status);
@@ -40,7 +40,7 @@ export default function OrdersPage() {
       <div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="Order number or firm…" value={q} onChange={(e) => setQ(e.target.value)} /></div>{status && <button className="b b-o b-s" onClick={() => setStatus(null)}>{ORDER_STATUS_LABEL[status as OrderStatus] ?? status} only <Icon n="x" s={11} style={{ display: "inline", verticalAlign: "-1px", marginLeft: 3 }} /></button>}{tab === "approve" && !status && <span style={{ fontSize: 12.5, color: "var(--t4)" }}>Sorted by hold remaining — the order about to lapse is always first</span>}<span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--t4)" }}>{rows.length} shown</span></div>
       <div className="gw"><table className="dg"><thead><tr><th style={{ width: 30 }}></th>{tab === "approve" && <th className="n">Hold left</th>}<th>Order</th><th>Firm</th><th>Lines</th><th className="n sortable" onClick={() => sortBy("total")}>Value{ic("total")}</th><th className="n sortable" onClick={() => sortBy("req")}>Required by{ic("req")}</th><th>Credit</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody>
         {pg.rows.length ? pg.rows.map((o) => { const c = o.customer, g = o.gate; const rd = daysTo(o.requiredBy), urgent = rd >= 0 && rd <= 7 && !["DELIVERED", "DISPATCHED", ...CLOSED].includes(o.status); const closed = CLOSED.includes(o.status);
-          return <tr key={o.id} className={(sel.has(o.id) ? "sel" : "") + (closed ? " dim" : "")} onClick={() => openDrawer(<OrderDrawer id={o.id} />)}>
+          return <tr key={o.id} className={(sel.has(o.id) ? "sel" : "") + (closed ? " dim" : "")} onClick={() => router.push(`/orders/${o.id}`)}>
             <td onClick={(e) => { e.stopPropagation(); setSel((s) => { const n = new Set(s); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; }); }}><input className="ck" type="checkbox" checked={sel.has(o.id)} readOnly /></td>
             {tab === "approve" && <td className="n"><Hold until={o.holdUntil} onExpire={() => setTimeout(() => mutate(), 16000)} /></td>}
             <td><span className="rid">{o.id}</span><div className="sm">{fDate(o.createdAt)}</div></td><td className="w">{c.name}<div className="sm">{c.tehsil} · {c.group}</div></td>

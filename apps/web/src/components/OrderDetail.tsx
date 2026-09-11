@@ -1,14 +1,17 @@
 "use client";
 import { useState } from "react";
-import { money, money2, num, fDate, fDT, dueLbl, daysTo, type OrderStatus } from "@vivaha/shared";
+import { money, money2, num, fDate, fDT, dueLbl, daysTo, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
+import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
-import { Pill, LineChip, DF, Section, DrawerFrame, ModalFrame, Field, Note, Hold, Timeline } from "./ui";
+import { DF, Section, ModalFrame, Field, Note, Hold, Timeline } from "./ui";
+import { PageHead } from "./PageHead";
+import { useFooter } from "./Shell";
+import { Icon } from "./icons";
 import type { Order, Invoice } from "./types";
 import { InvoiceModal } from "./InvoiceModal";
-import { Icon } from "./icons";
 
 export function useOrderActions() {
   const { toast, closeModal, closeDrawer, openModal } = useUI(); const { can, user } = useAuth();
@@ -43,23 +46,86 @@ export function useOrderActions() {
   return { approve, reject, cancel, reserve, status, revive, allocate, dispatch, actionBtn, user };
 }
 
-export function OrderDrawer({ id }: { id: string }) {
-  const { data: o, mutate } = useApi<Order & { company: { name: string } }>(`/api/orders/${id}`); const { closeDrawer, openModal } = useUI(); const { can } = useAuth(); const { data: lines } = useLines();
+// An order opens on its own page, the way a card and a firm do. The order is
+// the busiest record in the business — lines, credit, allocation, invoices,
+// dispatch and its whole history — and a drawer made all of it a scroll over
+// the queue it came from.
+export function OrderDetail({ id }: { id: string }) {
+  const { data: o, mutate } = useApi<Order & { company: { name: string } }>(`/api/orders/${id}`);
+  const { openModal } = useUI(); const { can } = useAuth(); const { data: lines } = useLines();
+  const router = useRouter();
   const A = useOrderActions();
-  if (!o) return <div className="drb"><div className="sm">Loading…</div></div>;
-  const c = o.customer, g = o.gate; const groups: Record<string, typeof o.lines> = {}; o.lines.forEach((l) => (groups[l.lineId] = groups[l.lineId] || []).push(l));
-  const blocks = (() => { const inv = o.invoices; if (inv.length) return null; return null; })();
-  void blocks;
-  return <DrawerFrame onClose={closeDrawer} head={<><span className="rid" style={{ fontSize: 14.5 }}>{o.id}</span><Pill s={o.status} /></>}
-    actions={<>{A.actionBtn(o, false)}{o.status === "BOOKED" && can("order.approve") && <button className="b b-d b-s" onClick={() => A.reject(o)}>Reject</button>}{["RESERVED", "ALLOCATED"].includes(o.status) && can("order.allocate") && <button className="b b-o b-s" onClick={() => A.allocate(o)}>Re-allocate</button>}{["APPROVED", "RESERVED", "ALLOCATED"].includes(o.status) && can("order.approve") && <button className="b b-g b-s" onClick={() => A.cancel(o)}>Cancel order</button>}{o.invoices.map((i) => <button key={i.no} className="b b-o b-s" onClick={() => openModal(<InvoiceModal no={i.no} orderId={o.id} />, "w")}>Invoice {i.no.split("/").pop()}</button>)}</>}>
-    {o.holdUntil && <Section style={{ background: "var(--wa-bg)" }}><div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 14, color: "var(--wa)", fontWeight: 600 }}>⏳ Hold expires in <span style={{ fontSize: 16.5 }}><Hold until={o.holdUntil} onExpire={() => setTimeout(() => mutate(), 16000)} /></span><span style={{ marginLeft: "auto", fontWeight: 500 }}>then stock releases and an alert is raised</span></div></Section>}
-    <Section t="Firm"><DF k="Customer" v={c.name} /><DF k="Booked by" v={o.bookedBy} /><DF k="Tehsil" v={c.tehsil} /><DF k="Required by" v={<span style={{ color: daysTo(o.requiredBy) <= 7 ? "var(--er)" : undefined }}>{fDate(o.requiredBy)} <span className="sm">{dueLbl(o.requiredBy)}</span></span>} /><DF k="Credit position" mono v={<span style={{ color: g.restricted ? "var(--er)" : "var(--ok)" }}>{money(g.out)} / {money(c.creditLimit)}{g.timeBreach ? ` · ${g.oldestAge}d` : ""}</span>} /></Section>
-    {Object.keys(groups).map((lid) => <Section key={lid} t={<>{lines?.find((l) => l.id === lid)?.name} · GST {groups[lid][0].gstPct}%</>}><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Amount</th><th>Godown</th></tr></thead><tbody>{groups[lid].map((l) => <tr key={l.id} style={{ cursor: "default" }}><td className="w">{l.item.sku}<div className="sm">{l.item.name}</div></td><td className="n tab">{num(l.qty)}{l.shipped > 0 && l.shipped < l.qty && <div className="sm" style={{ color: "var(--wa)" }}>{num(l.shipped)} shipped</div>}</td><td className="n tab">{money(l.rate)}<div className="sm">{l.priceSrc === "override" ? "override" : `slab ${money(l.slabRate)} ×${l.mult}`}</div></td><td className="n tab">{money(l.amount)}</td><td className="sm">{Object.keys(l.alloc).length ? Object.keys(l.alloc).map((gd) => gd.replace("GD-", "") + ":" + num(l.alloc[gd])).join(" ") : "—"}</td></tr>)}</tbody></table></Section>)}
-    <Section t="Invoice value"><DF k="Taxable" v={money2(o.subtotal)} mono /><DF k="GST" v={money2(o.tax)} mono /><DF k="Total" v={money2(o.total)} mono strong />{o.invoices.length ? <div className="sm" style={{ marginTop: 6 }}>{o.invoices.map((i) => <span key={i.no}>Tax invoice <b>{i.no}</b> posted {fDate(i.date)} · <a href="#" onClick={(e) => { e.preventDefault(); openModal(<InvoiceModal no={i.no} orderId={o.id} />, "w"); }}>view</a><br /></span>)}</div> : <div className="sm" style={{ marginTop: 6 }}>Invoice is raised on dispatch, for the shipped quantity only.</div>}</Section>
-    {o.dispatches.map((d) => <Section key={d.id} t="Dispatch"><DF k="Transporter" v={d.transporter} mono /><DF k="LR number" v={d.lr} mono /><DF k="Tracking" v={d.tracking} mono /><DF k="Packages" v={d.packages} mono /><DF k="Freight" v={money(d.freight)} mono /><DF k="Dispatched" v={fDate(d.at)} mono /></Section>)}
-    {o.status === "PARTIALLY_DISPATCHED" && <Note k="w">Backorder open — {num(o.backorder)} units still reserved and dispatchable.</Note>}
-    <Section t="History"><Timeline rows={o.events.slice().reverse().map((h) => ({ t: <span className="wo">{h.from ? h.from.replace(/_/g, " ") + " → " : ""}{h.to.replace(/_/g, " ")}</span>, n: `${fDT(h.at)} · ${h.by}${h.why ? " · " + h.why : ""}` }))} /></Section>
-  </DrawerFrame>;
+  // The footer's count belongs to the queue behind this; an order has none.
+  useFooter(null);
+  if (!o) return <div className="wa"><div className="sm">Loading…</div></div>;
+  const c = o.customer, g = o.gate;
+  const groups: Record<string, typeof o.lines> = {};
+  o.lines.forEach((l) => (groups[l.lineId] = groups[l.lineId] || []).push(l));
+
+  return <>
+    <PageHead
+      crumb={["Sales", "Orders", o.id]}
+      title={`${o.id} — ${c.name}`}
+      sub={<>{ORDER_STATUS_LABEL[o.status as OrderStatus] ?? o.status} · booked by {o.bookedBy} · {c.tehsil} · required {fDate(o.requiredBy)}</>}
+      actions={<>
+        <button className="b b-o" onClick={() => router.push("/orders")}><Icon n="chevronL" s={13} /> Back to orders</button>
+        {A.actionBtn(o, false)}
+        {o.status === "BOOKED" && can("order.approve") && <button className="b b-d" onClick={() => A.reject(o)}>Reject</button>}
+        {["RESERVED", "ALLOCATED"].includes(o.status) && can("order.allocate") && <button className="b b-o" onClick={() => A.allocate(o)}>Re-allocate</button>}
+        {["APPROVED", "RESERVED", "ALLOCATED"].includes(o.status) && can("order.approve") && <button className="b b-g" onClick={() => A.cancel(o)}>Cancel order</button>}
+        {o.invoices.map((i) => <button key={i.no} className="b b-o" onClick={() => openModal(<InvoiceModal no={i.no} orderId={o.id} />, "w")}>Invoice {i.no.split("/").pop()}</button>)}
+      </>}
+    />
+    <div className="wa">
+      {o.holdUntil && <Note k="w" style={{ marginBottom: 13 }}>
+        <b>Hold expires in <Hold until={o.holdUntil} onExpire={() => setTimeout(() => mutate(), 16000)} /></b> — then the stock releases and an alert is raised to the firm&apos;s sales executive.
+      </Note>}
+      {o.status === "PARTIALLY_DISPATCHED" && <Note k="w" style={{ marginBottom: 13 }}>Backorder open — {num(o.backorder)} units still reserved and dispatchable.</Note>}
+
+      <div className="idg">
+        <div>
+          {Object.keys(groups).map((lid) => <div className="pn" key={lid}><div className="pnb">
+            <Section t={<>{lines?.find((l) => l.id === lid)?.name} · GST {groups[lid][0].gstPct}%</>}>
+              <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Amount</th><th>Godown</th></tr></thead><tbody>
+                {groups[lid].map((l) => <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/items/${l.itemId}`)}>
+                  <td className="w"><span className="rid">{l.item.sku}</span><div className="sm">{l.item.name}</div></td>
+                  <td className="n tab">{num(l.qty)}{l.shipped > 0 && l.shipped < l.qty && <div className="sm" style={{ color: "var(--wa)" }}>{num(l.shipped)} shipped</div>}</td>
+                  <td className="n tab">{money(l.rate)}<div className="sm">{l.priceSrc === "override" ? "override" : `slab ${money(l.slabRate)} ×${l.mult}`}</div></td>
+                  <td className="n tab">{money(l.amount)}</td>
+                  <td className="sm">{Object.keys(l.alloc).length ? Object.keys(l.alloc).map((gd) => gd.replace("GD-", "") + ":" + num(l.alloc[gd])).join(" ") : "—"}</td>
+                </tr>)}
+              </tbody></table>
+            </Section>
+          </div></div>)}
+          <div className="pn"><div className="pnb">
+            <Section t="History"><Timeline rows={o.events.slice().reverse().map((h) => ({ t: <span className="wo">{h.from ? h.from.replace(/_/g, " ") + " → " : ""}{h.to.replace(/_/g, " ")}</span>, n: `${fDT(h.at)} · ${h.by}${h.why ? " · " + h.why : ""}` }))} /></Section>
+          </div></div>
+        </div>
+
+        <div>
+          <div className="pn"><div className="pnb">
+            <Section t="Invoice value">
+              <DF k="Taxable" v={money2(o.subtotal)} mono /><DF k="GST" v={money2(o.tax)} mono /><DF k="Total" v={money2(o.total)} mono strong />
+              {o.invoices.length
+                ? <div className="sm" style={{ marginTop: 6 }}>{o.invoices.map((i) => <span key={i.no}>Tax invoice <b>{i.no}</b> posted {fDate(i.date)} · <a href="#" onClick={(e) => { e.preventDefault(); openModal(<InvoiceModal no={i.no} orderId={o.id} />, "w"); }}>view</a><br /></span>)}</div>
+                : <div className="sm" style={{ marginTop: 6 }}>Invoice is raised on dispatch, for the shipped quantity only.</div>}
+            </Section>
+          </div></div>
+          <div className="pn"><div className="pnb">
+            <Section t="Firm">
+              <DF k="Customer" v={<a href={`/customers/${c.id}`} onClick={(e) => { e.preventDefault(); router.push(`/customers/${c.id}`); }}>{c.name}</a>} />
+              <DF k="Tehsil" v={c.tehsil} /><DF k="Booked by" v={o.bookedBy} />
+              <DF k="Required by" v={<span style={{ color: daysTo(o.requiredBy) <= 7 ? "var(--er)" : undefined }}>{fDate(o.requiredBy)} <span className="sm">{dueLbl(o.requiredBy)}</span></span>} />
+              <DF k="Credit position" mono v={<span style={{ color: g.restricted ? "var(--er)" : "var(--ok)" }}>{money(g.out)} / {money(c.creditLimit)}{g.timeBreach ? ` · ${g.oldestAge}d` : ""}</span>} />
+            </Section>
+          </div></div>
+          {o.dispatches.map((d) => <div className="pn" key={d.id}><div className="pnb">
+            <Section t="Dispatch"><DF k="Transporter" v={d.transporter} mono /><DF k="LR number" v={d.lr} mono /><DF k="Tracking" v={d.tracking} mono /><DF k="Packages" v={d.packages} mono /><DF k="Freight" v={money(d.freight)} mono /><DF k="Dispatched" v={fDate(d.at)} mono /></Section>
+          </div></div>)}
+        </div>
+      </div>
+    </div>
+  </>;
 }
 
 function GateModal({ o, canOv }: { o: Order; canOv: boolean }) {
