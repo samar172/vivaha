@@ -11,6 +11,7 @@ import { nextCustomerNo } from "../../services/sequence";
 import { groupMultiplier } from "../../services/pricing";
 import { getMinMargin } from "../../services/settings";
 import { badRequest, notFound, forbidden } from "../../utils/httpError";
+import { recordFix, validFix, metresBetween } from "../../services/geo";
 import { marginFloor, slabRate } from "@vivaha/shared";
 
 const router = Router();
@@ -85,6 +86,9 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
       : [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }];
     if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" });
     const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, lat: b.lat ?? null, lng: b.lng ?? null, geoAccuracy: b.geoAccuracy ?? null, geoAt: b.lat != null && b.lng != null ? new Date() : null, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
+    if (validFix({ lat: b.lat ?? undefined, lng: b.lng ?? undefined, accuracy: b.geoAccuracy ?? undefined })) {
+      await recordFix(tx, c.id, { lat: b.lat!, lng: b.lng!, accuracy: b.geoAccuracy ?? null }, "ONBOARDING", req.user!.name);
+    }
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer created", entityType: "Customer", entityId: b.name, newValue: `${b.group} · limit ₹${b.creditLimit}`, reason: "New onboarding" });
     return c;
   });
@@ -110,15 +114,31 @@ router.patch("/:id", requirePerm("cust.edit"), asyncHandler(async (req, res) => 
         else await tx.customerContact.create({ data: { ...data, customerId: before.id } });
       }
     }
-    // A fresh fix replaces the last known one and carries its own timestamp;
+    // A fresh capture is recorded below, on the same trail as every other fix;
     // an edit that captured nothing leaves the existing pin alone.
-    const geo = rest.lat != null && rest.lng != null ? { lat: rest.lat, lng: rest.lng, geoAccuracy: rest.geoAccuracy ?? null, geoAt: new Date() } : {};
     const { lat: _lat, lng: _lng, geoAccuracy: _acc, ...restNoGeo } = rest;
-    const c = await tx.customer.update({ where: { id: before.id }, data: { ...restNoGeo, ...geo, gstin: rest.gstin === undefined ? undefined : rest.gstin || null, salesExecId: rest.salesExecId === undefined ? undefined : rest.salesExecId } });
+    const c = await tx.customer.update({ where: { id: before.id }, data: { ...restNoGeo, gstin: rest.gstin === undefined ? undefined : rest.gstin || null, salesExecId: rest.salesExecId === undefined ? undefined : rest.salesExecId } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer updated", entityType: "Customer", entityId: before.name, oldValue: `limit ₹${D(before.creditLimit)} · ${before.creditDays}d · ${before.gateMode}`, newValue: `limit ₹${D(c.creditLimit)} · ${c.creditDays}d · ${c.gateMode}` });
+    if (validFix({ lat: rest.lat ?? undefined, lng: rest.lng ?? undefined, accuracy: rest.geoAccuracy ?? undefined })) {
+      await recordFix(tx, before.id, { lat: rest.lat!, lng: rest.lng!, accuracy: rest.geoAccuracy ?? null }, "OFFICE_EDIT", req.user!.name);
+    }
     return c;
   });
   res.json(serialize(c));
+}));
+
+// Where this firm has been seen, newest first — onboarding, office edits and
+// the firm's own check-ins, each saying which it was.
+router.get("/:id/locations", requirePerm("cust.view"), asyncHandler(async (req, res) => {
+  const rows = await prisma.customerLocation.findMany({ where: { customerId: req.params.id }, orderBy: { at: "desc" }, take: 50 });
+  const onboard = rows.filter((r) => r.source === "ONBOARDING").at(-1) ?? null;
+  res.json({
+    rows,
+    // How far the latest fix is from where the shop was signed up. A firm
+    // ordering from two hundred metres away is at its shop; one ordering from
+    // forty kilometres away is somewhere else, which is worth seeing.
+    driftM: rows[0] && onboard && rows[0].id !== onboard.id ? metresBetween(onboard, rows[0]) : null,
+  });
 }));
 
 router.post("/:id/block", requirePerm("cust.block"), asyncHandler(async (req, res) => {

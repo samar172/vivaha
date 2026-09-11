@@ -12,6 +12,7 @@ import { notify } from "../../services/notify";
 import { nextOrderNo, nextReturnNo, nextReferralNo } from "../../services/sequence";
 import { getHomeState } from "../../services/settings";
 import { badRequest, notFound } from "../../utils/httpError";
+import { recordFix, validFix } from "../../services/geo";
 
 const router = Router();
 
@@ -33,6 +34,18 @@ router.get("/me", asyncHandler(async (req, res) => {
   const c = await me(req);
   const [g, lines, cart, kit] = await Promise.all([gate(c), prisma.businessLine.findMany({ where: { id: { in: c.linesEnabled as string[] }, isActive: true, workflow: "FULFIL" }, orderBy: { sortOrder: "asc" } }), prisma.cart.findUnique({ where: { customerId: c.id } }), prisma.kit.findUnique({ where: { customerId: c.id } })]);
   res.json({ firm: { ...c, creditLimit: D(c.creditLimit), machines: c.machines }, gate: g, lines, cartCount: ((cart?.lines as unknown[]) || []).length, kit });
+}));
+
+// The firm checking in. Sent once when the portal is opened, if the browser
+// grants permission — one fix on a press, never a watch, and a refusal is an
+// ordinary outcome that changes nothing. It answers the office's question of
+// where a firm actually was when it last ordered.
+router.post("/checkin", asyncHandler(async (req, res) => {
+  const c = await me(req);
+  const b = z.object({ lat: z.number(), lng: z.number(), accuracy: z.number().nonnegative().optional() }).parse(req.body);
+  if (!validFix(b)) throw badRequest("That is not a usable location");
+  await recordFix(prisma, c.id, { lat: b.lat, lng: b.lng, accuracy: b.accuracy ?? null }, "PORTAL_CHECKIN", c.contactName);
+  res.status(201).json({ ok: true });
 }));
 
 router.get("/home", asyncHandler(async (req, res) => {

@@ -374,10 +374,10 @@ model Customer {
   // Firm-wide percentage off the group rate, applied to everything they buy
   // unless a per-item override says otherwise.
   priceAdjPct  Decimal  @default(0) @db.Decimal(5, 2)
-  // Where the shop actually is, captured from the executive's phone when they
-  // are standing in it. Nullable throughout: permission is often refused, and a
-  // firm without a pin is still a firm. Never tracked continuously — this is
-  // the last known fix, written only when a workflow captures one.
+  // The latest fix, whatever produced it — kept here so every screen that shows
+  // "last known" reads one row. CustomerLocation holds the trail. Nullable
+  // throughout: permission is often refused, and a firm without a pin is still
+  // a firm.
   lat          Float?
   lng          Float?
   geoAccuracy  Float?
@@ -393,6 +393,7 @@ model Customer {
   updatedAt    DateTime @updatedAt
 
   contacts   CustomerContact[]
+  locations  CustomerLocation[]
   machines   CustomerMachine[]
   overrides  PriceOverride[]
   users      User[]
@@ -406,6 +407,34 @@ model Customer {
   cart       Cart?
   referrals  Referral[]
   stockoutHits StockoutSearch[]
+}
+
+// Where a firm has actually been seen, one row per fix. Two questions need
+// answering and they are not the same: where the shop was when it was
+// onboarded, and where the firm was the last time it used the portal. Customer
+// keeps the latest fix denormalised so every screen that shows "last known"
+// reads one row.
+//
+// Discrete fixes only — a fix is written when someone onboards a firm, edits it
+// from the office, or the firm checks in. Never a background watch.
+enum GeoSource {
+  ONBOARDING
+  OFFICE_EDIT
+  PORTAL_CHECKIN
+}
+
+model CustomerLocation {
+  id         String    @id @default(cuid())
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lat        Float
+  lng        Float
+  accuracy   Float?
+  source     GeoSource
+  by         String    @default("")
+  at         DateTime  @default(now())
+
+  @@index([customerId, at])
 }
 
 model CustomerContact {

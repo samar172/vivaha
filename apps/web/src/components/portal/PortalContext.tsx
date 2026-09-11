@@ -14,6 +14,7 @@ export interface CartView { lines: { item: PItem; qty: number; rate: number; amo
 
 interface Ctx { me: Me | null; line: string; setLine: (l: string) => void; sheet: string | null; openSheet: (id: string, qty?: number) => void; closeSheet: () => void; sheetQty: number; cartOpen: boolean; openCart: () => void; cart: CartView | null; addLine: (itemId: string, qty: number, mode?: "add" | "set") => Promise<boolean>; rmLine: (itemId: string) => Promise<void>; reload: () => void }
 const C = createContext<Ctx | null>(null);
+const CHECKED_IN = "vivaha.portal.checkedIn";
 
 export function PortalProvider({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth(); const router = useRouter(); const { toast } = useUI();
@@ -24,6 +25,23 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (me && !line) setLineS(me.lines[0]?.id ?? me.firm.linesEnabled[0]); }, [me, line]);
   const reload = () => { mutMe(); mutCart(); refresh("/api/portal"); };
+
+  // Checking in: one location fix when the portal is opened, so the office can
+  // see where a firm actually was when it last ordered. Once per session, never
+  // a watch, and a refused permission is an ordinary outcome that changes
+  // nothing about the shop. The browser's own prompt is the consent.
+  useEffect(() => {
+    if (!me || typeof navigator === "undefined" || !navigator.geolocation) return;
+    try {
+      if (sessionStorage.getItem(CHECKED_IN) === me.firm.id) return;
+      sessionStorage.setItem(CHECKED_IN, me.firm.id);
+    } catch { return; /* private window — skip rather than ask every render */ }
+    navigator.geolocation.getCurrentPosition(
+      (p) => { post("/api/portal/checkin", { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy ?? undefined }).catch(() => {}); },
+      () => { /* refused or unavailable — nothing to do */ },
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 },
+    );
+  }, [me]);
   // Asking for more than there is should not end the conversation. When the
   // shortfall comes back with a number, take what there is instead of refusing
   // — the same thing the item sheet offers, now in the cart too.

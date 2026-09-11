@@ -51,7 +51,6 @@ export function CustomerDetail({ id }: { id: string }) {
           <div className="pn"><div className="pnb">
             <Section t="Firm">
               <DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} />
-              {c.lat != null && c.lng != null && <DF k="Shop location" v={<a href={`https://www.google.com/maps?q=${c.lat},${c.lng}`} target="_blank" rel="noreferrer">{c.lat.toFixed(5)}, {c.lng.toFixed(5)}</a>} />}
               <DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} />
               {!!c.priceAdjPct && <DF k="Firm discount" v={`${c.priceAdjPct}% off the group rate`} />}
               <DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} />
@@ -60,6 +59,9 @@ export function CustomerDetail({ id }: { id: string }) {
           </div></div>
           <div className="pn"><div className="pnb">
             <Section t="Numbers & staff">{c.contacts.map((ct) => <DF key={ct.id} k={<>{ct.name} <span className="sm">{ct.role}</span></>} v={<>{ct.phone} {ct.hasLogin && <span className="bd b-ok" style={{ marginLeft: 4 }}>login</span>}</>} mono />)}<div className="sm" style={{ marginTop: 6 }}>Owner authority may approve a credit-breaching order; Staff cannot — it routes to the owner.</div></Section>
+          </div></div>
+          <div className="pn"><div className="pnb">
+            <LocationSection id={id} />
           </div></div>
           <div className="pn"><div className="pnb">
             <Section t="Machines owned">{c.machines.length ? c.machines.map((m) => <div key={m.id} style={{ border: "1px solid var(--bd)", borderRadius: 5, padding: "8px 10px", marginBottom: 6 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 4 }}>{m.type}</div>{Object.keys(m.spec).map((k) => <div className="df" key={k} style={{ fontSize: 13 }}><span className="k">{SPEC[k] ?? k}</span><span className="v">{m.spec[k]}</span></div>)}</div>) : <div className="sm">No machines recorded. This firm buys finished goods only.</div>}<div className="sm">Machine profile drives consumables reorder prediction and targeted ad slots.</div></Section>
@@ -85,6 +87,55 @@ export function CustomerDetail({ id }: { id: string }) {
       </div>
     </div>
   </>;
+}
+
+interface Loc { id: string; lat: number; lng: number; accuracy: number | null; source: "ONBOARDING" | "OFFICE_EDIT" | "PORTAL_CHECKIN"; by: string; at: string }
+
+const SOURCE_LABEL: Record<Loc["source"], string> = {
+  ONBOARDING: "Pinned at onboarding",
+  OFFICE_EDIT: "Updated from the office",
+  PORTAL_CHECKIN: "Checked in on the portal",
+};
+
+// Where this firm has actually been seen. Two different questions get answered
+// here and they are not the same: where the shop was when it was signed up, and
+// where the firm was the last time it used the portal. The distance between
+// them is the interesting part — two hundred metres is the shop, forty
+// kilometres is somewhere else.
+function LocationSection({ id }: { id: string }) {
+  const { data } = useApi<{ rows: Loc[]; driftM: number | null }>(`/api/customers/${id}/locations`);
+  if (!data) return <Section t="Shop location"><div className="sm">Loading…</div></Section>;
+  const { rows, driftM } = data;
+  if (!rows.length) return <Section t="Shop location">
+    <div className="sm">No location on record. It is captured when a firm is onboarded — or when they open the portal, if they allow it — and refusing has never stopped anything.</div>
+  </Section>;
+
+  const latest = rows[0];
+  const onboard = rows.filter((r) => r.source === "ONBOARDING").at(-1);
+  const checkins = rows.filter((r) => r.source === "PORTAL_CHECKIN").length;
+  const map = (r: Loc) => `https://www.google.com/maps?q=${r.lat},${r.lng}`;
+  const far = driftM != null && driftM > 2000;
+
+  return <Section t="Shop location">
+    <DF k="Last seen" v={<a href={map(latest)} target="_blank" rel="noreferrer" className="tab">{latest.lat.toFixed(5)}, {latest.lng.toFixed(5)}</a>} />
+    <DF k="How" v={<>{SOURCE_LABEL[latest.source]}{latest.accuracy ? ` · ±${Math.round(latest.accuracy)} m` : ""}</>} />
+    <DF k="When" v={fDT(latest.at)} />
+    {onboard && onboard.id !== latest.id && <DF k="Onboarded at" v={<a href={map(onboard)} target="_blank" rel="noreferrer" className="tab">{onboard.lat.toFixed(5)}, {onboard.lng.toFixed(5)}</a>} />}
+    {driftM != null && <DF k="Distance from the shop" v={<span style={{ color: far ? "var(--wa)" : undefined, fontWeight: far ? 700 : undefined }}>{driftM < 1000 ? `${driftM} m` : `${(driftM / 1000).toFixed(1)} km`}</span>} />}
+    {far && <Note k="w" style={{ marginTop: 8 }}>The last check-in was {(driftM! / 1000).toFixed(1)} km from where this shop was pinned. Worth knowing before a delivery is routed — not necessarily wrong, firms order from the road.</Note>}
+    <div className="sm" style={{ marginTop: 7 }}>{checkins ? `${num(checkins)} portal check-in${checkins === 1 ? "" : "s"} on record. ` : ""}A fix is only ever taken when someone onboards this firm, edits it here, or the firm opens the portal — never in the background.</div>
+    {rows.length > 1 && <details style={{ marginTop: 8 }}>
+      <summary className="sm" style={{ cursor: "pointer" }}>Show all {rows.length} fixes</summary>
+      <table className="dg" style={{ fontSize: 13, marginTop: 7 }}><thead><tr><th>When</th><th>How</th><th>Where</th><th>By</th></tr></thead><tbody>
+        {rows.map((r) => <tr key={r.id} style={{ cursor: "default" }}>
+          <td className="sm">{fDT(r.at)}</td>
+          <td className="sm">{SOURCE_LABEL[r.source]}</td>
+          <td><a href={map(r)} target="_blank" rel="noreferrer" className="tab">{r.lat.toFixed(4)}, {r.lng.toFixed(4)}</a></td>
+          <td className="sm">{r.by || "—"}</td>
+        </tr>)}
+      </tbody></table>
+    </details>}
+  </Section>;
 }
 
 function BlockModal({ c }: { c: Customer }) {
