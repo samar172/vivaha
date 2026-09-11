@@ -138,7 +138,10 @@ async function main() {
     if (r[7]) await prisma.user.create({ data: { username: r[7], passwordHash: hash, name: r[1], initials: r[1].split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase(), role: "CUSTOMER", customerId: c.id, authority: "Owner" } });
     custs.push({ id: c.id, name: c.name, group: c.group, gstin, contactName: r[1], tehsil: r[3], creditLimit: r[4], creditDays: r[5], gateMode: r[6], username: r[7] });
   }
-  await prisma.sequence.create({ data: { name: "CUST", value: RAW_CUST.length } });
+  // Seeded firms are CUST-101..CUST-116, so the counter has to start from the
+  // same base. Set to the row count alone it would hand out CUST-17 next and,
+  // eighty-five customers later, collide with the seeded CUST-101.
+  await prisma.sequence.create({ data: { name: "CUST", value: 100 + RAW_CUST.length } });
   await prisma.priceOverride.createMany({ data: [{ customerId: "CUST-102", itemId: "ITM-104", rate: 58, reason: "Long-standing dealer relationship", setBy: "Aadil Bhati" }, { customerId: "CUST-103", itemId: "ITM-110", rate: 71, reason: "Distributor negotiated", setBy: "Aadil Bhati" }] });
 
   /* stock via GRN */

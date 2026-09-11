@@ -4,8 +4,9 @@ import { money, money2, num, fDate, fDT } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
-import { post, put, del } from "@/lib/api";
+import { post, put, patch, del } from "@/lib/api";
 import { Pill, DF, Section, DrawerFrame, ModalFrame, Field, Note, Bar, Timeline } from "./ui";
+import { Icon } from "./icons";
 import type { Customer, ItemView } from "./types";
 
 const SPEC: Record<string, string> = { colours: "Colours", ink: "Ink brand", company: "Machine company", roller: "Roller cloth", chem: "Chemicals brand", industry: "Industry", model: "Model" };
@@ -17,7 +18,7 @@ export function CustomerDrawer({ id }: { id: string }) {
   const g = c.gate, a = c.ageing;
   const unblock = async () => { try { await post(`/api/customers/${id}/unblock`); toast("Block lifted", "s"); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <DrawerFrame onClose={closeDrawer} head={<><span className="rid" style={{ fontSize: 14.5 }}>{c.name}</span><Pill s={c.blockReason ? "Blocked" : "Active"} /></>}
-    actions={<>{can("cust.price") && <button className="b b-o b-s" onClick={() => openModal(<OverrideModal c={c} />)}>Price overrides</button>}{can("payment.create") && <button className="b b-o b-s" onClick={() => openModal(<PaymentModal customerId={id} />)}>Record payment</button>}{can("cust.block") && (c.blockReason ? <button className="b b-o b-s" onClick={unblock}>Lift block</button> : <button className="b b-d b-s" onClick={() => openModal(<BlockModal c={c} />, "n")}>Temporary block</button>)}</>}>
+    actions={<>{can("cust.edit") && <button className="b b-o b-s" onClick={() => openModal(<CustomerForm customer={c} />, "w")}>Edit</button>}{can("cust.price") && <button className="b b-o b-s" onClick={() => openModal(<OverrideModal c={c} />)}>Price overrides</button>}{can("payment.create") && <button className="b b-o b-s" onClick={() => openModal(<PaymentModal customerId={id} />)}>Record payment</button>}{can("cust.block") && (c.blockReason ? <button className="b b-o b-s" onClick={unblock}>Lift block</button> : <button className="b b-d b-s" onClick={() => openModal(<BlockModal c={c} />, "n")}>Temporary block</button>)}</>}>
     <Section t="Firm"><DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} /><DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} /><DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} /><DF k="Deals in" v={c.linesEnabled.map((l) => lines?.find((x) => x.id === l)?.name ?? l).join(", ")} /></Section>
     {c.blockReason && <Note k="w"><b>Blocked</b> by {c.blockedBy} on {fDate(c.blockedAt)} — {c.blockReason}{c.blockUntil ? ` · auto-lift ${fDate(c.blockUntil)}` : ""}</Note>}
     <Section t="Contacts & logins">{c.contacts.map((ct) => <DF key={ct.id} k={<>{ct.name} <span className="sm">{ct.role}</span></>} v={<>{ct.phone} {ct.hasLogin && <span className="bd b-ok" style={{ marginLeft: 4 }}>login</span>}</>} mono />)}<div className="sm" style={{ marginTop: 6 }}>Owner authority may approve a credit-breaching order; Staff cannot — it routes to the owner.</div></Section>
@@ -59,17 +60,86 @@ export function PaymentModal({ customerId }: { customerId?: string }) {
   </ModalFrame>;
 }
 
-export function CustomerForm() {
-  const { closeModal, toast } = useUI(); const { data: lines } = useLines(); const { data: tehsils } = useApi<string[]>("/api/masters/tehsils"); const { data: execs } = useApi<{ id: string; name: string }[]>("/api/masters/sales-execs"); const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups");
-  const [f, setF] = useState({ name: "", contactName: "", phone: "", tehsil: "Bikaner", gstin: "", firmType: "Registered", linesEnabled: ["L1"], group: "Regular", salesExecId: "", creditLimit: 150000, creditDays: 30, gateMode: "WARN" });
-  const go = async () => { if (!f.name || !f.contactName || !f.phone) return toast("Firm name, owner name and phone are required", "e"); try { await post("/api/customers", { ...f, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined }); toast("Customer created — refer code issued", "s"); closeModal(); refresh("/api/customers"); } catch (e) { toast(errMsg(e), "e"); } };
-  return <ModalFrame title="New customer" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Save customer</button></>}>
-    <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field><Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
+const ROLES = ["Owner", "Staff", "Office", "Accounts", "Other"];
+const MACHINE_TYPES = ["Offset", "Screen", "Flex", "UV", "Digital", "Binding", "Other"];
+type FormContact = { id?: string; name: string; role: string; phone: string; authority: "Owner" | "Staff" };
+type FormMachine = { type: string; spec: Record<string, string> };
+
+// One screen for the whole firm: who they are, every number they answer on,
+// their staff, and the machines on their floor. Creating and editing are the
+// same form — an edit that could not reach half the record is how the machine
+// list went stale in the first place.
+export function CustomerForm({ customer }: { customer?: Customer } = {}) {
+  const { closeModal, closeDrawer, toast } = useUI(); const { data: lines } = useLines(); const { data: tehsils } = useApi<string[]>("/api/masters/tehsils"); const { data: execs } = useApi<{ id: string; name: string }[]>("/api/masters/sales-execs"); const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups");
+  const edit = !!customer;
+  const [f, setF] = useState({
+    name: customer?.name ?? "", contactName: customer?.contactName ?? "", phone: customer?.phone ?? "",
+    tehsil: customer?.tehsil ?? "Bikaner", gstin: customer?.gstin ?? "", firmType: customer?.firmType ?? "Registered",
+    address: customer?.address ?? "", linesEnabled: customer?.linesEnabled ?? ["L1"], group: customer?.group ?? "Regular",
+    salesExecId: customer?.salesExecId ?? "", creditLimit: customer?.creditLimit ?? 150000, creditDays: customer?.creditDays ?? 30,
+    gateMode: (customer?.gateMode ?? "WARN") as "WARN" | "BLOCK",
+  });
+  const [contacts, setContacts] = useState<FormContact[]>(
+    customer?.contacts?.length
+      ? customer.contacts.map((c) => ({ id: c.id, name: c.name, role: c.role, phone: c.phone, authority: (c.authority === "Owner" ? "Owner" : "Staff") as "Owner" | "Staff" }))
+      : [],
+  );
+  const [machines, setMachines] = useState<FormMachine[]>(customer?.machines?.map((m) => ({ type: m.type, spec: { ...m.spec } })) ?? []);
+
+  const setC = (i: number, patch: Partial<FormContact>) => setContacts((cs) => cs.map((c, n) => (n === i ? { ...c, ...patch } : c)));
+  const setM = (i: number, patch: Partial<FormMachine>) => setMachines((ms) => ms.map((m, n) => (n === i ? { ...m, ...patch } : m)));
+  const setSpec = (i: number, k: string, v: string) => setMachines((ms) => ms.map((m, n) => (n === i ? { ...m, spec: { ...m.spec, [k]: v } } : m)));
+
+  const go = async () => {
+    if (!f.name || !f.contactName || !f.phone) return toast("Firm name, owner name and phone are required", "e");
+    const clean = contacts.filter((c) => c.name.trim() && c.phone.trim());
+    if (contacts.length !== clean.length) return toast("Every extra number needs a name and a phone — remove the blank rows", "e");
+    const body = { ...f, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type) };
+    try {
+      if (edit) { await patch(`/api/customers/${customer!.id}`, body); toast("Customer updated", "s"); closeDrawer(); }
+      else { await post("/api/customers", body); toast("Customer created — refer code issued", "s"); }
+      closeModal(); refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); }
+  };
+
+  return <ModalFrame title={edit ? `Edit — ${customer!.name}` : "New customer"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>{edit ? "Save changes" : "Save customer"}</button></>}>
+    <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *" hint="The firm's primary number — more can be added below"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field><Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
+      <Field label="Address" full><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="Shop / street / landmark" /></Field>
       <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div></Field>
       <Field label="Pricing group"><select value={f.group} onChange={(e) => setF({ ...f, group: e.target.value })}>{groups?.map((g) => <option key={g.name} value={g.name}>{g.name} — ×{g.multiplier}</option>)}</select></Field><Field label="Sales executive"><select value={f.salesExecId} onChange={(e) => setF({ ...f, salesExecId: e.target.value })}><option value="">—</option>{execs?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
       <Field label="Credit limit (₹)" hint="Suggested ₹1,80,000 from machine capacity"><input type="number" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: Number(e.target.value) })} /></Field><Field label="Credit days" hint="Time or amount, whichever breaches first"><input type="number" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: Number(e.target.value) })} /></Field>
-      <Field label="Gate mode" full><select value={f.gateMode} onChange={(e) => setF({ ...f, gateMode: e.target.value })}><option value="WARN">WARN — allow with a recorded reason</option><option value="BLOCK">BLOCK — needs an authorised override</option></select></Field></div>
-    <Note style={{ marginTop: 11 }}>Mandatory minimum is firm name, one contact with a phone, and tehsil. Everything else can follow — a half-captured customer is worth more than an abandoned form.</Note>
+      <Field label="Gate mode" full><select value={f.gateMode} onChange={(e) => setF({ ...f, gateMode: e.target.value as "WARN" | "BLOCK" })}><option value="WARN">WARN — allow with a recorded reason</option><option value="BLOCK">BLOCK — needs an authorised override</option></select></Field></div>
+
+    <div className="st" style={{ marginTop: 16 }}>Numbers &amp; staff</div>
+    <div className="sm" style={{ marginBottom: 7 }}>The owner above is saved automatically. Add the office, accounts or a staff member here — a bill can then be sent to whichever of them handles bills.</div>
+    {contacts.map((c, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.3fr 1fr auto", gap: 7, marginBottom: 7, alignItems: "center" }}>
+      <input placeholder="Name" value={c.name} onChange={(e) => setC(i, { name: e.target.value })} />
+      <select value={c.role} onChange={(e) => setC(i, { role: e.target.value })}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select>
+      <input placeholder="+91 94141 00000" value={c.phone} onChange={(e) => setC(i, { phone: e.target.value })} />
+      <select value={c.authority} onChange={(e) => setC(i, { authority: e.target.value as "Owner" | "Staff" })} title="Owner authority may approve a credit-breaching order"><option value="Staff">Staff authority</option><option value="Owner">Owner authority</option></select>
+      <button className="b b-g b-s" onClick={() => setContacts((cs) => cs.filter((_, n) => n !== i))} title="Remove"><Icon n="x" s={11} /></button>
+    </div>)}
+    <button className="b b-o b-s" onClick={() => setContacts((cs) => [...cs, { name: "", role: "Staff", phone: "", authority: "Staff" }])}>+ Add number</button>
+
+    <div className="st" style={{ marginTop: 16 }}>Machines &amp; equipment</div>
+    <div className="sm" style={{ marginBottom: 7 }}>What is on this firm&apos;s floor. Drives consumables reorder prediction and targeted ad slots — and answers which firm is running which machine.</div>
+    {machines.map((m, i) => <div key={i} style={{ border: "1px solid var(--bd)", borderRadius: 5, padding: "9px 10px", marginBottom: 7 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 7, alignItems: "center" }}>
+        <select value={m.type} onChange={(e) => setM(i, { type: e.target.value })}>{MACHINE_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+        <input placeholder="Make / company" value={m.spec.company ?? ""} onChange={(e) => setSpec(i, "company", e.target.value)} />
+        <input placeholder="Model" value={m.spec.model ?? ""} onChange={(e) => setSpec(i, "model", e.target.value)} />
+        <input placeholder="Serial no" value={m.spec.serial ?? ""} onChange={(e) => setSpec(i, "serial", e.target.value)} />
+        <button className="b b-g b-s" onClick={() => setMachines((ms) => ms.filter((_, n) => n !== i))} title="Remove"><Icon n="x" s={11} /></button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7, marginTop: 7 }}>
+        <select value={m.spec.status ?? "Running"} onChange={(e) => setSpec(i, "status", e.target.value)}><option>Running</option><option>Idle</option><option>Under repair</option><option>Retired</option></select>
+        <input placeholder="Colours" value={m.spec.colours ?? ""} onChange={(e) => setSpec(i, "colours", e.target.value)} />
+        <input placeholder="Ink brand" value={m.spec.ink ?? ""} onChange={(e) => setSpec(i, "ink", e.target.value)} />
+      </div>
+    </div>)}
+    <button className="b b-o b-s" onClick={() => setMachines((ms) => [...ms, { type: "Offset", spec: { status: "Running" } }])}>+ Add machine</button>
+
+    <Note style={{ marginTop: 13 }}>Mandatory minimum is firm name, one contact with a phone, and tehsil. Everything else can follow — a half-captured customer is worth more than an abandoned form.</Note>
   </ModalFrame>;
 }
 export { money2 };

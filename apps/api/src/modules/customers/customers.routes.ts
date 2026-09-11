@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
 import { prisma, D } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm, can } from "../../middleware/auth";
@@ -47,11 +48,22 @@ router.get("/:id", requirePerm("cust.view"), asyncHandler(async (req, res) => {
   });
 }));
 
+// A firm is reached on several numbers — the owner on one, the office on
+// another, accounts on a third — and the bill has to go to whichever of them
+// actually handles bills. `id` is present when an existing row is being edited,
+// which is what keeps a contact's portal login attached to it.
+export const CONTACT_ROLES = ["Owner", "Staff", "Office", "Accounts", "Other"] as const;
+const contactSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1), role: z.string().default("Owner"), phone: z.string().min(5),
+  authority: z.enum(["Owner", "Staff"]).default("Staff"),
+});
 const custSchema = z.object({
   name: z.string().min(1), contactName: z.string().min(1), phone: z.string().min(5), tehsil: z.string().min(1), gstin: z.string().optional(), firmType: z.string().default("Registered"),
   address: z.string().default(""), linesEnabled: z.array(z.string()).min(1), group: z.string().default("Regular"), salesExecId: z.string().nullable().optional(),
   creditLimit: z.number().min(0).default(0), creditDays: z.number().int().min(0).default(0), gateMode: z.enum(["WARN", "BLOCK"]).default("WARN"),
   machines: z.array(z.object({ type: z.string(), spec: z.record(z.string()).default({}) })).default([]),
+  contacts: z.array(contactSchema).default([]),
 });
 router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
   const b = custSchema.parse(req.body);
@@ -59,7 +71,13 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
   const c = await prisma.$transaction(async (tx) => {
     const id = await nextCustomerNo(tx);
     const seq = Number(id.split("-")[1]);
-    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }] }, machines: { create: b.machines } } });
+    // The owner is always on the list. Callers that send no contacts at all get
+    // the owner alone, exactly as before.
+    const contacts = b.contacts.length
+      ? b.contacts.map(({ id: _drop, ...ct }) => ct)
+      : [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }];
+    if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" });
+    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer created", entityType: "Customer", entityId: b.name, newValue: `${b.group} · limit ₹${b.creditLimit}`, reason: "New onboarding" });
     return c;
   });
@@ -70,9 +88,21 @@ router.patch("/:id", requirePerm("cust.edit"), asyncHandler(async (req, res) => 
   const b = custSchema.partial().parse(req.body);
   const before = await prisma.customer.findUnique({ where: { id: req.params.id } });
   if (!before) throw notFound("Customer not found");
-  const { machines, ...rest } = b;
+  const { machines, contacts, ...rest } = b;
   const c = await prisma.$transaction(async (tx) => {
     if (machines) { await tx.customerMachine.deleteMany({ where: { customerId: before.id } }); await tx.customerMachine.createMany({ data: machines.map((m) => ({ ...m, customerId: before.id })) }); }
+    if (contacts) {
+      // Reconciled by id, never wholesale replaced: hasLogin is set against a
+      // contact row when a portal login is issued, and deleting the row to
+      // re-create it would quietly strip that firm's access marker.
+      const keep = contacts.filter((ct) => ct.id).map((ct) => ct.id!);
+      await tx.customerContact.deleteMany({ where: { customerId: before.id, id: { notIn: keep.length ? keep : ["__none__"] } } });
+      for (const ct of contacts) {
+        const { id, ...data } = ct;
+        if (id) await tx.customerContact.update({ where: { id }, data });
+        else await tx.customerContact.create({ data: { ...data, customerId: before.id } });
+      }
+    }
     const c = await tx.customer.update({ where: { id: before.id }, data: { ...rest, gstin: rest.gstin === undefined ? undefined : rest.gstin || null, salesExecId: rest.salesExecId === undefined ? undefined : rest.salesExecId } });
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer updated", entityType: "Customer", entityId: before.name, oldValue: `limit ₹${D(before.creditLimit)} · ${before.creditDays}d · ${before.gateMode}`, newValue: `limit ₹${D(c.creditLimit)} · ${c.creditDays}d · ${c.gateMode}` });
     return c;
@@ -124,8 +154,9 @@ router.post("/:id/login", requirePerm("cust.edit"), asyncHandler(async (req, res
   const { username, password, contactName, authority } = z.object({ username: z.string().min(3), password: z.string().min(6), contactName: z.string().min(1), authority: z.enum(["Owner", "Staff"]).default("Owner") }).parse(req.body);
   const c = await prisma.customer.findUnique({ where: { id: req.params.id } });
   if (!c) throw notFound();
-  const bcrypt = await import("bcryptjs");
-  const u = await prisma.user.create({ data: { username, passwordHash: await bcrypt.hash(password, 10), name: contactName, initials: contactName.split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase(), role: "CUSTOMER", customerId: c.id, authority } });
+  // Issued the same way Settings issues one: the password the office can see is
+  // temporary, and the holder has to replace it at first sign-in.
+  const u = await prisma.user.create({ data: { username, passwordHash: await bcrypt.hash(password, 10), name: contactName, initials: contactName.split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase(), role: "CUSTOMER", customerId: c.id, authority, mustChangePassword: true, passwordSetAt: new Date() } });
   await prisma.customerContact.updateMany({ where: { customerId: c.id, name: contactName }, data: { hasLogin: true } });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Portal login issued", entityType: "Customer", entityId: c.name, newValue: username });
   res.status(201).json({ id: u.id, username: u.username });
