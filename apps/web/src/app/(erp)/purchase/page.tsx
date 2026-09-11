@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { money, money2, num, fDate } from "@vivaha/shared";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
@@ -8,7 +9,7 @@ import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
-import { Pill, DF, Section, DrawerFrame, ModalFrame, Field, Note } from "@/components/ui";
+import { Pill, DF, Section, ModalFrame, Field, Note } from "@/components/ui";
 import { Qr } from "@/components/Qr";
 import type { ItemView } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
@@ -18,7 +19,7 @@ interface PO { id: string; invNo: string; date: string; eta: string | null; frei
 interface Vendor { id: string; name: string; gstin: string | null; terms: string; city: string; phone: string; documents: number; purchased: number; invoiced: number; paid: number; outstanding: number; oldestDays: number }
 
 export default function PurchasePage() {
-  const { line } = useAppState(); const { can } = useAuth(); const { openDrawer, openModal } = useUI();
+  const { line } = useAppState(); const { can } = useAuth(); const { openModal } = useUI(); const router = useRouter();
   const [tab, setTab] = useState("grn"); const [q, setQ] = useState("");
   const { data: pos } = useApi<PO[]>(`/api/purchases?line=${line}&q=${encodeURIComponent(q)}`); const { data: vendors } = useApi<Vendor[]>("/api/masters/vendors");
   const rows = pos ?? []; const pg = usePager(rows); useFooter(tab === "grn" ? rows.length : vendors?.length ?? 0, "", pg.page, pg.pages, pg.setPage);
@@ -28,7 +29,7 @@ export default function PurchasePage() {
     <div className="wa">
       {tab === "grn" && <><div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="PO or invoice number…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
         <div className="gw"><table className="dg"><thead><tr><th>Document</th><th>Vendor</th><th>Date</th><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Freight</th><th className="n">Value</th><th>Godown split</th><th>Status</th></tr></thead><tbody>
-          {pg.rows.map((p) => { const l = p.lines[0]; return <tr key={p.id} onClick={() => openDrawer(<PODrawer p={p} />)}><td><span className="rid">{p.invNo}</span><div className="sm">{p.id}</div></td><td className="w">{p.vendor.name}<div className="sm">{p.vendor.gstin}</div></td><td className="tab">{fDate(p.date)}</td><td className="w">{l?.item.name}<div className="sm">{l?.item.sku}{p.lines.length > 1 ? ` +${p.lines.length - 1}` : ""}</div></td><td className="n tab">{num(l?.qty)}</td><td className="n tab">{money(l?.rate)}</td><td className="n tab">{money(p.freight)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(p.total + p.freight)}</td><td className="sm">{l && Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => g.replace("GD-", "") + ":" + num(l.alloc[g])).join(" · ") : "—"}</td><td><Pill s={p.status} /></td></tr>; })}
+          {pg.rows.map((p) => { const l = p.lines[0]; return <tr key={p.id} onClick={() => router.push(`/purchase/${p.id}`)}><td><span className="rid">{p.invNo}</span><div className="sm">{p.id}</div></td><td className="w">{p.vendor.name}<div className="sm">{p.vendor.gstin}</div></td><td className="tab">{fDate(p.date)}</td><td className="w">{l?.item.name}<div className="sm">{l?.item.sku}{p.lines.length > 1 ? ` +${p.lines.length - 1}` : ""}</div></td><td className="n tab">{num(l?.qty)}</td><td className="n tab">{money(l?.rate)}</td><td className="n tab">{money(p.freight)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(p.total + p.freight)}</td><td className="sm">{l && Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => g.replace("GD-", "") + ":" + num(l.alloc[g])).join(" · ") : "—"}</td><td><Pill s={p.status} /></td></tr>; })}
         </tbody></table></div></>}
       {tab === "vend" && <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>GSTIN</th><th>City</th><th>Terms</th><th>Phone</th><th className="n">Documents</th><th className="n">Purchased</th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} style={{ cursor: "default" }}><td>{v.name}</td><td className="sm">{v.gstin}</td><td>{v.city}</td><td>{v.terms}</td><td className="sm">{v.phone}</td><td className="n tab">{v.documents}</td><td className="n tab">{money(v.purchased)}</td></tr>)}</tbody></table></div>}
       {tab === "pay" && <><Note style={{ marginBottom: 11 }}>Vendor payables mirror the customer ledger: an invoice posts a credit, a payment posts a debit, ageing runs from the invoice date.</Note>
@@ -37,17 +38,80 @@ export default function PurchasePage() {
   </>;
 }
 
-function PODrawer({ p }: { p: PO }) {
-  const { closeDrawer, openModal, toast } = useUI(); const { data: godowns } = useGodowns(); const { can } = useAuth();
+// A purchase document opens on its own page, the way an item, a firm and an
+// order do. Goods receipt is a decision made with the document in front of you
+// — which godown, which batch, what the carton was labelled — and a panel
+// sliding over the register was a poor place to make it.
+export function PurchaseDetail({ id }: { id: string }) {
+  const { data: p } = useApi<PO>(`/api/purchases/${id}`);
+  const { openModal, toast } = useUI(); const { data: godowns } = useGodowns(); const { can } = useAuth();
+  const router = useRouter();
+  useFooter(null);
+  if (!p) return <div className="wa"><div className="sm">Loading…</div></div>;
   const gross = p.lines.reduce((s, l) => s + l.qty * l.rate, 0);
-  return <DrawerFrame onClose={closeDrawer} head={<><span className="rid" style={{ fontSize: 14.5 }}>{p.invNo}</span><Pill s={p.status} /></>} actions={<>{p.status === "IN_TRANSIT" && can("purchase.create") && <button className="b b-p b-s" onClick={() => openModal(<ReceiveModal p={p} />, "w")}>Receive goods</button>}<button className="b b-o b-s" onClick={() => toast("Printed GRN", "i")}>Print GRN</button></>}>
-    <Section t="Document"><DF k="Vendor" v={p.vendor.name} /><DF k="GSTIN" v={p.vendor.gstin ?? "—"} /><DF k="Terms" v={p.vendor.terms} /><DF k="PO number" v={p.id} /><DF k="Date" v={fDate(p.date)} />{p.eta && <DF k="ETA" v={fDate(p.eta)} />}</Section>
-    <Section t="Lines">{p.lines.map((l) => <DF key={l.id} k={<>{l.item.name}{l.batchNo && <span className="sm"> · batch {l.batchNo}</span>}</>} v={`${num(l.qty)} × ${money(l.rate)}`} mono />)}<DF k="Freight & charges" v={money(p.freight)} mono /><DF k={`GST ${p.gstPct}%`} v={money(((gross + p.freight) * p.gstPct) / 100)} mono /><DF k="Invoice total" v={money((gross + p.freight) * (1 + p.gstPct / 100))} mono strong /><div className="sm" style={{ marginTop: 7 }}>Landed cost after freight apportionment: {p.lines.map((l) => `${l.item.sku} ${money(l.item.landedCost)}/${l.item.uom}`).join(" · ")}</div></Section>
-    <Section t="Labels received">{p.lines.some((l) => l.mfrCode)
-      ? p.lines.filter((l) => l.mfrCode).map((l) => <div key={l.id} style={{ display: "flex", gap: 11, alignItems: "center", marginBottom: 9 }}><Qr value={l.mfrCode!} size={62} /><div><div style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700 }}>{l.mfrCode}</div><div className="sm">{l.item.sku} · manufacturer label, filed on receipt</div></div></div>)
-      : <div className="sm">No manufacturer label was recorded on this document.</div>}</Section>
-    <Section t="Godown allocation">{p.lines.map((l) => Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => <DF key={l.id + g} k={(godowns?.find((x) => x.id === g)?.name ?? g) + (p.lines.length > 1 ? " · " + l.item.sku : "")} v={num(l.alloc[g])} mono />) : <div className="sm" key={l.id}>Not yet received — stock lands on GRN.</div>)}</Section>
-  </DrawerFrame>;
+  const labelled = p.lines.filter((l) => l.mfrCode);
+
+  return <>
+    <PageHead
+      crumb={["Catalogue", "Purchase", p.invNo]}
+      title={`${p.invNo} — ${p.vendor.name}`}
+      sub={<>{p.status === "POSTED" ? "Goods received" : "In transit"} · {p.id} · {fDate(p.date)}{p.eta ? ` · ETA ${fDate(p.eta)}` : ""}</>}
+      actions={<>
+        <button className="b b-o" onClick={() => router.push("/purchase")}><Icon n="chevronL" s={13} /> Back to purchase</button>
+        {p.status === "IN_TRANSIT" && can("purchase.create") && <button className="b b-p" onClick={() => openModal(<ReceiveModal p={p} />, "w")}>Receive goods</button>}
+        <button className="b b-o" onClick={() => toast("Printed GRN", "i")}>Print GRN</button>
+      </>}
+    />
+    <div className="wa">
+      <div className="idg">
+        <div>
+          <div className="pn"><div className="pnb">
+            <Section t="Lines">
+              <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Amount</th><th>Godown</th></tr></thead><tbody>
+                {p.lines.map((l) => <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/items/${l.itemId}`)}>
+                  <td className="w">{l.item.name}<div className="sm"><span className="rid">{l.item.sku}</span>{l.batchNo ? ` · batch ${l.batchNo}` : ""}</div></td>
+                  <td className="n tab">{num(l.qty)}</td>
+                  <td className="n tab">{money(l.rate)}</td>
+                  <td className="n tab">{money(l.qty * l.rate)}</td>
+                  <td className="sm">{Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => (godowns?.find((x) => x.id === g)?.short ?? g) + ":" + num(l.alloc[g])).join(" · ") : "—"}</td>
+                </tr>)}
+              </tbody></table>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 11 }}><div style={{ minWidth: 230 }}>
+                <DF k="Goods value" v={money(gross)} mono />
+                <DF k="Freight" v={money(p.freight)} mono />
+                <DF k="Landed total" v={money(gross + p.freight)} mono strong />
+              </div></div>
+              <div className="sm" style={{ marginTop: 7 }}>Freight is apportioned across the lines by value when the goods are received, which is what moves each item&apos;s landed cost.</div>
+            </Section>
+          </div></div>
+          <div className="pn"><div className="pnb">
+            <Section t="Labels received">
+              {labelled.length
+                ? labelled.map((l) => <div key={l.id} style={{ display: "flex", gap: 11, alignItems: "center", marginBottom: 9 }}>
+                    <Qr value={l.mfrCode!} size={62} />
+                    <div><div style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700 }}>{l.mfrCode}</div><div className="sm">{l.item.sku} · manufacturer label, filed on receipt</div></div>
+                  </div>)
+                : <div className="sm">No manufacturer label was recorded on this document. It is captured at goods receipt, so a carton that arrives under a factory code can still be scanned later.</div>}
+            </Section>
+          </div></div>
+        </div>
+
+        <div>
+          <div className="pn"><div className="pnb">
+            <Section t="Document">
+              <DF k="Vendor" v={p.vendor.name} /><DF k="GSTIN" v={p.vendor.gstin ?? "—"} mono /><DF k="Terms" v={p.vendor.terms} />
+              <DF k="PO number" v={p.id} mono /><DF k="Invoice" v={p.invNo} mono /><DF k="Date" v={fDate(p.date)} />
+              {p.eta && <DF k="ETA" v={fDate(p.eta)} />}
+              <DF k="Status" v={<Pill s={p.status} />} />
+            </Section>
+          </div></div>
+          {p.status === "IN_TRANSIT" && <div className="pn"><div className="pnb">
+            <Note k="w">These goods have not landed yet. Receiving them posts the stock into the godowns named on each line, apportions the freight, and moves the landed cost — so receive it when the cartons are actually in.</Note>
+          </div></div>}
+        </div>
+      </div>
+    </div>
+  </>;
 }
 
 function AllocInputs({ godowns, alloc, setAlloc, qty }: { godowns: { id: string; short: string }[]; alloc: Record<string, number>; setAlloc: (a: Record<string, number>) => void; qty: number }) {

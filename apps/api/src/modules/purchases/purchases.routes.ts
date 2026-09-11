@@ -12,6 +12,17 @@ import { recomputeLandedCost } from "@vivaha/shared";
 
 const router = Router();
 
+// One purchase document, for its own page. Same shape the list returns, so the
+// screen reads the same fields whichever way it arrived at them.
+router.get("/:id", requirePerm("purchase.view"), asyncHandler(async (req, res) => {
+  const p = await prisma.purchase.findUnique({
+    where: { id: req.params.id },
+    include: { vendor: true, lines: { include: { item: { select: { id: true, sku: true, name: true, uom: true, lineId: true, landedCost: true } } } } },
+  });
+  if (!p) throw notFound("Purchase document not found");
+  res.json({ ...p, total: D(p.total), freight: D(p.freight), lines: p.lines.map((l) => ({ ...l, rate: D(l.rate), item: { ...l.item, landedCost: D(l.item.landedCost) } })) });
+}));
+
 router.get("/", requirePerm("purchase.view"), asyncHandler(async (req, res) => {
   const q = z.object({ line: z.string().optional(), q: z.string().optional() }).parse(req.query);
   const rows = await prisma.purchase.findMany({
