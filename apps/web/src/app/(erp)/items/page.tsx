@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { money, num, slabRate } from "@vivaha/shared";
 import { useApi, useLines } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
@@ -10,17 +10,18 @@ import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { Pill, BandPill, LineChip, Thumb, Empty } from "@/components/ui";
-import { ItemDrawer, ItemForm } from "@/components/ItemDrawer";
+import { ItemForm } from "@/components/ItemDetail";
 import type { ItemView } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
 import { refresh } from "@/lib/hooks";
 import { Icon } from "@/components/icons";
 
 export default function ItemsPage() {
-  const { line } = useAppState(); const { data: lines } = useLines(); const { can } = useAuth(); const { openDrawer, openModal, toast } = useUI(); const sp = useSearchParams();
+  const { line } = useAppState(); const { data: lines } = useLines(); const { can } = useAuth(); const { openModal, toast } = useUI(); const sp = useSearchParams(); const router = useRouter();
   const [q, setQ] = useState(""); const [filters, setFilters] = useState<string[]>([]); const [sort, setSort] = useState<{ k: string; d: 1 | -1 }>({ k: "sku", d: 1 }); const [sel, setSel] = useState<Set<string>>(new Set());
   const { data } = useApi<{ items: ItemView[]; minMargin: number }>(`/api/items?line=${line}&q=${encodeURIComponent(q)}&filter=${filters.join(",")}`);
-  useEffect(() => { const o = sp.get("open"); if (o) openDrawer(<ItemDrawer id={o} />); }, [sp, openDrawer]);
+  // Older links used ?open=<id> against the drawer; send them to the page.
+  useEffect(() => { const o = sp.get("open"); if (o) router.replace(`/items/${o}`); }, [sp, router]);
   const rows = (data?.items ?? []).slice().sort((a, b) => { const v = (i: ItemView) => sort.k === "avail" ? i.available : sort.k === "cost" ? i.landedCost : sort.k === "rate" ? slabRate(i.slabs, i.moq) : i.sku; const x = v(a), y = v(b); return (typeof x === "number" ? x - (y as number) : String(x).localeCompare(String(y))) * sort.d; });
   const pg = usePager(rows); useFooter(rows.length, filters.length ? filters.length + " filter(s)" : "", pg.page, pg.pages, pg.setPage);
   const tg = (f: string) => setFilters((fs) => fs.includes(f) ? fs.filter((x) => x !== f) : [...fs, f]);
@@ -32,7 +33,7 @@ export default function ItemsPage() {
     <div className="wa">
       <div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="SKU, design no or name…" value={q} onChange={(e) => setQ(e.target.value)} /></div><button className="b b-o b-s" onClick={() => tg("low")}>Below full set</button><button className="b b-o b-s" onClick={() => tg("disc")}>Discontinued</button>{filters.map((f) => <span className="chip" key={f}>{f}<span className="x" onClick={() => tg(f)}><Icon n="x" s={11} /></span></span>)}<span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--t4)" }}>Margin floor {(data?.minMargin ?? .18) * 100}% over landed cost</span></div>
       <div className="gw"><table className="dg"><thead><tr><th style={{ width: 30 }}></th><th className="sortable" onClick={() => sortBy("sku")}>Item{ic("sku")}</th><th>Line</th><th>Attributes</th><th className="n sortable" onClick={() => sortBy("cost")}>Landed cost{ic("cost")}</th><th className="n">Slab 1 / 500+ / 2000+</th><th className="n sortable" onClick={() => sortBy("avail")}>Available{ic("avail")}</th><th>Stock band</th><th>HSN · GST</th><th>Status</th></tr></thead><tbody>
-        {pg.rows.length ? pg.rows.map((i) => { const svc = lines?.find((l) => l.id === i.lineId)?.workflow === "JOBWORK"; return <tr key={i.id} className={sel.has(i.id) ? "sel" : ""} onClick={() => openDrawer(<ItemDrawer id={i.id} />)}>
+        {pg.rows.length ? pg.rows.map((i) => { const svc = lines?.find((l) => l.id === i.lineId)?.workflow === "JOBWORK"; return <tr key={i.id} className={sel.has(i.id) ? "sel" : ""} onClick={() => router.push(`/items/${i.id}`)}>
           <td onClick={(e) => { e.stopPropagation(); setSel((s) => { const n = new Set(s); n.has(i.id) ? n.delete(i.id) : n.add(i.id); return n; }); }}><input className="ck" type="checkbox" checked={sel.has(i.id)} readOnly /></td>
           <td className="w"><div style={{ display: "flex", gap: 8, alignItems: "center" }}><Thumb it={i} w={36} h={46} style={{ width: 26 }} /><div><span className="rid">{i.sku}</span> <span style={{ color: "var(--t9)" }}>{i.name}</span><div className="sm">{i.designNo ? i.designNo + " · " : ""}{i.nameHi}</div></div></div></td>
           <td><LineChip id={i.lineId} /></td><td className="w"><div className="sm" style={{ fontFamily: "inherit" }}>{Object.values(i.attrs).slice(0, 3).join(" · ")}</div></td>

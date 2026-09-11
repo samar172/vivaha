@@ -1,41 +1,82 @@
 "use client";
 import { useRef, useState } from "react";
 import { money, num, fDT, marginFloor } from "@vivaha/shared";
+import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, patch, del } from "@/lib/api";
-import { Pill, BandPill, LineChip, Thumb, DF, Section, DrawerFrame, ModalFrame, Field, Note } from "./ui";
+import { Pill, BandPill, LineChip, Thumb, DF, Section, ModalFrame, Field, Note } from "./ui";
+import { PageHead } from "./PageHead";
 import { Qr } from "./Qr";
-import { thumb } from "@/lib/art";
 import { Icon } from "./icons";
 import type { ItemView } from "./types";
 
-export function ItemDrawer({ id }: { id: string }) {
+// The item catalogue opens a card on its own page rather than in a side drawer.
+// A card has a lot to say — its pages, its stock across four godowns, its slab
+// table, its labels, its price history, its movements — and a 420px drawer made
+// all of it a scroll. Same sections, same components, given room.
+export function ItemDetail({ id }: { id: string }) {
   const { data: i } = useApi<ItemView & { txns: { id: string; type: string; qty: number; godownId: string; batchNo: string | null; at: string; by: string; reason: string | null }[]; minMargin: number }>(`/api/items/${id}`);
-  const { data: lines } = useLines(); const { data: godowns } = useGodowns(); const { can } = useAuth(); const { closeDrawer, openModal } = useUI();
-  if (!i) return <div className="drb"><div className="sm">Loadingâ€¦</div></div>;
+  const { data: lines } = useLines(); const { data: godowns } = useGodowns(); const { can } = useAuth(); const { openModal } = useUI();
+  const router = useRouter();
+  if (!i) return <div className="wa"><div className="sm" style={{ padding: 16 }}>Loading…</div></div>;
   const L = lines?.find((l) => l.id === i.lineId); const svc = L?.workflow === "JOBWORK";
-  return (
-    <DrawerFrame onClose={closeDrawer} head={<><span className="rid" style={{ fontSize: 14.5 }}>{i.sku}</span><LineChip id={i.lineId} /><Pill s={i.status} /></>}
-      actions={<>{can("item.edit") && <button className="b b-o b-s" onClick={() => openModal(<ItemForm item={i} />, "w")}>Edit</button>}{can("stock.adjust") && !svc && <button className="b b-o b-s" onClick={() => openModal(<AdjustModal itemId={i.id} />)}>Adjust stock</button>}{can("stock.transfer") && !svc && <button className="b b-o b-s" onClick={() => openModal(<TransferModal itemId={i.id} />)}>Transfer</button>}</>}>
-      <Section><div style={{ display: "flex", gap: 12 }}><Thumb it={i} w={120} h={155} style={{ width: 88 }} /><div><div style={{ fontSize: 15.5, fontWeight: 700, lineHeight: 1.35 }}>{i.name}</div><div className="hi" style={{ fontSize: 14, color: "var(--t6)" }}>{i.nameHi}</div><div className="sm" style={{ marginTop: 5 }}>{i.designNo || i.sku}</div><div style={{ marginTop: 7, display: "flex", gap: 4, flexWrap: "wrap" }}>{Object.values(i.attrs).map((a) => <span className="atc" key={a}>{a}</span>)}</div></div></div></Section>
-      {svc ? <Section t="Stock"><div className="sm">Job work carries no stock of its own â€” base cards are drawn through a normal outward movement.</div></Section> :
-        <Section t={<>Availability Â· {i.band.label}</>}>
-          <DF k="On hand" v={num(i.onHand) + " " + i.uom} mono /><DF k="Reserved" v={num(i.reserved)} mono /><DF k="On hold" v={num(i.hold)} mono /><DF k="Damaged / quarantined" v={<span style={{ color: "var(--er)" }}>{num(i.damaged + i.quarantined)}</span>} mono />
-          <DF k="Available" v={<span style={{ color: "var(--ac)", fontWeight: 700 }}>{num(i.available)}</span>} mono strong />
-          <div className="sm" style={{ marginTop: 7 }}>MIN SET QTY for {L?.name} = {num(L?.minSetQty ?? 0)} {L?.uom} (global per line)</div>
-        </Section>}
-      {!svc && <Section t="Godown split"><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Godown</th><th className="n">On hand</th><th className="n">Res</th><th className="n">Hold</th><th className="n">Dmg</th><th className="n">Avail</th></tr></thead><tbody>{(godowns ?? []).map((g) => { const r = i.godowns.find((x) => x.godownId === g.id) ?? { onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0 }; return <tr key={g.id} style={{ cursor: "default" }}><td>{g.short}</td><td className="n tab">{num(r.onHand)}</td><td className="n tab">{num(r.reserved)}</td><td className="n tab">{num(r.hold)}</td><td className="n tab" style={{ color: "var(--er)" }}>{num(r.damaged + r.quarantined)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{num(r.available)}</td></tr>; })}</tbody></table></Section>}
-      <Section t={<>Quantity slabs · rate before customer multiplier</>}>
-        <div className="sm" style={{ marginBottom: 7 }}>The highlighted row is the slab an order of the minimum quantity ({num(i.moq)} {i.uom}) falls in.</div>
-        <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Margin at Regular Ã—1.25</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = Math.round(s.rate * 1.25); const m = ((r - i.landedCost) / r) * 100; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--bg-sel, #FFF8E6)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "âˆž" : num(s.toQty)}</td><td className="n tab">{money(s.rate)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table><div className="sm" style={{ marginTop: 7 }}>Landed cost {money(i.landedCost)} Â· floor {money(marginFloor(i.landedCost, i.minMargin))} Â· HSN {i.hsn} Â· GST {i.gstPct}%</div></Section>
-      <PriceHistorySection itemId={i.id} />
-      <CodesSection itemId={i.id} name={i.name} />
-      <Section t="Recent movements">{i.txns.length ? i.txns.map((t) => <div className="ti" key={t.id}><span className="dt" /><div><div><span className="wo">{t.type}</span> {num(t.qty)} {i.uom} Â· {t.godownId}{t.batchNo && t.batchNo !== "-" ? " Â· " + t.batchNo : ""}</div><div className="wn">{fDT(t.at)} Â· {t.by}{t.reason ? " Â· " + t.reason : ""}</div></div></div>) : <div className="sm">No movements yet.</div>}</Section>
-    </DrawerFrame>
-  );
+  return <>
+    <PageHead
+      crumb={["Catalogue", "Items", i.sku]}
+      title={i.name}
+      sub={<><span className="rid">{i.designNo || i.sku}</span> · {L?.name}{i.nameHi ? <> · <span className="hi">{i.nameHi}</span></> : null}</>}
+      actions={<>
+        <button className="b b-o" onClick={() => router.push("/items")}><Icon n="chevronL" s={13} /> Back to items</button>
+        {can("item.edit") && <button className="b b-p" onClick={() => openModal(<ItemForm item={i} />, "w")}>Edit item</button>}
+        {can("stock.adjust") && !svc && <button className="b b-o" onClick={() => openModal(<AdjustModal itemId={i.id} />)}>Adjust stock</button>}
+        {can("stock.transfer") && !svc && <button className="b b-o" onClick={() => openModal(<TransferModal itemId={i.id} />)}>Transfer</button>}
+      </>}
+    />
+    <div className="idg">
+      <div>
+        <div className="wa" style={{ padding: 15 }}>
+          <div style={{ display: "flex", gap: 14 }}>
+            <Thumb it={i} w={150} h={195} style={{ width: 118 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}><LineChip id={i.lineId} /><Pill s={i.status} /><BandPill b={i.band} /></div>
+              <div className="sm" style={{ marginTop: 8 }}>HSN {i.hsn} · GST {i.gstPct}% · MOQ {num(i.moq)} {i.uom}{i.packUom ? ` · ${i.perPack} per ${i.packUom.toLowerCase()}` : ""}</div>
+              <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>{Object.values(i.attrs).map((a) => <span className="atc" key={a}>{a}</span>)}</div>
+            </div>
+          </div>
+          <ItemPhoto item={i} />
+        </div>
+        <div className="wa" style={{ padding: 15, marginTop: 13 }}>
+          <Section t={<>Quantity slabs · rate before customer multiplier</>}>
+            <div className="sm" style={{ marginBottom: 7 }}>The highlighted row is the slab an order of the minimum quantity ({num(i.moq)} {i.uom}) falls in.</div>
+            <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Margin at Regular ×1.25</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = Math.round(s.rate * 1.25); const m = ((r - i.landedCost) / r) * 100; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--wa-bg)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "∞" : num(s.toQty)}</td><td className="n tab">{money(s.rate)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table>
+            <div className="sm" style={{ marginTop: 7 }}>Landed cost {money(i.landedCost)} · floor {money(marginFloor(i.landedCost, i.minMargin))}</div>
+          </Section>
+          <PriceHistorySection itemId={i.id} />
+        </div>
+      </div>
+
+      <div>
+        <div className="wa" style={{ padding: 15 }}>
+          {svc ? <Section t="Stock"><div className="sm">Job work carries no stock of its own — base cards are drawn through a normal outward movement.</div></Section> :
+            <Section t={<>Availability · {i.band.label}</>}>
+              <DF k="On hand" v={num(i.onHand) + " " + i.uom} mono /><DF k="Reserved" v={num(i.reserved)} mono /><DF k="On hold" v={num(i.hold)} mono /><DF k="Damaged / quarantined" v={<span style={{ color: "var(--er)" }}>{num(i.damaged + i.quarantined)}</span>} mono />
+              <DF k="Available" v={<span style={{ color: "var(--ac)", fontWeight: 700 }}>{num(i.available)}</span>} mono strong />
+              <div className="sm" style={{ marginTop: 7 }}>MIN SET QTY for {L?.name} = {num(L?.minSetQty ?? 0)} {L?.uom} (global per line)</div>
+            </Section>}
+          {!svc && <Section t="Godown split"><table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Godown</th><th className="n">On hand</th><th className="n">Res</th><th className="n">Hold</th><th className="n">Dmg</th><th className="n">Avail</th></tr></thead><tbody>{(godowns ?? []).map((g) => { const r = i.godowns.find((x) => x.godownId === g.id) ?? { onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0 }; return <tr key={g.id} style={{ cursor: "default" }}><td>{g.short}</td><td className="n tab">{num(r.onHand)}</td><td className="n tab">{num(r.reserved)}</td><td className="n tab">{num(r.hold)}</td><td className="n tab" style={{ color: "var(--er)" }}>{num(r.damaged + r.quarantined)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{num(r.available)}</td></tr>; })}</tbody></table></Section>}
+        </div>
+        <div className="wa" style={{ padding: 15, marginTop: 13 }}>
+          <CodesSection itemId={i.id} name={i.name} />
+        </div>
+        <div className="wa" style={{ padding: 15, marginTop: 13 }}>
+          <Section t="Recent movements">{i.txns.length ? i.txns.map((t) => <div className="ti" key={t.id}><span className="dt" /><div><div><span className="wo">{t.type}</span> {num(t.qty)} {i.uom} · {t.godownId}{t.batchNo && t.batchNo !== "-" ? " · " + t.batchNo : ""}</div><div className="wn">{fDT(t.at)} · {t.by}{t.reason ? " · " + t.reason : ""}</div></div></div>) : <div className="sm">No movements yet.</div>}</Section>
+        </div>
+      </div>
+    </div>
+  </>;
 }
 
 interface PriceChange { id: string; field: string; oldValue: number; newValue: number; change: number; pct: number; by: string; reason: string; at: string }
@@ -78,7 +119,7 @@ function CodesSection({ itemId, name }: { itemId: string; name: string }) {
   const factory = active.find((c) => c.kind === "MANUFACTURER");
   const replaced = data.filter((c) => c.status === "REPLACED");
   const relabel = async (replacesCodeId?: string) => {
-    try { await post(`/api/codes/item/${itemId}/relabel`, { replacesCodeId }); toast("Own code issued â€” print the new label", "s"); mutate(); refresh("/api/"); }
+    try { await post(`/api/codes/item/${itemId}/relabel`, { replacesCodeId }); toast("Own code issued — print the new label", "s"); mutate(); refresh("/api/"); }
     catch (e) { toast(errMsg(e), "e"); }
   };
   return <Section t="Labels & QR">
@@ -90,7 +131,7 @@ function CodesSection({ itemId, name }: { itemId: string; name: string }) {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <span className="bd b-ok">Vivaha Cards label</span>
-            <div className="sm" style={{ marginTop: 6, lineHeight: 1.6 }}>Issued by {own.by} Â· {fDT(own.createdAt)}</div>
+            <div className="sm" style={{ marginTop: 6, lineHeight: 1.6 }}>Issued by {own.by} · {fDT(own.createdAt)}</div>
             <button className="b b-o b-s" style={{ marginTop: 9 }} onClick={() => openModal(<PrintLabelModal code={own.code} name={name} />)}>Print label</button>
           </div>
         </div>
@@ -103,13 +144,13 @@ function CodesSection({ itemId, name }: { itemId: string; name: string }) {
     {factory?.vendor && <DF k="Supplied by" v={factory.vendor.name} />}
 
     {replaced.length > 0 && <>
-      <div className="sm" style={{ marginTop: 11, marginBottom: 5, fontWeight: 700, color: "var(--t6)" }}>Replaced labels â€” still scannable</div>
+      <div className="sm" style={{ marginTop: 11, marginBottom: 5, fontWeight: 700, color: "var(--t6)" }}>Replaced labels — still scannable</div>
       {replaced.map((c) => <div key={c.id} className="ti"><span className="dt" /><div>
-        <div><span className="wo" style={{ fontFamily: "var(--mono)" }}>{c.code}</span> {c.kind === "MANUFACTURER" ? "Â· factory label" : "Â· earlier own code"}</div>
-        <div className="wn">Replaced {c.replacedAt ? fDT(c.replacedAt) : ""}{c.vendor ? " Â· " + c.vendor.name : ""} â€” a scan of this still resolves to this item</div>
+        <div><span className="wo" style={{ fontFamily: "var(--mono)" }}>{c.code}</span> {c.kind === "MANUFACTURER" ? "· factory label" : "· earlier own code"}</div>
+        <div className="wn">Replaced {c.replacedAt ? fDT(c.replacedAt) : ""}{c.vendor ? " · " + c.vendor.name : ""} — a scan of this still resolves to this item</div>
       </div></div>)}
     </>}
-    <div className="sm" style={{ marginTop: 9 }}>Scanning any of these codes â€” current or replaced â€” opens this item. Nothing is ever deleted, so a vendor claim or a recall can be traced back to the batch it came in on.</div>
+    <div className="sm" style={{ marginTop: 9 }}>Scanning any of these codes — current or replaced — opens this item. Nothing is ever deleted, so a vendor claim or a recall can be traced back to the batch it came in on.</div>
   </Section>;
 }
 
@@ -131,14 +172,14 @@ function PrintLabelModal({ code, name }: { code: string; name: string }) {
 export function AdjustModal({ itemId }: { itemId?: string }) {
   const { data } = useApi<{ items: ItemView[] }>("/api/items"); const { data: godowns } = useGodowns(); const { closeModal, closeDrawer, toast } = useUI(); const { data: lines } = useLines(); const { line } = useAppState();
   const [f, setF] = useState({ itemId: itemId ?? "", godownId: "GD-A", dir: "damage", qty: 24, reason: "" });
-  // Scoped to the module the operator is standing in â€” no cross-line picking.
+  // Scoped to the module the operator is standing in — no cross-line picking.
   const its = (data?.items ?? []).filter((i) => lines?.find((l) => l.id === i.lineId)?.workflow !== "JOBWORK" && (line === "ALL" || i.lineId === line));
-  const submit = async () => { try { await post("/api/stock/adjust", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Adjustment posted â€” ${num(f.qty)} ${f.dir}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const submit = async () => { try { await post("/api/stock/adjust", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Adjustment posted — ${num(f.qty)} ${f.dir}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Stock adjustment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-d" onClick={submit}>Post adjustment</button></>}>
     <div className="fg">
-      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} â€” {i.name}</option>)}</select></Field>
+      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
       <Field label="Godown"><select value={f.godownId} onChange={(e) => setF({ ...f, godownId: e.target.value })}>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
-      <Field label="Direction"><select value={f.dir} onChange={(e) => setF({ ...f, dir: e.target.value })}><option value="damage">Available â†’ damaged</option><option value="quarantine">Available â†’ quarantined</option><option value="recover">Damaged â†’ available</option><option value="writeoff">Damaged â†’ written off</option></select></Field>
+      <Field label="Direction"><select value={f.dir} onChange={(e) => setF({ ...f, dir: e.target.value })}><option value="damage">Available → damaged</option><option value="quarantine">Available → quarantined</option><option value="recover">Damaged → available</option><option value="writeoff">Damaged → written off</option></select></Field>
       <Field label="Quantity"><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field>
       <Field label="Reason (required)" full><textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="e.g. Water seepage in Godown B, 8 boxes on the north wall" /></Field>
     </div>
@@ -148,17 +189,17 @@ export function AdjustModal({ itemId }: { itemId?: string }) {
 
 export function TransferModal({ itemId }: { itemId?: string }) {
   const { data } = useApi<{ items: ItemView[] }>("/api/items"); const { data: godowns } = useGodowns(); const { closeModal, closeDrawer, toast } = useUI(); const { data: lines } = useLines(); const { line } = useAppState();
-  // Scoped to the module the operator is standing in â€” no cross-line picking.
+  // Scoped to the module the operator is standing in — no cross-line picking.
   const its = (data?.items ?? []).filter((i) => lines?.find((l) => l.id === i.lineId)?.workflow !== "JOBWORK" && (line === "ALL" || i.lineId === line));
   const [f, setF] = useState({ itemId: itemId ?? "", fromId: "GD-A", toId: "GD-B", qty: 200 });
   const cur = its.find((i) => i.id === (f.itemId || its[0]?.id)); const av = cur?.godowns.find((g) => g.godownId === f.fromId)?.available ?? 0;
-  const submit = async () => { try { const t = await post<{ id: string }>("/api/stock/transfers", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Transfer ${t.id} raised â€” ${num(f.qty)} in transit to ${f.toId}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const submit = async () => { try { const t = await post<{ id: string }>("/api/stock/transfers", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Transfer ${t.id} raised — ${num(f.qty)} in transit to ${f.toId}`, "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Godown transfer" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Raise transfer</button></>}>
     <div className="fg">
-      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} â€” {i.name}</option>)}</select></Field>
+      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
       <Field label="From"><select value={f.fromId} onChange={(e) => setF({ ...f, fromId: e.target.value })}>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
       <Field label="To"><select value={f.toId} onChange={(e) => setF({ ...f, toId: e.target.value })}>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
-      <Field label="Quantity" full hint={<>Available at {f.fromId}: <b>{num(av)}</b>{f.qty > av && <span style={{ color: "var(--er)" }}> â€” exceeds available</span>}</>}><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field>
+      <Field label="Quantity" full hint={<>Available at {f.fromId}: <b>{num(av)}</b>{f.qty > av && <span style={{ color: "var(--er)" }}> — exceeds available</span>}</>}><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field>
     </div>
     <Note k="i" style={{ marginTop: 11 }}>Stock leaves the source immediately and belongs to neither godown until it is received at the destination.</Note>
   </ModalFrame>;
@@ -174,21 +215,21 @@ export function ItemForm({ item }: { item?: ItemView }) {
     const body = { ...f, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
     try { if (item) await (await import("@/lib/api")).patch(`/api/items/${item.id}`, body); else await post("/api/items", body); toast(item ? "Item updated" : "Item created", "s"); closeModal(); closeDrawer(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); }
   };
-  return <ModalFrame title={item ? "Edit item â€” " + item.sku : "New item"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Save item</button></>}>
+  return <ModalFrame title={item ? "Edit item — " + item.sku : "New item"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Save item</button></>}>
     <div className="fg">
       <Field label="Business line"><select value={f.lineId} disabled={!!item} onChange={(e) => { const l = lines?.find((x) => x.id === e.target.value); setF({ ...f, lineId: e.target.value, uom: l?.uom ?? f.uom, gstPct: l?.gstPct ?? f.gstPct, packUom: l?.packUoms[0] ?? "", batchTracked: !!l?.batchTracked }); }}>{lines?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
       <Field label="Status"><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="ACTIVE">Active</option><option value="DISCONTINUED">Discontinued</option></select></Field>
       <Field label="Name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
       <Field label="Name (Hindi)"><input className="hi" value={f.nameHi} onChange={(e) => setF({ ...f, nameHi: e.target.value })} /></Field>
       <Field label="Design no"><input value={f.designNo} onChange={(e) => setF({ ...f, designNo: e.target.value })} /></Field>
-      <Field label="Vendor"><select value={f.vendorId} onChange={(e) => setF({ ...f, vendorId: e.target.value })}><option value="">â€”</option>{vendors?.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
-      {attrs?.filter((a) => a.lineId === f.lineId).map((a) => <Field key={a.key} label={a.label}><select value={(f.attrs as Record<string, string>)[a.key] ?? ""} onChange={(e) => setF({ ...f, attrs: { ...f.attrs, [a.key]: e.target.value } })}><option value="">â€”</option>{a.values.map((v) => <option key={v}>{v}</option>)}</select></Field>)}
+      <Field label="Vendor"><select value={f.vendorId} onChange={(e) => setF({ ...f, vendorId: e.target.value })}><option value="">—</option>{vendors?.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
+      {attrs?.filter((a) => a.lineId === f.lineId).map((a) => <Field key={a.key} label={a.label}><select value={(f.attrs as Record<string, string>)[a.key] ?? ""} onChange={(e) => setF({ ...f, attrs: { ...f.attrs, [a.key]: e.target.value } })}><option value="">—</option>{a.values.map((v) => <option key={v}>{v}</option>)}</select></Field>)}
       <Field label="UOM"><input value={f.uom} onChange={(e) => setF({ ...f, uom: e.target.value })} /></Field>
-      <Field label="Pack unit"><select value={f.packUom} onChange={(e) => setF({ ...f, packUom: e.target.value })}><option value="">â€”</option>{L?.packUoms.map((p) => <option key={p}>{p}</option>)}</select></Field>
+      <Field label="Pack unit"><select value={f.packUom} onChange={(e) => setF({ ...f, packUom: e.target.value })}><option value="">—</option>{L?.packUoms.map((p) => <option key={p}>{p}</option>)}</select></Field>
       <Field label="Per pack"><input type="number" value={f.perPack} onChange={(e) => setF({ ...f, perPack: Number(e.target.value) })} /></Field>
       <Field label="MOQ"><input type="number" value={f.moq} onChange={(e) => setF({ ...f, moq: Number(e.target.value) })} /></Field>
-      <Field label="Landed cost (â‚¹)"><input type="number" value={f.landedCost} onChange={(e) => setF({ ...f, landedCost: Number(e.target.value) })} /></Field>
-      <Field label="Slab 1 rate (â‚¹) â€” deeper slabs at 89 / 80 / 74 %"><input type="number" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
+      <Field label="Landed cost (₹)"><input type="number" value={f.landedCost} onChange={(e) => setF({ ...f, landedCost: Number(e.target.value) })} /></Field>
+      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %"><input type="number" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
       <Field label="HSN"><input value={f.hsn} onChange={(e) => setF({ ...f, hsn: e.target.value })} /></Field>
       <Field label="GST %"><input type="number" value={f.gstPct} onChange={(e) => setF({ ...f, gstPct: Number(e.target.value) })} /></Field>
     </div>

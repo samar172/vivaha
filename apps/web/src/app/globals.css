@@ -284,6 +284,12 @@ table.dg tbody tr.dim td{color:var(--t4)}
 /* Cart count, on the icon itself so the bar stays five equal columns. */
 .pnav .i .nb{position:absolute;top:-6px;left:11px;min-width:15px;height:15px;padding:0 4px;border-radius:8px;background:var(--er);color:#fff;font-size:10px;font-weight:700;line-height:15px;text-align:center}
 
+/* Item detail page: the picture, pages and price list on the left, stock and
+   labels on the right. Collapses to one column on a narrow screen — the office
+   opens this on a laptop, the sales executive on a phone. */
+.idg{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:13px;align-items:start}
+@media (max-width:1100px){.idg{grid-template-columns:minmax(0,1fr)}}
+
 .scan{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:12px}
 .scanb{width:100%;height:62px;border-radius:10px;background:var(--ac);color:#fff;font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:9px}
 .scanb:hover{background:var(--ac-d)}

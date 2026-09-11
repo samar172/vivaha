@@ -1,7 +1,8 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { money, num, fDate } from "@vivaha/shared";
-import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
+import { useApi, useGodowns, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
@@ -10,7 +11,7 @@ import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { Pill, BandPill, LineChip, Empty, Note, Panel, ZoomThumb, useZoomAnchor } from "@/components/ui";
 import { Qr } from "@/components/Qr";
-import { ItemDrawer, AdjustModal, TransferModal } from "@/components/ItemDrawer";
+import { AdjustModal, TransferModal } from "@/components/ItemDetail";
 import type { ItemView } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";
@@ -34,7 +35,7 @@ function QrCell({ code, kind, name }: { code: string; kind: "OWN" | "MANUFACTURE
   </>;
 }
 export default function StockPage() {
-  const { line, godown, setGodown } = useAppState(); const { data: godowns } = useGodowns(); const { can } = useAuth(); const { openDrawer, openModal, toast } = useUI();
+  const { line, godown, setGodown } = useAppState(); const { data: godowns } = useGodowns(); const { can } = useAuth(); const { openModal, toast } = useUI(); const router = useRouter();
   const [tab, setTab] = useState("pos"); const [q, setQ] = useState(""); const [sortAvail, setSortAvail] = useState<0 | 1 | -1>(0);
   const { data } = useApi<Row[]>(`/api/stock/position?line=${line}&q=${encodeURIComponent(q)}&godown=${godown}`);
   const { data: trf } = useApi<{ id: string; item: { sku: string; name: string; uom: string }; fromId: string; toId: string; qty: number; at: string; by: string; status: string; receivedAt: string | null }[]>("/api/stock/transfers");
@@ -46,7 +47,7 @@ export default function StockPage() {
     <div className="wa">
       {tab === "pos" && <><div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="SKU or name…" value={q} onChange={(e) => setQ(e.target.value)} /></div><select value={godown} onChange={(e) => setGodown(e.target.value)} style={{ height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 8px" }}><option value="ALL">All godowns</option>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select><span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--t4)" }}>available = on hand − reserved − hold − damaged − quarantined</span></div>
         <div className="gw"><table className="dg"><thead><tr><th style={{ width: 34 }}></th><th style={{ width: 40 }}>QR</th><th>Item</th><th>Line</th><th className="n">On hand</th><th className="n">Reserved</th><th className="n">Hold</th><th className="n">Damaged</th><th className="n">Quarantined</th><th className="n sortable" onClick={() => setSortAvail((s) => s === 1 ? -1 : 1)}>Available{sortAvail === 1 ? " ↑" : sortAvail === -1 ? " ↓" : ""}</th><th>Band</th><th className="n">Value at cost</th></tr></thead><tbody>
-          {pg.rows.map((i) => <tr key={i.id} onClick={() => openDrawer(<ItemDrawer id={i.id} />)}><td onClick={(e) => e.stopPropagation()} style={{ padding: "4px 6px" }}><ZoomThumb it={i} w={34} h={44} zoom={300} style={{ width: 26 }} caption={<><b>{i.name}</b><br />{i.designNo ? i.designNo + " · " : ""}{i.sku}<br />{num(i.available)} {i.uom.toLowerCase()} available of {num(i.onHand)} on hand</>} /></td>
+          {pg.rows.map((i) => <tr key={i.id} onClick={() => router.push(`/items/${i.id}`)}><td onClick={(e) => e.stopPropagation()} style={{ padding: "4px 6px" }}><ZoomThumb it={i} w={34} h={44} zoom={300} style={{ width: 26 }} caption={<><b>{i.name}</b><br />{i.designNo ? i.designNo + " · " : ""}{i.sku}<br />{num(i.available)} {i.uom.toLowerCase()} available of {num(i.onHand)} on hand</>} /></td>
             <td onClick={(e) => e.stopPropagation()} style={{ padding: "4px 6px" }}>{i.code ? <QrCell code={i.code} kind={i.codeKind} name={i.name} /> : <span className="bd b-wa">none</span>}</td>
             <td className="w"><span className="rid">{i.sku}</span> {i.name}<div className="sm">{i.code ? <>{i.code}{i.codeKind === "MANUFACTURER" && <span className="bd b-wa" style={{ marginLeft: 5 }}>factory label</span>}</> : (i.designNo || i.uom)}</div></td><td><LineChip id={i.lineId} /></td><td className="n tab">{num(i.onHand)}</td><td className="n tab">{num(i.reserved)}</td><td className="n tab">{num(i.hold)}</td><td className="n tab" style={{ color: i.damaged ? "var(--er)" : "var(--t4)" }}>{num(i.damaged)}</td><td className="n tab" style={{ color: i.quarantined ? "var(--wa)" : "var(--t4)" }}>{num(i.quarantined)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{num(i.available)}</td><td><BandPill b={i.band} /></td><td className="n tab">{money(i.valueAtCost)}</td></tr>)}
         </tbody></table></div></>}
@@ -62,8 +63,9 @@ function AgeTab({ line }: { line: string }) {
   return <Panel t="Stock ageing by goods-receipt batch" h="a design restocked in June is not aged from its January receipt"><div className="pnb"><div style={{ display: "flex", alignItems: "flex-end", gap: 22, height: 200, padding: "8px 4px" }}>{data.labels.map((l, i) => <div key={l} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}><div className="tab" style={{ fontSize: 13, fontWeight: 700 }}>{num(data.qty[i])}</div><div style={{ width: "56%", height: Math.max(4, (data.qty[i] / mx) * 130), background: i >= 3 ? "var(--er)" : i === 2 ? "var(--wa)" : "var(--ac)", borderRadius: "3px 3px 0 0" }} /><div style={{ fontSize: 12, color: "var(--t4)" }}>{l}</div><div className="sm">{money(data.value[i])}</div></div>)}</div></div></Panel>;
 }
 function DeadTab({ line }: { line: string }) {
-  const { data } = useApi<{ days: number; capital: number; rows: { item: ItemView; sold: number; daysIdle: number; capital: number }[] }>(`/api/stock/dead?line=${line}`); const { openDrawer, toast } = useUI(); if (!data) return null;
-  return <><Note k="w" style={{ marginBottom: 11 }}>{data.rows.length} items with no outward movement in the last {data.days} days, holding {money(data.capital)} at landed cost.</Note><div className="gw"><table className="dg"><thead><tr><th>Item</th><th>Line</th><th className="n">Available</th><th className="n">Capital held</th><th className="n">Days idle</th><th></th></tr></thead><tbody>{data.rows.length ? data.rows.slice(0, 30).map((r) => <tr key={r.item.id} onClick={() => openDrawer(<ItemDrawer id={r.item.id} />)}><td className="w"><span className="rid">{r.item.sku}</span> {r.item.name}</td><td><LineChip id={r.item.lineId} /></td><td className="n tab">{num(r.item.available)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(r.capital)}</td><td className="n tab">{r.daysIdle > 900 ? "never" : r.daysIdle}</td><td><button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); toast(`Liquidation offer drafted for ${r.item.sku}`, "s"); }}>Liquidate</button></td></tr>) : <tr><td colSpan={6}><Empty t="Nothing idle" d="Every item has moved recently." /></td></tr>}</tbody></table></div></>;
+  const router = useRouter();
+  const { data } = useApi<{ days: number; capital: number; rows: { item: ItemView; sold: number; daysIdle: number; capital: number }[] }>(`/api/stock/dead?line=${line}`); const { toast } = useUI(); if (!data) return null;
+  return <><Note k="w" style={{ marginBottom: 11 }}>{data.rows.length} items with no outward movement in the last {data.days} days, holding {money(data.capital)} at landed cost.</Note><div className="gw"><table className="dg"><thead><tr><th>Item</th><th>Line</th><th className="n">Available</th><th className="n">Capital held</th><th className="n">Days idle</th><th></th></tr></thead><tbody>{data.rows.length ? data.rows.slice(0, 30).map((r) => <tr key={r.item.id} onClick={() => router.push(`/items/${r.item.id}`)}><td className="w"><span className="rid">{r.item.sku}</span> {r.item.name}</td><td><LineChip id={r.item.lineId} /></td><td className="n tab">{num(r.item.available)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(r.capital)}</td><td className="n tab">{r.daysIdle > 900 ? "never" : r.daysIdle}</td><td><button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); toast(`Liquidation offer drafted for ${r.item.sku}`, "s"); }}>Liquidate</button></td></tr>) : <tr><td colSpan={6}><Empty t="Nothing idle" d="Every item has moved recently." /></td></tr>}</tbody></table></div></>;
 }
 function ExpTab({ line }: { line: string }) {
   const { data } = useApi<{ id: string; sku: string; name: string; batchNo: string; godownId: string; onHand: number; expiry: string; daysLeft: number }[]>(`/api/stock/expiry?line=${line}`);
