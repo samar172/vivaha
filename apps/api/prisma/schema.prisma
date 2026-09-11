@@ -717,9 +717,31 @@ model Invoice {
   blocks     Json     @default("[]")
   status     String   @default("Posted") // Posted | Cancelled (number never reused)
   lines      InvoiceLine[]
+  shares     InvoiceShare[]
 
   @@index([customerId, date])
   @@index([lineId, date])
+}
+
+// Every time a bill was sent out, to whom and by whom. A bill goes more than
+// once — the first copy, then a reminder to accounts a fortnight later — so
+// this is a trail rather than a flag on the invoice.
+//
+// Honest about what it knows: the office opens the message ready-addressed and
+// presses send in WhatsApp itself. We record that it was sent from here, to
+// this number. We cannot see WhatsApp's delivery or read receipts, so nothing
+// here claims the customer received it.
+model InvoiceShare {
+  id        String   @id @default(cuid())
+  invoiceNo String
+  invoice   Invoice  @relation(fields: [invoiceNo], references: [no], onDelete: Cascade)
+  channel   String   @default("WHATSAPP")
+  toName    String   @default("")
+  toPhone   String
+  by        String
+  at        DateTime @default(now())
+
+  @@index([invoiceNo, at])
 }
 
 model InvoiceLine {

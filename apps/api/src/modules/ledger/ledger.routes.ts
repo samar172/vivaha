@@ -39,10 +39,28 @@ router.get("/invoices", requirePerm("ledger.view"), asyncHandler(async (req, res
       ...(q.from || q.to ? { date: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to + "T23:59:59") } : {}) } } : {}),
       ...(q.q ? { OR: [{ no: { contains: q.q, mode: "insensitive" } }, { customer: { name: { contains: q.q, mode: "insensitive" } } }, { orderId: { contains: q.q, mode: "insensitive" } }] } : {}),
     },
-    include: { customer: { select: { name: true, gstin: true, firmType: true, tehsil: true } }, line: { select: { id: true, name: true } } },
+    include: { customer: { select: { name: true, gstin: true, firmType: true, tehsil: true } }, line: { select: { id: true, name: true } }, shares: { orderBy: { at: "desc" } } },
     orderBy: { date: "desc" },
   });
-  res.json(rows.map((i) => ({ ...i, taxable: D(i.taxable), cgst: D(i.cgst), sgst: D(i.sgst), igst: D(i.igst), total: D(i.total), tax: D(i.cgst) + D(i.sgst) + D(i.igst) })));
+  res.json(rows.map((i) => ({
+    ...i, taxable: D(i.taxable), cgst: D(i.cgst), sgst: D(i.sgst), igst: D(i.igst), total: D(i.total), tax: D(i.cgst) + D(i.sgst) + D(i.igst),
+    // The last time this bill went out, and how many times in all. Named
+    // "sent from here" rather than "delivered" — see InvoiceShare.
+    lastSent: i.shares[0] ?? null,
+    sentCount: i.shares.length,
+  })));
+}));
+
+// Records that a bill was sent from here, to a chosen number. Written when the
+// office opens the ready-addressed message, which is the moment we know about;
+// WhatsApp's own delivery is not visible to us and is not claimed.
+router.post("/invoices/:no/share", requirePerm("ledger.view"), asyncHandler(async (req, res) => {
+  const b = z.object({ channel: z.string().default("WHATSAPP"), toName: z.string().default(""), toPhone: z.string().min(4) }).parse(req.body);
+  const inv = await prisma.invoice.findUnique({ where: { no: req.params.no } });
+  if (!inv) throw notFound("Invoice not found");
+  const share = await prisma.invoiceShare.create({ data: { invoiceNo: inv.no, channel: b.channel, toName: b.toName, toPhone: b.toPhone, by: req.user!.name } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Invoice sent", entityType: "Invoice", entityId: inv.no, newValue: `${b.channel} · ${b.toName || b.toPhone}` });
+  res.status(201).json(share);
 }));
 
 // What the next invoice on each line will be numbered — shown in Settings so

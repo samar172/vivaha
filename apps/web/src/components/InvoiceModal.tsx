@@ -1,8 +1,9 @@
 "use client";
 import { money2, num, fDate } from "@vivaha/shared";
 import { useState } from "react";
-import { useApi } from "@/lib/hooks";
+import { useApi, refresh } from "@/lib/hooks";
 import { useUI } from "@/lib/ui";
+import { post } from "@/lib/api";
 import { ModalFrame, Field, Note } from "./ui";
 import { Icon } from "./icons";
 import type { Invoice } from "./types";
@@ -23,7 +24,7 @@ const waDigits = (phone: string) => {
   return d.length === 10 ? "91" + d : d.replace(/^0+/, "");
 };
 
-function ShareBillModal({ inv, contacts, whatsappFrom }: { inv: Invoice & { customer: { name: string; phone?: string } }; contacts: BillContact[]; whatsappFrom?: string }) {
+function ShareBillModal({ inv, contacts, whatsappFrom }: { inv: Invoice & { customer: { name: string; phone?: string }; sentCount?: number; lastSent?: { at: string; by: string; toName: string; toPhone: string } | null }; contacts: BillContact[]; whatsappFrom?: string }) {
   const { closeModal, toast } = useUI();
   const [sel, setSel] = useState(contacts[0]?.id ?? "");
   const [note, setNote] = useState("");
@@ -44,12 +45,20 @@ function ShareBillModal({ inv, contacts, whatsappFrom }: { inv: Invoice & { cust
   const send = () => {
     if (!c) return;
     window.open(`https://wa.me/${waDigits(c.phone)}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    // Recorded as sent from here, to this number — which is what we actually
+    // know. WhatsApp's own delivery is not visible to us and is not claimed.
+    post(`/api/ledger/invoices/${encodeURIComponent(inv.no)}/share`, { channel: "WHATSAPP", toName: `${c.role} — ${c.name}`, toPhone: c.phone })
+      .then(() => refresh("/api/ledger"))
+      .catch(() => { /* the message still opened; the record is not worth blocking on */ });
     toast(`WhatsApp opened for ${c.name} · ${c.phone}`, "s");
     closeModal();
   };
 
   return <ModalFrame title={"Share bill " + inv.no} onClose={closeModal}
     actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={send}>Open WhatsApp</button></>}>
+    {inv.sentCount ? <Note style={{ marginBottom: 11 }}>
+      Already sent {inv.sentCount === 1 ? "once" : `${inv.sentCount} times`}{inv.lastSent ? <> — last on {fDate(inv.lastSent.at)} to {inv.lastSent.toName || inv.lastSent.toPhone}, by {inv.lastSent.by}</> : null}. Sending again is a reminder.
+    </Note> : null}
     <Field label="Send to" full hint="The firm's saved numbers">
       <select value={sel} onChange={(e) => setSel(e.target.value)}>
         {contacts.map((x) => <option key={x.id} value={x.id}>{x.role} — {x.name} · {x.phone}</option>)}
