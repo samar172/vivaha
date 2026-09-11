@@ -5,10 +5,11 @@ import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
-import { post, del } from "@/lib/api";
+import { post, patch, del } from "@/lib/api";
 import { Pill, BandPill, LineChip, Thumb, DF, Section, DrawerFrame, ModalFrame, Field, Note } from "./ui";
 import { Qr } from "./Qr";
 import { thumb } from "@/lib/art";
+import { Icon } from "./icons";
 import type { ItemView } from "./types";
 
 export function ItemDrawer({ id }: { id: string }) {
@@ -226,43 +227,75 @@ function downscale(file: File): Promise<string> {
   });
 }
 
+interface ItemImg { id: string; url: string; label: string }
+
+// Common page names, offered rather than imposed — a trifold has three panels,
+// a pocket card has an insert, and the operator knows which is which.
+const PAGE_LABELS = ["Front", "Inside", "Inside left", "Inside right", "Back", "Pocket", "Insert", "Envelope"];
+
+// A wedding card is not one picture: it opens. Each page is a row, in the order
+// the card opens, and the first is the cover every existing screen already
+// reads through Item.imageUrl.
 function ItemPhoto({ item }: { item?: ItemView }) {
   const { toast } = useUI();
-  const [url, setUrl] = useState<string | null>(item?.imageUrl ?? null);
+  const { data: imgs, mutate } = useApi<ItemImg[]>(item ? `/api/items/${item.id}/images` : null);
   const [busy, setBusy] = useState(false);
+  const [label, setLabel] = useState("Front");
+  const [preview, setPreview] = useState<ItemImg | null>(null);
   const pick = useRef<HTMLInputElement>(null);
 
-  // Uploading needs somewhere to attach the picture to.
-  if (!item) return <Note style={{ marginTop: 13 }}>Save the item first, then reopen it to add a photograph. Until one is added the catalogue draws generated artwork from the design number.</Note>;
+  // Uploading needs somewhere to attach the pages to.
+  if (!item) return <Note style={{ marginTop: 13 }}>Save the item first, then reopen it to add photographs. Until then the catalogue draws generated artwork from the design number.</Note>;
+  const list = imgs ?? [];
 
   const choose = async (file?: File) => {
     if (!file) return;
     setBusy(true);
     try {
       const data = await downscale(file);
-      const r = await post<{ imageUrl: string }>(`/api/items/${item.id}/image`, { data });
-      setUrl(r.imageUrl); toast("Photograph saved", "s"); refresh("/api/");
+      await post(`/api/items/${item.id}/image`, { data, label });
+      mutate(); refresh("/api/"); toast(`${label || "Photograph"} saved`, "s");
     } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); if (pick.current) pick.current.value = ""; }
   };
-  const remove = async () => {
+  const act = async (fn: () => Promise<unknown>, msg: string) => {
     setBusy(true);
-    try { await del(`/api/items/${item.id}/image`); setUrl(null); toast("Photograph removed — showing generated artwork", "s"); refresh("/api/"); }
+    try { await fn(); mutate(); refresh("/api/"); toast(msg, "s"); }
     catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
   };
 
   return <>
-    <div className="st" style={{ marginTop: 16 }}>Photograph</div>
-    <div style={{ display: "flex", gap: 13, alignItems: "flex-start" }}>
-      <img src={thumb({ ...item, imageUrl: url }, 120, 156)} alt="" style={{ width: 96, border: "1px solid var(--bd)", borderRadius: 4, background: "#fff" }} />
-      <div style={{ flex: 1 }}>
-        <div className="sm" style={{ marginBottom: 8 }}>{url ? "This is the picture buyers see in the catalogue and the portal." : "No photograph yet — the catalogue is drawing generated artwork from the design number."}</div>
-        <input ref={pick} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: "none" }} onChange={(e) => choose(e.target.files?.[0])} />
-        <div style={{ display: "flex", gap: 7 }}>
-          <button className="b b-o b-s" disabled={busy} onClick={() => pick.current?.click()}>{busy ? "Working…" : url ? "Replace photo" : "Add photo"}</button>
-          {url && <button className="b b-g b-s" disabled={busy} onClick={remove}>Remove</button>}
-        </div>
-        <div className="sm" style={{ marginTop: 7 }}>JPEG, PNG or WebP. Large photographs are shrunk to {MAX_EDGE} px before they are sent.</div>
-      </div>
+    <div className="st" style={{ marginTop: 16 }}>Photographs</div>
+    <div className="sm" style={{ marginBottom: 9 }}>
+      {list.length
+        ? "A card opens, so it gets a page each — front, inside, back. The first is the cover buyers see in the catalogue and the portal."
+        : "No photographs yet — the catalogue is drawing generated artwork from the design number. Add a page for each side of the card."}
     </div>
+
+    {list.length > 0 && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 11 }}>
+      {list.map((im, i) => <div key={im.id} style={{ width: 104 }}>
+        <button style={{ display: "block", width: "100%", padding: 0, border: i === 0 ? "2px solid var(--ac)" : "1px solid var(--bd)", borderRadius: 4, overflow: "hidden", background: "#fff", cursor: "zoom-in" }} onClick={() => setPreview(im)} title="Click to preview">
+          <img src={im.url} alt={im.label} style={{ width: "100%", display: "block", aspectRatio: "3/4", objectFit: "cover" }} />
+        </button>
+        <div className="sm" style={{ marginTop: 4, fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "var(--ac)" : undefined }}>{i === 0 ? "Cover" : `Page ${i + 1}`}{im.label ? ` · ${im.label}` : ""}</div>
+        <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
+          {i !== 0 && <button className="b b-g b-s" disabled={busy} title="Make this the cover" onClick={() => act(() => patch(`/api/items/${item.id}/images/${im.id}`, { makeCover: true }), "Cover changed")}>Cover</button>}
+          <button className="b b-g b-s" disabled={busy} title="Remove this page" onClick={() => act(() => del(`/api/items/${item.id}/images/${im.id}`), "Photograph removed")}><Icon n="x" s={11} /></button>
+        </div>
+      </div>)}
+    </div>}
+
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+      <Field label="This page is the"><select value={label} onChange={(e) => setLabel(e.target.value)}>{PAGE_LABELS.map((l) => <option key={l}>{l}</option>)}</select></Field>
+      <input ref={pick} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: "none" }} onChange={(e) => choose(e.target.files?.[0])} />
+      <button className="b b-o" style={{ marginBottom: 2 }} disabled={busy} onClick={() => pick.current?.click()}>{busy ? "Working…" : "+ Add photograph"}</button>
+    </div>
+    <div className="sm" style={{ marginTop: 7 }}>JPEG, PNG or WebP. Large photographs are shrunk to {MAX_EDGE} px before they are sent.</div>
+
+    {preview && <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(10,16,28,.72)", display: "grid", placeItems: "center", padding: 24, cursor: "zoom-out" }}>
+      <div style={{ textAlign: "center" }}>
+        <img src={preview.url} alt={preview.label} style={{ maxWidth: "min(92vw, 620px)", maxHeight: "80vh", borderRadius: 6, background: "#fff" }} />
+        <div style={{ color: "#fff", fontSize: 13, marginTop: 9 }}>{preview.label || "Photograph"} — click anywhere to close</div>
+      </div>
+    </div>}
   </>;
 }

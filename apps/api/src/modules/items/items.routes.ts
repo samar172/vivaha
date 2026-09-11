@@ -96,31 +96,72 @@ router.patch("/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => 
   res.json(await loadItemView(before.id));
 }));
 
-// A card is bought by its picture. Item.imageUrl has always existed and
-// thumb() has always preferred a real photograph over the generated artwork —
-// nothing ever wrote to the field. Setting it here lights the picture up
-// everywhere at once: the item table, the drawer, the portal catalogue, the
-// order screen.
-router.post("/:id/image", requirePerm("item.edit"), asyncHandler(async (req, res) => {
-  const { data } = z.object({ data: z.string().min(1) }).parse(req.body);
-  const it = await prisma.item.findUnique({ where: { id: req.params.id } });
-  if (!it) throw notFound("Item not found");
-  const img = await storeItemImage(it.id, data);
-  // Replacing: the old picture goes only once the new one is safely stored.
-  if (it.imageUrl && it.imageUrl !== img.url) await removeItemImage(it.imageUrl);
-  const updated = await prisma.item.update({ where: { id: it.id }, data: { imageUrl: img.url } });
-  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: it.imageUrl ? "Item photo replaced" : "Item photo added", entityType: "Item", entityId: it.sku, oldValue: it.imageUrl ?? "generated artwork", newValue: img.url });
-  res.status(201).json({ imageUrl: updated.imageUrl, bytes: img.bytes });
+// A wedding card is not one picture. It opens — a double fold has a front and
+// an inside, a trifold has three panels — and buyers choose on the inside
+// artwork as much as the cover. Pages are stored in order; Item.imageUrl is
+// kept in step with page one so every list, drawer and catalogue tile that
+// already reads it carries on working without knowing the gallery exists.
+async function syncCover(tx: typeof prisma, itemId: string) {
+  const first = await tx.itemImage.findFirst({ where: { itemId }, orderBy: { sortOrder: "asc" } });
+  await tx.item.update({ where: { id: itemId }, data: { imageUrl: first?.url ?? null } });
+  return first?.url ?? null;
+}
+
+const gallery = (itemId: string) => prisma.itemImage.findMany({ where: { itemId }, orderBy: { sortOrder: "asc" } });
+
+router.get("/:id/images", requirePerm("item.view"), asyncHandler(async (req, res) => {
+  res.json(await gallery(req.params.id));
 }));
 
-router.delete("/:id/image", requirePerm("item.edit"), asyncHandler(async (req, res) => {
-  const it = await prisma.item.findUnique({ where: { id: req.params.id } });
+// Adds a page. Kept at POST /:id/image, the path the single-photo upload used,
+// so nothing that already calls it has to change.
+router.post("/:id/image", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const { data, label } = z.object({ data: z.string().min(1), label: z.string().max(40).default("") }).parse(req.body);
+  const it = await prisma.item.findUnique({ where: { id: req.params.id }, include: { images: true } });
   if (!it) throw notFound("Item not found");
-  if (!it.imageUrl) throw badRequest("This item has no photograph — it is showing generated artwork");
-  await prisma.item.update({ where: { id: it.id }, data: { imageUrl: null } });
-  await removeItemImage(it.imageUrl);
-  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Item photo removed", entityType: "Item", entityId: it.sku, oldValue: it.imageUrl, newValue: "generated artwork" });
-  res.status(204).send();
+  if (it.images.length >= 12) throw badRequest("Twelve pages is already more than any card has — remove one first");
+  const img = await storeItemImage(it.id, data);
+  if (it.images.some((x) => x.url === img.url)) throw badRequest("That is the same photograph as one already on this item");
+  const next = it.images.reduce((m, x) => Math.max(m, x.sortOrder), -1) + 1;
+  await prisma.itemImage.create({ data: { itemId: it.id, url: img.url, label: label.trim(), sortOrder: next, by: req.user!.name } });
+  const cover = await syncCover(prisma, it.id);
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Item photo added", entityType: "Item", entityId: it.sku, oldValue: `${it.images.length} page(s)`, newValue: `${it.images.length + 1} page(s)${label ? " · " + label : ""}` });
+  res.status(201).json({ imageUrl: cover, images: await gallery(it.id), bytes: img.bytes });
+}));
+
+router.patch("/:id/images/:imageId", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const b = z.object({ label: z.string().max(40).optional(), makeCover: z.boolean().optional() }).parse(req.body);
+  const img = await prisma.itemImage.findUnique({ where: { id: req.params.imageId } });
+  if (!img || img.itemId !== req.params.id) throw notFound("Photograph not found");
+  if (b.label !== undefined) await prisma.itemImage.update({ where: { id: img.id }, data: { label: b.label.trim() } });
+  if (b.makeCover) {
+    // Promoting a page to the cover pushes it in front and closes the gap it
+    // left, rather than leaving two pages claiming the same position.
+    const rest = (await gallery(img.itemId)).filter((x) => x.id !== img.id);
+    await prisma.$transaction([
+      prisma.itemImage.update({ where: { id: img.id }, data: { sortOrder: 0 } }),
+      ...rest.map((x, i) => prisma.itemImage.update({ where: { id: x.id }, data: { sortOrder: i + 1 } })),
+    ]);
+  }
+  await syncCover(prisma, img.itemId);
+  res.json(await gallery(img.itemId));
+}));
+
+router.delete("/:id/images/:imageId", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const img = await prisma.itemImage.findUnique({ where: { id: req.params.imageId }, include: { item: { select: { sku: true } } } });
+  if (!img || img.itemId !== req.params.id) throw notFound("Photograph not found");
+  await prisma.itemImage.delete({ where: { id: img.id } });
+  // Close the gap so the remaining pages stay consecutively ordered.
+  const rest = await gallery(img.itemId);
+  await prisma.$transaction(rest.map((x, i) => prisma.itemImage.update({ where: { id: x.id }, data: { sortOrder: i } })));
+  await syncCover(prisma, img.itemId);
+  // Stored filenames carry a hash of the bytes, so two pages photographed from
+  // the same image resolve to one file. Only unlink it once nothing else points
+  // at it, or removing one page would blank another.
+  const stillUsed = await prisma.itemImage.count({ where: { url: img.url } });
+  if (stillUsed === 0) await removeItemImage(img.url);
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Item photo removed", entityType: "Item", entityId: img.item.sku, oldValue: img.label || img.url, newValue: `${rest.length} page(s) left` });
+  res.json(await gallery(img.itemId));
 }));
 
 router.post("/bulk", requirePerm("item.edit"), asyncHandler(async (req, res) => {

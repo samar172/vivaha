@@ -14,11 +14,13 @@ export interface ItemView {
   onHand: number; reserved: number; hold: number; damaged: number; quarantined: number; available: number;
   godowns: GodownSplit[]; band: Band; inTransitEta: string | null;
   code: string | null; codeKind: "OWN" | "MANUFACTURER" | null; codeCount: number;
+  /** Every page of the card, in the order it opens. imageUrl is page one. */
+  images: { id: string; url: string; label: string }[];
 }
 
 export async function loadItemViews(where: Prisma.ItemWhereInput = {}, godownId?: string | null): Promise<ItemView[]> {
   const [items, balances, inTransit] = await Promise.all([
-    prisma.item.findMany({ where, include: { slabs: { orderBy: { fromQty: "asc" } }, line: true, codes: { select: { code: true, kind: true, status: true } } }, orderBy: { sku: "asc" } }),
+    prisma.item.findMany({ where, include: { slabs: { orderBy: { fromQty: "asc" } }, line: true, codes: { select: { code: true, kind: true, status: true } }, images: { orderBy: { sortOrder: "asc" }, select: { id: true, url: true, label: true } } }, orderBy: { sku: "asc" } }),
     prisma.stockBalance.findMany(),
     prisma.purchase.findMany({ where: { status: "IN_TRANSIT" }, include: { lines: true } }),
   ]);
@@ -40,7 +42,7 @@ export async function loadItemViews(where: Prisma.ItemWhereInput = {}, godownId?
       id: it.id, sku: it.sku, designNo: it.designNo, name: it.name, nameHi: it.nameHi, lineId: it.lineId, attrs: (it.attrs as Record<string, string>) || {},
       uom: it.uom, packUom: it.packUom, perPack: it.perPack, moq: it.moq, landedCost: D(it.landedCost), hsn: it.hsn, gstPct: it.gstPct, vendorId: it.vendorId,
       status: it.status, season: it.season, batchTracked: it.batchTracked, wastagePct: it.wastagePct == null ? null : D(it.wastagePct), setupCharge: it.setupCharge == null ? null : D(it.setupCharge),
-      artSeed: it.artSeed, imageUrl: it.imageUrl,
+      artSeed: it.artSeed, imageUrl: it.imageUrl, images: it.images,
       // The code the office prints today, plus the manufacturer label it replaced.
       code: it.codes.find((c) => c.status === "ACTIVE" && c.kind === "OWN")?.code
         ?? it.codes.find((c) => c.status === "ACTIVE")?.code ?? null,

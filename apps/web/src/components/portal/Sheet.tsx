@@ -32,7 +32,7 @@ function ItemSheet({ id }: { id: string }) {
   return <>
     <div className="shh"><button className="b b-g b-s" onClick={P.closeSheet}>←</button><span className="rid" style={{ fontSize: 14.5 }}>{it.designNo || it.sku}</span><LineChip id={it.lineId} /><button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={P.closeSheet}>✕</button></div>
     <div className="shb">
-      <div className="blk" style={{ padding: 0, overflow: "hidden" }}><img className="cw" src={thumb(it, 660, 330)} alt="" style={{ borderRadius: "10px 10px 0 0", width: "100%" }} /></div>
+      <ItemPages it={it} />
       <div className="blk"><div style={{ fontSize: 17.5, fontWeight: 700, lineHeight: 1.35 }}>{itemName(it, lang)}</div>{it.nameHi && it.nameHi !== itemName(it, lang) && <div className="hi" style={{ fontSize: 15, color: "var(--t6)", marginTop: 2 }}>{it.nameHi}</div>}<div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 9 }}>{Object.values(it.attrs).map((a) => <span className="atc" key={a}>{a}</span>)}</div></div>
       <div className="bandbox hi" style={{ background: col[0], borderColor: col[1], color: col[2] }}><span className="tl" style={{ background: col[2], width: 11, height: 11 }} />{b.hi}{b.k === "eta" && <button className="b b-o b-s" style={{ marginLeft: "auto" }} onClick={() => toast("प्री-बुक दर्ज — स्टॉक आने पर सूचना मिलेगी", "s")}>प्री-बुक</button>}</div>
       <div className="blk"><div className="lb">आपका रेट</div><div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 9 }}><span style={{ fontSize: 28.5, fontWeight: 700 }}>₹{pr.rate}</span><span style={{ fontSize: 14, color: "var(--t6)" }}>प्रति {it.uom.toLowerCase()}</span><span style={{ marginLeft: "auto", fontSize: 13, color: "var(--t4)" }}>MOQ {num(it.moq)}</span></div>
@@ -47,6 +47,26 @@ function ItemSheet({ id }: { id: string }) {
     </div>
     <div className="shf"><div style={{ flex: 1 }}><div className="sm">{t("total")}</div><div style={{ fontSize: 18.5, fontWeight: 700 }} className="tab">{money(pr.rate * Math.min(q, short ? b.qty : q))}</div></div>{b.canBook ? <button className="b b-p hi" style={{ height: 44, padding: "0 26px", fontSize: 16.5 }} onClick={book}>{short ? t("bookAvailable") : t("book")}</button> : <button className="b b-o hi" style={{ height: 44, padding: "0 20px" }} onClick={() => { toast("हम आपको सूचित करेंगे", "s"); P.closeSheet(); }}>{t("notifyMe")}</button>}</div>
   </>;
+}
+
+// A card opens, and the inside is half of why a retailer picks it. When the
+// office has photographed the pages, the buyer gets to page through them rather
+// than judging the card on its cover alone. One photograph, or none, and this
+// is exactly the single image it has always been.
+function ItemPages({ it }: { it: PItem }) {
+  const [n, setN] = useState(0);
+  const pages = it.images?.length ? it.images : null;
+  const src = pages ? pages[Math.min(n, pages.length - 1)].url : thumb(it, 660, 330);
+  return <div className="blk" style={{ padding: 0, overflow: "hidden" }}>
+    <img className="cw" src={src} alt="" style={{ borderRadius: "10px 10px 0 0", width: "100%" }} />
+    {pages && pages.length > 1 && <div style={{ display: "flex", gap: 7, padding: "9px 11px", overflowX: "auto" }}>
+      {pages.map((p, i) => <button key={p.id} onClick={() => setN(i)} style={{ flex: "0 0 auto", padding: 0, border: i === n ? "2px solid var(--ac)" : "1px solid var(--bd)", borderRadius: 6, overflow: "hidden", background: "#fff" }}>
+        <img src={p.url} alt={p.label} style={{ width: 52, height: 66, objectFit: "cover", display: "block" }} />
+      </button>)}
+    </div>}
+    {pages && pages.length > 1 && pages[Math.min(n, pages.length - 1)].label &&
+      <div className="sm" style={{ padding: "0 11px 10px" }}>{pages[Math.min(n, pages.length - 1)].label}</div>}
+  </div>;
 }
 
 function CartSheet() {

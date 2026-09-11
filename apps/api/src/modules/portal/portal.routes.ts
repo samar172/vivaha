@@ -24,7 +24,7 @@ type Cust = Awaited<ReturnType<typeof me>>;
 async function gate(c: Cust, orderValue = 0) {
   return creditGate({ creditLimit: D(c.creditLimit), creditDays: c.creditDays, gateMode: c.gateMode }, await ledgerLines(c.id), orderValue);
 }
-const pub = (i: ItemView, rate: number) => ({ id: i.id, sku: i.sku, designNo: i.designNo, name: i.name, nameHi: i.nameHi, lineId: i.lineId, attrs: i.attrs, uom: i.uom, packUom: i.packUom, perPack: i.perPack, moq: i.moq, gstPct: i.gstPct, artSeed: i.artSeed, imageUrl: i.imageUrl, band: i.band, rate, status: i.status });
+const pub = (i: ItemView, rate: number) => ({ id: i.id, sku: i.sku, designNo: i.designNo, name: i.name, nameHi: i.nameHi, lineId: i.lineId, attrs: i.attrs, uom: i.uom, packUom: i.packUom, perPack: i.perPack, moq: i.moq, gstPct: i.gstPct, artSeed: i.artSeed, imageUrl: i.imageUrl, images: i.images, band: i.band, rate, status: i.status });
 
 // Job work is quoted with the office, not bought off the shelf, and the portal
 // has no flow for it — offering it in the line switcher only leads to a

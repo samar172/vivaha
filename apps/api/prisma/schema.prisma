@@ -279,6 +279,7 @@ model Item {
   updatedAt    DateTime     @updatedAt
 
   codes         ItemCode[]
+  images        ItemImage[]
   slabs         PriceSlab[]
   priceHistory  ItemPriceHistory[]
   balances      StockBalance[]
@@ -292,6 +293,27 @@ model Item {
   jobsProcess   JobWork[]       @relation("JobProcess")
   stockoutHits  StockoutSearch[]
   kitItems      KitVersionItem[]
+}
+
+// A wedding card is not one picture. It opens: a double fold has a front and an
+// inside, a trifold has three panels, a pocket card has the pocket and the
+// insert — and a buyer chooses on the inside artwork as much as the cover. One
+// row per page, ordered the way the card opens.
+//
+// Item.imageUrl stays as the cover and is kept in step with the first page, so
+// every list, drawer and catalogue tile that already reads it carries on
+// working without knowing the gallery exists.
+model ItemImage {
+  id        String   @id @default(cuid())
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  url       String
+  label     String   @default("")  // "Front", "Inside", "Back", "Pocket"…
+  sortOrder Int      @default(0)
+  by        String   @default("")
+  at        DateTime @default(now())
+
+  @@index([itemId, sortOrder])
 }
 
 // Every movement of an item's price list, so "why is this dearer than last
