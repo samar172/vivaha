@@ -40,6 +40,14 @@ router.get("/me", asyncHandler(async (req, res) => {
 // grants permission — one fix on a press, never a watch, and a refusal is an
 // ordinary outcome that changes nothing. It answers the office's question of
 // where a firm actually was when it last ordered.
+// A tap on a banner. The only signal these carry, and the office can see it
+// against the impressions on the Banners screen.
+router.post("/ads/:id/tap", asyncHandler(async (req, res) => {
+  await me(req);
+  await prisma.ad.updateMany({ where: { id: req.params.id }, data: { taps: { increment: 1 } } });
+  res.status(204).send();
+}));
+
 router.post("/checkin", asyncHandler(async (req, res) => {
   const c = await me(req);
   const b = z.object({ lat: z.number(), lng: z.number(), accuracy: z.number().nonnegative().optional() }).parse(req.body);
@@ -55,11 +63,32 @@ router.get("/home", asyncHandler(async (req, res) => {
   const [items, last, ads, hits] = await Promise.all([
     loadItemViews({ lineId, status: "ACTIVE" }),
     prisma.order.findFirst({ where: { customerId: c.id }, orderBy: { createdAt: "desc" }, include: { lines: { include: { item: true } } } }),
-    prisma.ad.findMany(),
+    prisma.ad.findMany({
+      where: {
+        isActive: true,
+        // A banner targeted at a line is only for firms reading that line, and
+        // a seasonal one only runs inside its dates. Both sides optional.
+        OR: [{ lineId: null }, { lineId }],
+        AND: [
+          { OR: [{ startsAt: null }, { startsAt: { lte: new Date() } }] },
+          { OR: [{ endsAt: null }, { endsAt: { gte: new Date() } }] },
+        ],
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+      include: { item: { select: { id: true, sku: true } } },
+    }),
     districtHits(c, 3),
   ]);
   const machineTypes = c.machines.map((m) => m.type);
-  const ad = ads.find((a) => { const t = a.target as { machine?: string; noMachine?: string }; return (t.noMachine && !machineTypes.includes(t.noMachine)) || (t.machine && machineTypes.includes(t.machine)); }) || ads[0] || null;
+  // The office's own ordering decides, because it is the office that knows what
+  // this season needs pushed. Machine targeting only breaks a tie within the
+  // same position — otherwise a banner seeded years ago with a machine rule
+  // would quietly outrank whatever the office just put first.
+  const machineMatch = (a: (typeof ads)[number]) => {
+    const t = a.target as { machine?: string; noMachine?: string };
+    return (t.noMachine && !machineTypes.includes(t.noMachine)) || (t.machine && machineTypes.includes(t.machine)) ? 1 : 0;
+  };
+  const ad = [...ads].sort((a, b) => a.sortOrder - b.sortOrder || machineMatch(b) - machineMatch(a) || b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
   if (ad) await prisma.ad.update({ where: { id: ad.id }, data: { impressions: { increment: 1 } } });
   let nudge: unknown = null;
   if ((c.linesEnabled as string[]).includes("L2") && c.machines.length) {

@@ -11,7 +11,35 @@ import { useLang, itemName } from "@/lib/i18n";
 import { LineChip } from "@/components/ui";
 import { thumb } from "@/lib/art";
 
-interface Home { reorder: { orderId: string; lines: { item: PItem; qty: number }[] } | null; nudge: { item: PItem; qty: number; amount: number; machine: string | null } | null; ad: { id: string; title: string; sub: string } | null; newItems: PItem[]; hits: { item: PItem; sold: number; district: number }[] }
+interface Home { ad: { id: string; title: string; sub: string; imageUrl?: string | null; item?: { id: string } | null } | null; reorder: { orderId: string; lines: { item: PItem; qty: number }[] } | null; nudge: { item: PItem; qty: number; amount: number; machine: string | null } | null; newItems: PItem[]; hits: { item: PItem; sold: number; district: number }[] }
+// The banner above the catalogue. With a picture it is the picture — a retailer
+// buys a card by looking at it — with the words laid over the bottom so they
+// stay readable whatever was uploaded. Without one it stays the gradient slot
+// it has always been, so an office that never uploads anything loses nothing.
+function Banner({ ad }: { ad: { id: string; title: string; sub: string; imageUrl?: string | null; item?: { id: string } | null } }) {
+  const P = usePortal(); const { lang } = useLang(); const { toast } = useUI();
+  const go = () => {
+    post(`/api/portal/ads/${ad.id}/tap`, {}).catch(() => {});
+    if (ad.item?.id) P.openSheet(ad.item.id);
+    else toast(lang === "hi" ? "और जानकारी के लिए ऑफ़िस से बात करें" : "Ask the office for more", "i");
+  };
+  if (!ad.imageUrl) return <div className="adslot" onClick={go} style={{ cursor: "pointer" }}>
+    <div style={{ flex: 1 }}>
+      <div className="l">{lang === "hi" ? "विज्ञापन" : "Featured"}</div>
+      <div className="t">{ad.title}</div>
+      <div className="s">{ad.sub}</div>
+    </div>
+    <button className="b b-o b-s" style={{ background: "rgba(255,255,255,.14)", borderColor: "rgba(255,255,255,.24)", color: "#fff" }}>{lang === "hi" ? "देखें" : "See"}</button>
+  </div>;
+  return <div className="banner" onClick={go}>
+    <img src={ad.imageUrl} alt={ad.title} />
+    <div className="cap">
+      <div className="t">{ad.title}</div>
+      {ad.sub && <div className="s">{ad.sub}</div>}
+    </div>
+  </div>;
+}
+
 interface Waiting { id: string; item: PItem; reqQty: number; available: number; back: boolean; askedAt: string; notifiedAt: string | null }
 
 // What this firm asked to be told about. When it is back the row says so and
@@ -61,7 +89,7 @@ export default function PortalHome() {
       {scan && (scan.length ? <div style={{ marginTop: 9 }}>{scan.map((i) => <div key={i.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--bd-soft)", cursor: "pointer" }} onClick={() => P.openSheet(i.id)}><img className="cw" src={thumb(i, 42, 54)} alt="" style={{ width: 34, border: "1px solid var(--bd)" }} /><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{i.name}</div><div className="sm">{i.designNo || i.sku} · <LineChip id={i.lineId} /></div></div><span className={"bd b-" + ({ ok: "ok", warn: "wa", err: "er", neu: "nu" } as const)[i.band.cls]}>{i.band.label}</span></div>)}</div> : <div className="sm hi" style={{ marginTop: 9 }}>कोई कार्ड नहीं मिला — नंबर दोबारा देखिए</div>)}</div>
     {data?.reorder && <><Sect t="फिर से ऑर्डर करें" more="सब जोड़ें" onMore={() => reorder(data.reorder!.orderId)} /><div className="strip">{data.reorder.lines.map((l) => <div className="it" key={l.item.id} onClick={() => P.openSheet(l.item.id, l.qty)}><img className="cw" src={thumb(l.item, 80, 100)} alt="" /><div className="n">{l.item.designNo || l.item.sku}</div><div className="q">{num(l.qty)} {l.item.uom.toLowerCase()}</div></div>)}</div></>}
     {data?.nudge && <div className="nudge"><img className="cw" src={thumb(data.nudge.item, 54, 54)} alt="" style={{ width: 44 }} /><div className="b1"><div className="t hi">स्याही ख़त्म होने वाली है</div><div className="s">{data.nudge.item.name} · {data.nudge.qty} {data.nudge.item.uom} · {money(data.nudge.amount)}</div><div className="sm" style={{ marginTop: 3, fontFamily: "inherit" }}>{data.nudge.machine ?? "your machine"} — 5 दिन में लगेगी</div></div><button className="b b-p b-s" onClick={async () => { if (await P.addLine(data.nudge!.item.id, data.nudge!.qty)) toast("Added to cart", "s"); }}><span className="hi">जोड़ें</span></button></div>}
-    {data?.ad && <div className="adslot"><div style={{ flex: 1 }}><div className="l">विज्ञापन</div><div className="t">{data.ad.title}</div><div className="s">{data.ad.sub}</div></div><button className="b b-o b-s" style={{ background: "rgba(255,255,255,.14)", borderColor: "rgba(255,255,255,.24)", color: "#fff" }} onClick={() => toast("Advertiser landing page", "i")}>देखें</button></div>}
+    {data?.ad && <Banner ad={data.ad} />}
     <WaitingList />
     <Sect t={`${L?.nameHi ?? ""} — नया माल`} more="सब देखें" onMore={() => router.push("/portal/cat")} />{data && <CatGrid list={data.newItems} />}
     <Sect t="इस सीज़न के हिट डिज़ाइन" more="सब देखें" onMore={() => router.push("/portal/hits")} /><div className="blk">{data && <HitRows rows={data.hits} />}</div>

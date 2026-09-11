@@ -4,7 +4,8 @@ import { prisma, D } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { audit } from "../../services/audit";
-import { badRequest } from "../../utils/httpError";
+import { storeImage, removeImage } from "../../services/uploads";
+import { badRequest, notFound } from "../../utils/httpError";
 import { fyCode } from "../../services/sequence";
 
 const router = Router();
@@ -112,3 +113,86 @@ router.get("/sales-execs", asyncHandler(async (_req, res) => {
 }));
 
 export default router;
+
+// ── Portal banners ──────────────────────────────────────────────────────────
+// What the firm sees above the catalogue. The Ad row has always existed and the
+// portal has always rendered one; it was seeded-only and text-only. The office
+// writes them now, with a picture, because a retailer buys a card by looking at
+// it. Same model, same slot — a picture and a few controls added to it.
+
+const adSchema = z.object({
+  title: z.string().min(1, "A banner needs a line of text"),
+  sub: z.string().default(""),
+  lineId: z.string().nullable().optional(),
+  itemId: z.string().nullable().optional(),
+  startsAt: z.string().nullable().optional(),
+  endsAt: z.string().nullable().optional(),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().default(0),
+  target: z.record(z.string()).optional(),
+});
+
+router.get("/ads", requirePerm("settings.manage"), asyncHandler(async (_req, res) => {
+  const rows = await prisma.ad.findMany({
+    include: { line: { select: { id: true, name: true } }, item: { select: { id: true, sku: true, name: true } } },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+  });
+  res.json(rows);
+}));
+
+router.post("/ads", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = adSchema.parse(req.body);
+  const ad = await prisma.ad.create({ data: {
+    title: b.title, sub: b.sub, lineId: b.lineId || null, itemId: b.itemId || null,
+    startsAt: b.startsAt ? new Date(b.startsAt) : null, endsAt: b.endsAt ? new Date(b.endsAt) : null,
+    isActive: b.isActive, sortOrder: b.sortOrder, target: b.target ?? {},
+  } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Banner created", entityType: "Ad", entityId: ad.title });
+  res.status(201).json(ad);
+}));
+
+router.patch("/ads/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = adSchema.partial().parse(req.body);
+  const before = await prisma.ad.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Banner not found");
+  const ad = await prisma.ad.update({ where: { id: before.id }, data: {
+    ...b,
+    lineId: b.lineId === undefined ? undefined : b.lineId || null,
+    itemId: b.itemId === undefined ? undefined : b.itemId || null,
+    startsAt: b.startsAt === undefined ? undefined : b.startsAt ? new Date(b.startsAt) : null,
+    endsAt: b.endsAt === undefined ? undefined : b.endsAt ? new Date(b.endsAt) : null,
+  } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Banner updated", entityType: "Ad", entityId: ad.title, oldValue: before.isActive ? "live" : "off", newValue: ad.isActive ? "live" : "off" });
+  res.json(ad);
+}));
+
+// The picture, on the same path item photographs take: a data URL on a JSON
+// body, Cloudinary when it is configured and local disk when it is not.
+router.post("/ads/:id/image", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const { data } = z.object({ data: z.string().min(1) }).parse(req.body);
+  const ad = await prisma.ad.findUnique({ where: { id: req.params.id } });
+  if (!ad) throw notFound("Banner not found");
+  const img = await storeImage("banners", ad.id, data);
+  if (ad.imageUrl && ad.imageUrl !== img.url) await removeImage(ad.imageUrl);
+  const updated = await prisma.ad.update({ where: { id: ad.id }, data: { imageUrl: img.url } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: ad.imageUrl ? "Banner image replaced" : "Banner image added", entityType: "Ad", entityId: ad.title });
+  res.status(201).json({ imageUrl: updated.imageUrl, bytes: img.bytes });
+}));
+
+router.delete("/ads/:id/image", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const ad = await prisma.ad.findUnique({ where: { id: req.params.id } });
+  if (!ad) throw notFound("Banner not found");
+  if (!ad.imageUrl) throw badRequest("This banner has no picture");
+  await prisma.ad.update({ where: { id: ad.id }, data: { imageUrl: null } });
+  await removeImage(ad.imageUrl);
+  res.status(204).send();
+}));
+
+router.delete("/ads/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const ad = await prisma.ad.findUnique({ where: { id: req.params.id } });
+  if (!ad) throw notFound("Banner not found");
+  await prisma.ad.delete({ where: { id: ad.id } });
+  await removeImage(ad.imageUrl);
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Banner removed", entityType: "Ad", entityId: ad.title, oldValue: `${ad.impressions} shown · ${ad.taps} tapped` });
+  res.status(204).send();
+}));

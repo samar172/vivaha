@@ -47,37 +47,43 @@ function decode(dataUrl: string): { buf: Buffer; type: string; ext: string } {
 
 export interface StoredImage { url: string; bytes: number }
 
-export async function storeItemImage(itemId: string, dataUrl: string): Promise<StoredImage> {
+// Anything the office uploads: an item photograph, a portal banner. The kind
+// is a folder, so the two never collide and Cloudinary stays organised.
+export async function storeImage(kind: string, key: string, dataUrl: string): Promise<StoredImage> {
   const { buf, ext } = decode(dataUrl);
-  const url = env.CLOUDINARY_URL ? await toCloudinary(itemId, buf) : await toDisk(itemId, buf, ext);
+  const url = env.CLOUDINARY_URL ? await toCloudinary(kind, key, buf) : await toDisk(kind, key, buf, ext);
   return { url, bytes: buf.length };
 }
 
-function toCloudinary(itemId: string, buf: Buffer): Promise<string> {
+export const storeItemImage = (itemId: string, dataUrl: string) => storeImage("items", itemId, dataUrl);
+
+function toCloudinary(kind: string, key: string, buf: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const s = cloudinary.uploader.upload_stream(
-      { folder: `vivaha/items/${itemId}`, resource_type: "image" },
+      { folder: `vivaha/${kind}/${key}`, resource_type: "image" },
       (err, result) => (err || !result ? reject(err ?? new Error("Cloudinary upload failed")) : resolve(result.secure_url)),
     );
     s.end(buf);
   });
 }
 
-async function toDisk(itemId: string, buf: Buffer, ext: string): Promise<string> {
-  const dir = path.join(UPLOAD_ROOT, "items");
+async function toDisk(kind: string, key: string, buf: Buffer, ext: string): Promise<string> {
+  const dir = path.join(UPLOAD_ROOT, kind);
   await mkdir(dir, { recursive: true });
   // The content hash keeps the name stable for identical bytes and changes it
   // whenever the picture does, so a replaced photograph is never served from a
   // cache under its old name.
   const stamp = createHash("sha1").update(buf).digest("hex").slice(0, 10);
-  const file = `${itemId}-${stamp}.${ext}`;
+  const file = `${key}-${stamp}.${ext}`;
   await writeFile(path.join(dir, file), buf);
-  return `${LOCAL_PREFIX}items/${file}`;
+  return `${LOCAL_PREFIX}${kind}/${file}`;
 }
+
+export const removeItemImage = removeImage;
 
 // Best effort on both paths: a file that has already gone must never block the
 // database update, which is the actual record of what the item looks like.
-export async function removeItemImage(url: string | null | undefined): Promise<void> {
+export async function removeImage(url: string | null | undefined): Promise<void> {
   if (!url) return;
 
   if (url.startsWith(LOCAL_PREFIX)) {

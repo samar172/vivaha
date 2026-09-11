@@ -311,6 +311,17 @@ table.dg tbody tr.dim td{color:var(--t4)}
 .adslot .t{font-size:15.5px;font-weight:700}
 .adslot .s{font-size:13px;opacity:.8;margin-top:2px}
 
+/* A banner with a picture. The image is the banner; the words sit over the
+   bottom on a gradient so they stay readable whatever was uploaded — an office
+   will put a bright card photograph here and white text on it would vanish. */
+.banner{position:relative;border-radius:10px;overflow:hidden;margin-bottom:12px;cursor:pointer;background:var(--nu-bg);line-height:0}
+.banner img{width:100%;display:block;aspect-ratio:16/6;object-fit:cover}
+.banner .cap{position:absolute;left:0;right:0;bottom:0;padding:26px 15px 12px;line-height:1.4;
+  background:linear-gradient(to top,rgba(10,16,28,.82),rgba(10,16,28,.45) 55%,rgba(10,16,28,0));color:#fff}
+.banner .cap .t{font-size:16px;font-weight:700}
+.banner .cap .s{font-size:13px;opacity:.9;margin-top:2px}
+@media(max-width:560px){ .banner img{aspect-ratio:16/9} .banner .cap .t{font-size:15px} }
+
 .cats{display:flex;gap:7px;overflow-x:auto;padding-bottom:10px;margin-bottom:4px}
 .cats button{flex-shrink:0;padding:7px 14px;border-radius:18px;background:#fff;border:1px solid var(--bd);font-size:13.5px;font-weight:600;color:var(--t6);white-space:nowrap}
 .cats button.on{background:var(--t9);border-color:var(--t9);color:#fff}

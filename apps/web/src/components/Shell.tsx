@@ -20,7 +20,7 @@ export const NAV: { g: string; items: { k: string; l: string; i: IconName; perm:
   { g: "Sales", items: [{ k: "customers", l: "Customers", i: "users", perm: "cust.view" }, { k: "orders", l: "Orders", i: "receipt", perm: "order.view" }, { k: "dispatch", l: "Dispatch", i: "truck", perm: "order.dispatch" }, { k: "jobs", l: "Job Work", i: "printer", perm: "order.view" }, { k: "returns", l: "Returns", i: "undo", perm: "return.view" }] },
   { g: "Finance", items: [{ k: "invoices", l: "Invoices", i: "receipt", perm: "ledger.view" }, { k: "accounts", l: "Ledger & GST", i: "rupee", perm: "ledger.view" }] },
   { g: "Insight", items: [{ k: "reports", l: "Reports", i: "chart", perm: "report.view" }, { k: "audit", l: "Audit Log", i: "history", perm: "audit.view" }] },
-  { g: "System", items: [{ k: "settings", l: "Settings", i: "sliders", perm: "settings.manage" }] },
+  { g: "System", items: [{ k: "banners", l: "Banners", i: "tag", perm: "settings.manage" }, { k: "settings", l: "Settings", i: "sliders", perm: "settings.manage" }] },
 ];
 
 interface FootState { count: number | null; filter: string; page: number; pages: number; setPage: (p: number) => void }

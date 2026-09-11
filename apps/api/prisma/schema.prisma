@@ -201,6 +201,7 @@ model BusinessLine {
   attributes AttributeDef[]
   orderLines OrderLine[]
   invoices   Invoice[]
+  ads        Ad[]
 }
 
 // "Or any other" / "future option to add more fields" — every classification
@@ -299,6 +300,7 @@ model Item {
   jobsProcess   JobWork[]       @relation("JobProcess")
   stockoutHits  StockoutSearch[]
   kitItems      KitVersionItem[]
+  ads           Ad[]
 }
 
 // A wedding card is not one picture. It opens: a double fold has a front and an
@@ -905,13 +907,34 @@ model Referral {
   createdAt DateTime @default(now())
 }
 
+// What the portal shows above the catalogue. Text-only and seeded-only until
+// now; the office can write these and put a picture on them, which is what a
+// season's range actually needs — a retailer buys a card by looking at it.
 model Ad {
-  id          String @id
+  id          String  @id @default(cuid())
   title       String
   sub         String
-  target      Json   @default("{}")
-  impressions Int    @default(0)
-  taps        Int    @default(0)
+  imageUrl    String?
+  // Machine-based targeting, as before: { machine } or { noMachine }.
+  target      Json    @default("{}")
+  // Shown only to firms who deal in this line, when set. A flex banner has no
+  // business on a card retailer's home screen.
+  lineId      String?
+  line        BusinessLine? @relation(fields: [lineId], references: [id])
+  // Where tapping it goes: an item, or nothing.
+  itemId      String?
+  item        Item?   @relation(fields: [itemId], references: [id])
+  // A season's banner has a beginning and an end; both optional.
+  startsAt    DateTime?
+  endsAt      DateTime?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+  impressions Int     @default(0)
+  taps        Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
 }
 
 // "What customers searched for and could not get" — the stock-out demand report.
