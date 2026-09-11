@@ -12,6 +12,7 @@ import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
 import { Qr } from "./Qr";
 import { Icon } from "./icons";
+import { toHindi } from "@/lib/hindi";
 import type { ItemView } from "./types";
 
 // The item catalogue opens a card on its own page rather than in a side drawer.
@@ -216,6 +217,11 @@ export function ItemForm({ item }: { item?: ItemView }) {
   const [f, setF] = useState({ lineId: item?.lineId ?? "L1", name: item?.name ?? "", nameHi: item?.nameHi ?? "", designNo: item?.designNo ?? "", attrs: item?.attrs ?? {}, uom: item?.uom ?? "PCS", packUom: item?.packUom ?? "Box", perPack: item?.perPack ?? 50, moq: item?.moq ?? 250, landedCost: item?.landedCost ?? 30, hsn: item?.hsn ?? "4817", gstPct: item?.gstPct ?? 12, vendorId: item?.vendorId ?? "", batchTracked: item?.batchTracked ?? false, status: item?.status ?? "ACTIVE", base: item?.slabs[0]?.rate ?? 50 });
   const { data: attrs } = useApi<{ lineId: string | null; key: string; label: string; values: string[] }[]>("/api/masters/attributes");
   const L = lines?.find((l) => l.id === f.lineId);
+  // The Hindi name writes itself from the English one while the operator has
+  // not touched it. An item that already has a Hindi name counts as touched, so
+  // opening an old card to fix a typo never quietly rewrites its Hindi.
+  const [hiTouched, setHiTouched] = useState(!!item?.nameHi);
+  const setName = (name: string) => setF((x) => ({ ...x, name, ...(hiTouched ? {} : { nameHi: toHindi(name) }) }));
   const submit = async () => {
     const slabs = [{ fromQty: 1, toQty: 499, rate: f.base }, { fromQty: 500, toQty: 1999, rate: Math.round(f.base * .89) }, { fromQty: 2000, toQty: 4999, rate: Math.round(f.base * .8) }, { fromQty: 5000, toQty: 1e9, rate: Math.round(f.base * .74) }];
     const body = { ...f, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
@@ -225,8 +231,12 @@ export function ItemForm({ item }: { item?: ItemView }) {
     <div className="fg">
       <Field label="Business line"><select value={f.lineId} disabled={!!item} onChange={(e) => { const l = lines?.find((x) => x.id === e.target.value); setF({ ...f, lineId: e.target.value, uom: l?.uom ?? f.uom, gstPct: l?.gstPct ?? f.gstPct, packUom: l?.packUoms[0] ?? "", batchTracked: !!l?.batchTracked }); }}>{lines?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
       <Field label="Status"><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="ACTIVE">Active</option><option value="DISCONTINUED">Discontinued</option></select></Field>
-      <Field label="Name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-      <Field label="Name (Hindi)"><input className="hi" value={f.nameHi} onChange={(e) => setF({ ...f, nameHi: e.target.value })} /></Field>
+      <Field label="Name *"><input value={f.name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Royal Scroll Wedding Card" /></Field>
+      <Field label="Name (Hindi)" hint={hiTouched
+        ? <button className="b b-g b-s" style={{ padding: 0, height: "auto" }} onClick={() => { setHiTouched(false); setF((x) => ({ ...x, nameHi: toHindi(x.name) })); }}>Fill from the English name</button>
+        : "Written from the English name as you type — edit it and it stays as you leave it"}>
+        <input className="hi" value={f.nameHi} onChange={(e) => { setHiTouched(true); setF({ ...f, nameHi: e.target.value }); }} />
+      </Field>
       <Field label="Design no"><input value={f.designNo} onChange={(e) => setF({ ...f, designNo: e.target.value })} /></Field>
       <Field label="Vendor"><select value={f.vendorId} onChange={(e) => setF({ ...f, vendorId: e.target.value })}><option value="">—</option>{vendors?.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
       {attrs?.filter((a) => a.lineId === f.lineId).map((a) => <Field key={a.key} label={a.label}><select value={(f.attrs as Record<string, string>)[a.key] ?? ""} onChange={(e) => setF({ ...f, attrs: { ...f.attrs, [a.key]: e.target.value } })}><option value="">—</option>{a.values.map((v) => <option key={v}>{v}</option>)}</select></Field>)}
