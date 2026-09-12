@@ -58,6 +58,10 @@ const contactSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1), role: z.string().default("Owner"), phone: z.string().min(5),
   authority: z.enum(["Owner", "Staff"]).default("Staff"),
+  // Which numbers the bills go to. The firm sets this from its own portal as
+  // well; whichever side touches it last wins, which is the right answer for a
+  // fact about the firm that both sides can know.
+  billsTo: z.boolean().default(false),
 });
 const custSchema = z.object({
   name: z.string().min(1), contactName: z.string().min(1), phone: z.string().min(5), tehsil: z.string().min(1), gstin: z.string().optional(), firmType: z.string().default("Registered"),
@@ -83,8 +87,10 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
     // the owner alone, exactly as before.
     const contacts = b.contacts.length
       ? b.contacts.map(({ id: _drop, ...ct }) => ct)
-      : [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" }];
-    if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner" });
+      : [{ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner", billsTo: true }];
+    if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner", billsTo: true });
+    // Bills have to reach somebody. An owner who was not marked takes it.
+    if (!contacts.some((ct) => ct.billsTo)) { const o = contacts.find((ct) => ct.authority === "Owner") ?? contacts[0]; if (o) o.billsTo = true; }
     const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, lat: b.lat ?? null, lng: b.lng ?? null, geoAccuracy: b.geoAccuracy ?? null, geoAt: b.lat != null && b.lng != null ? new Date() : null, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
     if (validFix({ lat: b.lat ?? undefined, lng: b.lng ?? undefined, accuracy: b.geoAccuracy ?? undefined })) {
       await recordFix(tx, c.id, { lat: b.lat!, lng: b.lng!, accuracy: b.geoAccuracy ?? null }, "ONBOARDING", req.user!.name);
@@ -112,6 +118,13 @@ router.patch("/:id", requirePerm("cust.edit"), asyncHandler(async (req, res) => 
         const { id, ...data } = ct;
         if (id) await tx.customerContact.update({ where: { id }, data });
         else await tx.customerContact.create({ data: { ...data, customerId: before.id } });
+      }
+      // Bills have to reach somebody, whichever side of the system edited the
+      // list. An edit that cleared every mark hands it back to the owner.
+      const after = await tx.customerContact.findMany({ where: { customerId: before.id }, select: { id: true, authority: true, billsTo: true } });
+      if (after.length && !after.some((ct) => ct.billsTo)) {
+        const o = after.find((ct) => ct.authority === "Owner") ?? after[0];
+        await tx.customerContact.update({ where: { id: o.id }, data: { billsTo: true } });
       }
     }
     // A fresh capture is recorded below, on the same trail as every other fix;

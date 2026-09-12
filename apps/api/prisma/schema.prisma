@@ -80,6 +80,7 @@ model User {
   updatedAt        DateTime  @updatedAt
 
   auditLogs         AuditLog[]
+  contact           CustomerContact?
   notifications     Notification[]
   notificationReads NotificationRead[]
   salesCustomers    Customer[]         @relation("CustomerSalesExec")
@@ -458,6 +459,15 @@ model CustomerContact {
   phone      String
   hasLogin   Boolean  @default(false)
   authority  String   @default("Staff")
+  // Bills go to the numbers marked here. A firm can mark more than one — the
+  // owner and whoever keeps the accounts is the common case — and the share
+  // dialog offers them first. Seeded true for the owner of every firm.
+  billsTo    Boolean  @default(false)
+  // The portal login issued against this person, when there is one. hasLogin
+  // was the only marker before, set by matching on name, which broke as soon
+  // as two people at a firm shared a first name or one of them was renamed.
+  userId     String?  @unique
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 model CustomerMachine {

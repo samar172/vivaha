@@ -58,7 +58,7 @@ export function CustomerDetail({ id }: { id: string }) {
             </Section>
           </div></div>
           <div className="pn"><div className="pnb">
-            <Section t="Numbers & staff">{c.contacts.map((ct) => <DF key={ct.id} k={<>{ct.name} <span className="sm">{ct.role}</span></>} v={<>{ct.phone} {ct.hasLogin && <span className="bd b-ok" style={{ marginLeft: 4 }}>login</span>}</>} mono />)}<div className="sm" style={{ marginTop: 6 }}>Owner authority may approve a credit-breaching order; Staff cannot — it routes to the owner.</div></Section>
+            <Section t="Numbers & staff">{c.contacts.map((ct) => <DF key={ct.id} k={<>{ct.name} <span className="sm">{ct.role}</span></>} v={<>{ct.phone} {ct.billsTo && <span className="bd b-nu" style={{ marginLeft: 4 }} title="Bills are sent to this number">bills</span>} {ct.hasLogin && <span className="bd b-ok" style={{ marginLeft: 4 }}>login</span>}</>} mono />)}<div className="sm" style={{ marginTop: 6 }}>Bills go to the numbers marked <b>bills</b> — the firm can change that from its own portal. Owner authority may approve a credit-breaching order; Staff cannot — it routes to the owner.</div></Section>
           </div></div>
           <div className="pn"><div className="pnb">
             <LocationSection id={id} />
@@ -232,7 +232,7 @@ export function PaymentModal({ customerId }: { customerId?: string }) { const { 
 
 const ROLES = ["Owner", "Staff", "Office", "Accounts", "Other"];
 const MACHINE_TYPES = ["Offset", "Screen", "Flex", "UV", "Digital", "Binding", "Other"];
-type FormContact = { id?: string; name: string; role: string; phone: string; authority: "Owner" | "Staff" };
+type FormContact = { id?: string; name: string; role: string; phone: string; authority: "Owner" | "Staff"; billsTo: boolean };
 type FormMachine = { type: string; spec: Record<string, string> };
 
 // One screen for the whole firm: who they are, every number they answer on,
@@ -252,7 +252,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
   });
   const [contacts, setContacts] = useState<FormContact[]>(
     customer?.contacts?.length
-      ? customer.contacts.map((c) => ({ id: c.id, name: c.name, role: c.role, phone: c.phone, authority: (c.authority === "Owner" ? "Owner" : "Staff") as "Owner" | "Staff" }))
+      ? customer.contacts.map((c) => ({ id: c.id, name: c.name, role: c.role, phone: c.phone, authority: (c.authority === "Owner" ? "Owner" : "Staff") as "Owner" | "Staff", billsTo: !!c.billsTo }))
       : [],
   );
   const [machines, setMachines] = useState<FormMachine[]>(customer?.machines?.map((m) => ({ type: m.type, spec: { ...m.spec } })) ?? []);
@@ -291,15 +291,16 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
     />
 
     <div className="st" style={{ marginTop: 16 }}>Numbers &amp; staff</div>
-    <div className="sm" style={{ marginBottom: 7 }}>The owner above is saved automatically. Add the office, accounts or a staff member here — a bill can then be sent to whichever of them handles bills.</div>
-    {contacts.map((c, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.3fr 1fr auto", gap: 7, marginBottom: 7, alignItems: "center" }}>
+    <div className="sm" style={{ marginBottom: 7 }}>The owner above is saved automatically. Add the office, accounts or a staff member here, and tick <b>bills</b> against whoever should receive them — the share dialog offers those numbers first. The firm can change this itself from its portal.</div>
+    {contacts.map((c, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.3fr 1fr auto auto", gap: 7, marginBottom: 7, alignItems: "center" }}>
       <input placeholder="Name" value={c.name} onChange={(e) => setC(i, { name: e.target.value })} />
       <select value={c.role} onChange={(e) => setC(i, { role: e.target.value })}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select>
       <input placeholder="+91 94141 00000" value={c.phone} onChange={(e) => setC(i, { phone: e.target.value })} />
       <select value={c.authority} onChange={(e) => setC(i, { authority: e.target.value as "Owner" | "Staff" })} title="Owner authority may approve a credit-breaching order"><option value="Staff">Staff authority</option><option value="Owner">Owner authority</option></select>
+      <label className="sm" style={{ display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }} title="Bills are sent to this number"><input className="ck" type="checkbox" checked={c.billsTo} onChange={(e) => setC(i, { billsTo: e.target.checked })} />bills</label>
       <button className="b b-g b-s" onClick={() => setContacts((cs) => cs.filter((_, n) => n !== i))} title="Remove"><Icon n="x" s={11} /></button>
     </div>)}
-    <button className="b b-o b-s" onClick={() => setContacts((cs) => [...cs, { name: "", role: "Staff", phone: "", authority: "Staff" }])}>+ Add number</button>
+    <button className="b b-o b-s" onClick={() => setContacts((cs) => [...cs, { name: "", role: "Staff", phone: "", authority: "Staff", billsTo: false }])}>+ Add number</button>
 
     <div className="st" style={{ marginTop: 16 }}>Machines &amp; equipment</div>
     <div className="sm" style={{ marginBottom: 7 }}>What is on this firm&apos;s floor. Drives consumables reorder prediction and targeted ad slots — and answers which firm is running which machine.</div>

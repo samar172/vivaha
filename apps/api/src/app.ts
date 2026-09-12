@@ -27,6 +27,7 @@ import searchRoutes from "./modules/search/search.routes";
 import codesRoutes from "./modules/codes/codes.routes";
 import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 import portalRoutes from "./modules/portal/portal.routes";
+import portalStaffRoutes from "./modules/portal/staff.routes";
 
 export const app = express();
 app.set("trust proxy", 1);
@@ -73,6 +74,9 @@ app.use("/api/settings", ...internal, settingsRoutes);
 app.use("/api/codes", ...internal, codesRoutes);
 app.use("/api/search", ...internal, searchRoutes);
 app.use("/api/dashboard", ...internal, dashboardRoutes);
+// The firm's own staff list, mounted ahead of the portal router so it keeps
+// its own file — it is the one part of the portal that writes to User rows.
+app.use("/api/portal/staff", requireAuth, requireCustomer, portalStaffRoutes);
 app.use("/api/portal", requireAuth, requireCustomer, portalRoutes);
 
 app.use(errorHandler);

@@ -8,7 +8,7 @@ import { ModalFrame, Field, Note } from "./ui";
 import { Icon } from "./icons";
 import type { Invoice } from "./types";
 
-interface BillContact { id: string; name: string; role: string; phone: string }
+interface BillContact { id: string; name: string; role: string; phone: string; billsTo?: boolean }
 
 // WhatsApp only ever reaches a number someone chose. The firm is on several —
 // the owner, the office, accounts — and the bill goes to whichever of them
@@ -24,8 +24,12 @@ const waDigits = (phone: string) => {
   return d.length === 10 ? "91" + d : d.replace(/^0+/, "");
 };
 
-function ShareBillModal({ inv, contacts, whatsappFrom }: { inv: Invoice & { customer: { name: string; phone?: string }; sentCount?: number; lastSent?: { at: string; by: string; toName: string; toPhone: string } | null }; contacts: BillContact[]; whatsappFrom?: string }) {
+function ShareBillModal({ inv, contacts: all, whatsappFrom }: { inv: Invoice & { customer: { name: string; phone?: string }; sentCount?: number; lastSent?: { at: string; by: string; toName: string; toPhone: string } | null }; contacts: BillContact[]; whatsappFrom?: string }) {
   const { closeModal, toast } = useUI();
+  // The firm says which of its numbers takes the bills. Those come first and
+  // one of them is selected, so the common case is press-and-send; the rest are
+  // still in the list for the times it has to go somewhere else.
+  const contacts = [...all].sort((a, b) => Number(!!b.billsTo) - Number(!!a.billsTo));
   const [sel, setSel] = useState(contacts[0]?.id ?? "");
   const [note, setNote] = useState("");
   const c = contacts.find((x) => x.id === sel);
@@ -59,9 +63,9 @@ function ShareBillModal({ inv, contacts, whatsappFrom }: { inv: Invoice & { cust
     {inv.sentCount ? <Note style={{ marginBottom: 11 }}>
       Already sent {inv.sentCount === 1 ? "once" : `${inv.sentCount} times`}{inv.lastSent ? <> — last on {fDate(inv.lastSent.at)} to {inv.lastSent.toName || inv.lastSent.toPhone}, by {inv.lastSent.by}</> : null}. Sending again is a reminder.
     </Note> : null}
-    <Field label="Send to" full hint="The firm's saved numbers">
+    <Field label="Send to" full hint="The firm marks which of its numbers takes bills">
       <select value={sel} onChange={(e) => setSel(e.target.value)}>
-        {contacts.map((x) => <option key={x.id} value={x.id}>{x.role} — {x.name} · {x.phone}</option>)}
+        {contacts.map((x) => <option key={x.id} value={x.id}>{x.role} — {x.name} · {x.phone}{x.billsTo ? " · bills" : ""}</option>)}
       </select>
     </Field>
     <Field label="Add a line (optional)" full><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Kindly clear by the 10th" /></Field>

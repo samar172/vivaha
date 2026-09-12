@@ -107,6 +107,44 @@ export const M = {
     hi: `${lineName} पहले ही ${prefix}/${fy} पर बिल बना चुकी है — सीरीज़ शुरू होने के बाद शुरुआती नंबर नहीं बदलता। यह अगले वित्त वर्ष पर लागू होगा।`,
   }),
 
+  // ── Firm's own staff (portal) ────────────────────────────────────────────
+  ownerOnly: (): Bilingual => ({
+    en: "Only the firm's owner can manage staff and logins",
+    hi: "स्टाफ़ और लॉगिन सिर्फ़ फ़र्म के मालिक ही बना या बदल सकते हैं",
+  }),
+  staffLimit: (limit: number): Bilingual => ({
+    en: `A firm can hold ${limit} people on its list — remove one before adding another`,
+    hi: `एक फ़र्म की सूची में ${limit} लोग रह सकते हैं — नया जोड़ने से पहले किसी को हटाएं`,
+  }),
+  phoneAlready: (name: string): Bilingual => ({
+    en: `${name} is already on this number`,
+    hi: `${name} इसी नंबर पर पहले से हैं`,
+  }),
+  badPhone: (): Bilingual => ({
+    en: "Enter a 10-digit mobile number",
+    hi: "10 अंकों का मोबाइल नंबर लिखें",
+  }),
+  ownerStays: (): Bilingual => ({
+    en: "The owner's own entry cannot be removed — the office changes it",
+    hi: "मालिक की अपनी एंट्री नहीं हटाई जा सकती — इसे ऑफ़िस बदलता है",
+  }),
+  ownerAuthorityOffice: (): Bilingual => ({
+    en: "Owner authority is given by the office, not from here",
+    hi: "मालिक का अधिकार ऑफ़िस देता है, यहाँ से नहीं",
+  }),
+  cannotLockSelf: (): Bilingual => ({
+    en: "That is the login you are signed in with",
+    hi: "आप इसी लॉगिन से साइन इन हैं",
+  }),
+  billsNeedOne: (): Bilingual => ({
+    en: "At least one number has to receive the bills",
+    hi: "बिल पाने के लिए कम से कम एक नंबर चुना होना चाहिए",
+  }),
+  hasLoginAlready: (): Bilingual => ({
+    en: "This person already has a login — reset the password instead",
+    hi: "इनका लॉगिन पहले से है — पासवर्ड दोबारा जारी करें",
+  }),
+
   // ── Not found ────────────────────────────────────────────────────────────
   itemNotFound: (): Bilingual => ({ en: "Item not found", hi: "आइटम नहीं मिला" }),
   firmNotFound: (): Bilingual => ({ en: "Firm not found", hi: "फ़र्म नहीं मिली" }),
