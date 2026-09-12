@@ -140,6 +140,21 @@ were reinstalled. `docs/DEPLOY.md` now says plainly never to use that flag.
 - README "Not yet done" otherwise unchanged: server-side Excel/PDF exports,
   physical stock-count session, real camera scanning in the portal.
 
+### Returns as a page
+
+Returns was the last list whose record only existed inside the row — two
+buttons at the end of a line, a truncated reason, nothing about the order it
+came off. `/returns/<id>` now matches items, customers, orders, jobs,
+purchases and ledgers.
+
+`GET /api/returns/:id` is new (the list endpoint was the only one). It returns
+the **order line rate** behind the return, since a credit note is raised at
+what the firm paid rather than at today's rate; where the returned item is not
+on that order — seeded history has a couple — it comes back null and the page
+shows a dash instead of a wrong number. The history comes from the audit log
+rather than a table of its own: a return has three transitions in its life and
+they are already written there.
+
 ### Zero errors and zero warnings (`bc07eb1`)
 
 `eslint`, `tsc --noEmit` and `next build` are all clean on the whole web
