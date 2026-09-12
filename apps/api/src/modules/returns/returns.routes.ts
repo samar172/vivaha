@@ -19,6 +19,44 @@ router.get("/", requirePerm("return.view"), asyncHandler(async (_req, res) => {
   res.json(rows.map((r) => ({ ...r, creditAmount: r.creditAmount == null ? null : D(r.creditAmount) })));
 }));
 
+// One return, with everything the inspection desk needs on a page: the line it
+// came off, what the firm paid for it, and the trail of who moved it where.
+// The trail comes from the audit log rather than a table of its own — a return
+// has three transitions in its life, and they are already written there.
+router.get("/:id", requirePerm("return.view"), asyncHandler(async (req, res) => {
+  const r = await prisma.returnRequest.findUnique({
+    where: { id: req.params.id },
+    include: {
+      item: { select: { id: true, sku: true, name: true, uom: true, gstPct: true, lineId: true } },
+      customer: { select: { id: true, name: true, gstin: true, tehsil: true, contactName: true, phone: true } },
+      order: { select: { id: true, status: true, createdAt: true, total: true, lines: { select: { itemId: true, qty: true, rate: true } } } },
+    },
+  });
+  if (!r) throw notFound("Return not found");
+
+  const [trail, godowns, credit] = await Promise.all([
+    prisma.auditLog.findMany({ where: { entityType: "Return", entityId: r.id }, orderBy: { createdAt: "asc" } }),
+    prisma.godown.findMany({ select: { id: true, name: true, short: true } }),
+    r.creditNoteNo ? prisma.ledgerEntry.findFirst({ where: { ref: r.creditNoteNo } }) : Promise.resolve(null),
+  ]);
+
+  // What the firm was actually charged for these pieces, which is what a credit
+  // note is worked out from — the order line rate, not today's rate.
+  const ol = r.order.lines.find((l) => l.itemId === r.itemId);
+  const soldRate = ol ? D(ol.rate) : null;
+
+  res.json({
+    ...r,
+    creditAmount: r.creditAmount == null ? null : D(r.creditAmount),
+    soldRate,
+    soldQty: ol?.qty ?? null,
+    order: { ...r.order, total: D(r.order.total), lines: undefined },
+    godown: r.godownId ? godowns.find((g) => g.id === r.godownId) ?? null : null,
+    credit: credit ? { ...credit, debit: D(credit.debit), credit: D(credit.credit) } : null,
+    trail: trail.map((t) => ({ at: t.createdAt, actor: t.actor, action: t.action, from: t.oldValue, to: t.newValue, why: t.reason })),
+  });
+}));
+
 router.post("/:id/start-inspection", requirePerm("return.process"), asyncHandler(async (req, res) => {
   const r = await prisma.returnRequest.findUnique({ where: { id: req.params.id } });
   if (!r) throw notFound();
