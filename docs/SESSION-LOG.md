@@ -140,6 +140,30 @@ were reinstalled. `docs/DEPLOY.md` now says plainly never to use that flag.
 - README "Not yet done" otherwise unchanged: server-side Excel/PDF exports,
   physical stock-count session, real camera scanning in the portal.
 
+### The firm's own staff list, and where its bills go (`5c3a1c4`)
+
+`/portal/staff`, owner only. The owner adds people, issues and re-issues their
+logins (password shown once, `mustChangePassword` set), disables one when
+somebody leaves, and ticks which numbers take the bills. A staff login sees
+the list and no buttons.
+
+Held back from the portal deliberately: **owner authority** — it is what
+clears a credit-breaching order, so a portal-created login is always Staff —
+and the owner's own contact row, which is the firm's registered contact. Every
+action audits as `Name (CUST-xxx)` and notifies the sales executive. Cap of
+ten people per firm.
+
+`CustomerContact` gained `billsTo` and `userId`. `billsTo` is what the
+share-bill dialog now sorts and defaults on, instead of `contacts[0]`; both
+office paths and the portal refuse to leave a firm with no billing number.
+`userId` replaces matching a contact to its login **by name** — the migration
+backfills from that match, leaves ambiguous pairs unlinked, and marks every
+owner as the billing number.
+
+One bug of my own, caught in testing and worth remembering: the PATCH handler
+synced the login's name from the *requested* name rather than the *written*
+one, so an owner's refused self-rename still renamed their login.
+
 ### Returns as a page
 
 Returns was the last list whose record only existed inside the row — two
