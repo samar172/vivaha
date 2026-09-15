@@ -39,12 +39,14 @@ const lineOf = (req: { query: Record<string, unknown> }) => String(req.query.lin
 // bought" are told apart, and the reward is only counted once there is an order.
 router.get("/referral", requirePerm("report.view"), asyncHandler(async (req, res) => {
   const refs = await prisma.referral.findMany({ include: { by: { select: { id: true, name: true, tehsil: true, referCode: true } } }, orderBy: { createdAt: "desc" } });
-  // A referred firm is matched by name — that is the only link the submission
-  // captures, so the match is reported rather than assumed.
+  // A firm opened on somebody's refer code carries the link outright. The name
+  // match stays behind it for referrals written down before that existed, and
+  // for a firm that walked in without mentioning the code.
   const customers = await prisma.customer.findMany({ select: { id: true, name: true, createdAt: true, orders: { where: { status: { notIn: ["LAPSED", "REJECTED", "CANCELLED"] } }, select: { total: true } } } });
   const byName = new Map(customers.map((c) => [c.name.trim().toLowerCase(), c]));
+  const byId = new Map(customers.map((c) => [c.id, c]));
   res.json(refs.map((r) => {
-    const joined = byName.get(r.name.trim().toLowerCase()) ?? null;
+    const joined = (r.customerId ? byId.get(r.customerId) : null) ?? byName.get(r.name.trim().toLowerCase()) ?? null;
     const orders = joined?.orders ?? [];
     const business = orders.reduce((s, o) => s + D(o.total), 0);
     // The reward is earned on business done, not on a name being written down.

@@ -6,7 +6,7 @@ import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
-import { post } from "@/lib/api";
+import { post, patch } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { Pill, DF, Section, ModalFrame, Field, Note } from "@/components/ui";
@@ -31,7 +31,7 @@ export default function PurchasePage() {
         <div className="gw"><table className="dg"><thead><tr><th>Document</th><th>Vendor</th><th>Date</th><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Freight</th><th className="n">Value</th><th>Godown split</th><th>Status</th></tr></thead><tbody>
           {pg.rows.map((p) => { const l = p.lines[0]; return <tr key={p.id} onClick={() => router.push(`/purchase/${p.id}`)}><td><span className="rid">{p.invNo}</span><div className="sm">{p.id}</div></td><td className="w">{p.vendor.name}<div className="sm">{p.vendor.gstin}</div></td><td className="tab">{fDate(p.date)}</td><td className="w">{l?.item.name}<div className="sm">{l?.item.sku}{p.lines.length > 1 ? ` +${p.lines.length - 1}` : ""}</div></td><td className="n tab">{num(l?.qty)}</td><td className="n tab">{money(l?.rate)}</td><td className="n tab">{money(p.freight)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(p.total + p.freight)}</td><td className="sm">{l && Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => g.replace("GD-", "") + ":" + num(l.alloc[g])).join(" · ") : "—"}</td><td><Pill s={p.status} /></td></tr>; })}
         </tbody></table></div></>}
-      {tab === "vend" && <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>GSTIN</th><th>City</th><th>Terms</th><th>Phone</th><th className="n">Documents</th><th className="n">Purchased</th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} style={{ cursor: "default" }}><td>{v.name}</td><td className="sm">{v.gstin}</td><td>{v.city}</td><td>{v.terms}</td><td className="sm">{v.phone}</td><td className="n tab">{v.documents}</td><td className="n tab">{money(v.purchased)}</td></tr>)}</tbody></table></div>}
+      {tab === "vend" && <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>GSTIN</th><th>City</th><th>Terms</th><th>Phone</th><th className="n">Documents</th><th className="n">Purchased</th><th></th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} onClick={() => can("purchase.create") && openModal(<VendorForm vendor={v} />)} style={{ cursor: can("purchase.create") ? "pointer" : "default" }}><td>{v.name}</td><td className="sm">{v.gstin}</td><td>{v.city}</td><td>{v.terms}</td><td className="sm">{v.phone}</td><td className="n tab">{v.documents}</td><td className="n tab">{money(v.purchased)}</td><td>{can("purchase.create") && <button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); openModal(<VendorForm vendor={v} />); }}>Edit</button>}</td></tr>)}</tbody></table></div>}
       {tab === "pay" && <><Note style={{ marginBottom: 11 }}>Vendor payables mirror the customer ledger: an invoice posts a credit, a payment posts a debit, ageing runs from the invoice date.</Note>
         <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>Terms</th><th className="n">Invoiced</th><th className="n">Paid</th><th className="n">Outstanding</th><th className="n">Oldest</th><th></th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} style={{ cursor: "default" }}><td>{v.name}</td><td>{v.terms}</td><td className="n tab">{money(v.invoiced)}</td><td className="n tab" style={{ color: "var(--ok)" }}>{money(v.paid)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{money(v.outstanding)}</td><td className="n tab" style={{ color: v.oldestDays > 60 ? "var(--er)" : "var(--t6)" }}>{v.oldestDays} d</td><td>{can("purchase.create") && <button className="b b-o b-s" onClick={() => openModal(<VendorPayModal v={v} />)}>Pay</button>}</td></tr>)}</tbody></table></div></>}
     </div>
@@ -120,7 +120,7 @@ function AllocInputs({ godowns, alloc, setAlloc, qty }: { godowns: { id: string;
 }
 
 function PurchaseModal() {
-  const { closeModal, toast } = useUI(); const { data: godowns } = useGodowns(); const { data: lines } = useLines(); const { data: vendors } = useApi<Vendor[]>("/api/masters/vendors");
+  const { closeModal, toast } = useUI(); const { data: godowns } = useGodowns(); const { data: lines } = useLines(); const { data: vendors, mutate: mutVendors } = useApi<Vendor[]>("/api/masters/vendors");
   const { line: globalLine } = useAppState();
   // A purchase belongs to one module. The item list is scoped to that line and
   // never shows anything from another — cards here, ink there, no crossover.
@@ -131,51 +131,190 @@ function PurchaseModal() {
   const { data: items, mutate: mutItems } = useApi<{ items: ItemView[] }>(lineId ? `/api/items?line=${lineId}` : null);
   const its = items?.items ?? [];
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useState(() => ({ vendorId: "", invNo: "PINV-" + (7900 + Math.floor(Math.random() * 90)), itemId: "", qty: 1200, rate: 40, freight: 1800, batchNo: "", mfrCode: "", status: "POSTED" as "POSTED" | "IN_TRANSIT", eta: "" }));
-  const [alloc, setAlloc] = useState<Record<string, number>>({ "GD-A": 500, "GD-B": 400, "GD-C": 300 });
-  const it = its.find((i) => i.id === f.itemId) ?? its[0];
-  const landed = f.qty > 0 ? (f.qty * f.rate + f.freight) / f.qty : 0;
-  const switchLine = (id: string) => { setPickedLine(id); setF((s) => ({ ...s, itemId: "", batchNo: "", mfrCode: "" })); setAdding(false); };
+  const [newVendor, setNewVendor] = useState(false);
+  // A vendor invoice lists what the lorry brought, which is rarely one item.
+  // Each row carries its own quantity, rate, batch, label and godown split;
+  // freight is charged once on the document and apportioned across them.
+  const [rows, setRows] = useState<PoRow[]>([blankRow()]);
+  const [f, setF] = useState(() => ({ vendorId: "", invNo: "PINV-" + (7900 + Math.floor(Math.random() * 90)), freight: 1800, status: "POSTED" as "POSTED" | "IN_TRANSIT", eta: "" }));
+  const [busy, setBusy] = useState(false);
+
+  const setRow = (i: number, patch: Partial<PoRow>) => setRows((rs) => rs.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((rs) => [...rs, blankRow()]);
+  const dropRow = (i: number) => setRows((rs) => (rs.length === 1 ? rs : rs.filter((_, n) => n !== i)));
+  const switchLine = (id: string) => { setPickedLine(id); setRows([blankRow()]); setAdding(false); };
+
+  const itemOf = (r: PoRow) => its.find((i) => i.id === r.itemId) ?? null;
+  const goods = rows.reduce((sum, r) => sum + Number(r.qty) * Number(r.rate), 0);
+
   const submit = async () => {
-    if (!it) return toast(`No item in ${L?.name ?? "this line"} yet — add one first`, "e");
+    if (!its.length) return toast(`No item in ${L?.name ?? "this line"} yet — add one first`, "e");
+    const picked = rows.filter((r) => r.itemId && Number(r.qty) > 0);
+    if (!picked.length) return toast("Add at least one item with a quantity", "e");
+    const dupes = picked.map((r) => r.itemId).filter((id, i, a) => a.indexOf(id) !== i);
+    if (dupes.length) return toast("The same item is on two lines — put the whole quantity on one", "e");
+    if (f.status === "POSTED") {
+      for (const r of picked) {
+        const sum = Object.values(r.alloc).reduce((a, v) => a + (Number(v) || 0), 0);
+        if (sum !== Number(r.qty)) return toast(`${itemOf(r)?.sku ?? "A line"}: the godown split must add up to ${num(Number(r.qty))}`, "e");
+        if (L?.batchTracked && !r.batchNo.trim()) return toast(`${itemOf(r)?.sku ?? "A line"} is batch-tracked — enter the batch number`, "e");
+      }
+    }
+    setBusy(true);
     try {
-      await post("/api/purchases", { vendorId: f.vendorId || vendors?.[0]?.id, invNo: f.invNo, freight: Number(f.freight), status: f.status, eta: f.eta || undefined, lines: [{ itemId: it.id, qty: Number(f.qty), rate: Number(f.rate), alloc, batchNo: f.batchNo || undefined, mfrCode: f.mfrCode || undefined }] });
-      toast(f.status === "POSTED" ? `Receipt posted · landed cost recalculated${f.mfrCode ? " · label recorded" : ""}` : "PO raised — items show 'Arriving' until received", "s");
+      await post("/api/purchases", {
+        vendorId: f.vendorId || vendors?.[0]?.id, invNo: f.invNo, freight: Number(f.freight), status: f.status,
+        eta: f.eta || undefined,
+        lines: picked.map((r) => ({
+          itemId: r.itemId, qty: Number(r.qty), rate: Number(r.rate), alloc: r.alloc,
+          batchNo: r.batchNo || undefined, mfrCode: r.mfrCode || undefined,
+        })),
+      });
+      toast(f.status === "POSTED"
+        ? `Receipt posted · ${picked.length} item${picked.length === 1 ? "" : "s"} · landed cost recalculated`
+        : `PO raised · ${picked.length} item${picked.length === 1 ? "" : "s"} — they show 'Arriving' until received`, "s");
       closeModal(); refresh("/api/");
-    } catch (e) { toast(errMsg(e), "e"); }
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
   };
-  return <ModalFrame title={`New purchase invoice — ${L?.name ?? "…"}`} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={adding} onClick={submit}>{f.status === "POSTED" ? "Post receipt" : "Raise PO"}</button></>}>
+
+  return <ModalFrame title={`New purchase invoice — ${L?.name ?? "…"}`} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={adding || busy} onClick={submit}>{f.status === "POSTED" ? "Post receipt" : "Raise PO"}</button></>}>
     <div className="fg">
       <Field label="Business line — the document stays inside it" full>
         <select value={lineId} onChange={(e) => switchLine(e.target.value)}>{stockLines.map((l) => <option key={l.id} value={l.id}>{l.name} · {l.uom} · GST {l.gstPct}%</option>)}</select>
       </Field>
-      <Field label="Vendor"><select value={f.vendorId || vendors?.[0]?.id || ""} onChange={(e) => setF({ ...f, vendorId: e.target.value })}>{vendors?.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
-      <Field label="Vendor invoice no"><input value={f.invNo} onChange={(e) => setF({ ...f, invNo: e.target.value })} /></Field>
-      <Field label={`Item — ${L?.name ?? ""} only (${its.length})`} full>
+      <Field label="Vendor">
         <div style={{ display: "flex", gap: 7 }}>
-          <select style={{ flex: 1 }} value={it?.id ?? ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>
-            {its.length ? its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>) : <option value="">No {L?.name} items yet</option>}
-          </select>
-          <button className="b b-o" type="button" onClick={() => setAdding((a) => !a)}>{adding ? "Cancel" : "+ New item"}</button>
+          <select style={{ flex: 1 }} value={f.vendorId || vendors?.[0]?.id || ""} onChange={(e) => setF({ ...f, vendorId: e.target.value })}>{vendors?.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</select>
+          <button className="b b-o" type="button" onClick={() => setNewVendor((v) => !v)}>{newVendor ? "Cancel" : "+ New"}</button>
         </div>
       </Field>
+      <Field label="Vendor invoice no"><input value={f.invNo} onChange={(e) => setF({ ...f, invNo: e.target.value })} /></Field>
     </div>
 
-    {adding && L && <NewItemInline line={L} vendorId={f.vendorId || vendors?.[0]?.id || ""} onDone={async (created) => { await mutItems(); setF((s) => ({ ...s, itemId: created.id, rate: created.landedCost || s.rate })); setAdding(false); toast(`${created.sku} created in ${L.name}`, "s"); refresh("/api/items"); }} />}
+    {newVendor && <VendorInline onDone={async (v) => { await mutVendors(); setF((x) => ({ ...x, vendorId: v.id })); setNewVendor(false); toast(`${v.name} added`, "s"); }} onCancel={() => setNewVendor(false)} />}
 
-    {!adding && <>
-      <div className="fg" style={{ marginTop: 11 }}>
-        <Field label="Quantity"><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field>
-        <Field label="Rate (₹)"><input type="number" value={f.rate} onChange={(e) => setF({ ...f, rate: Number(e.target.value) })} /></Field>
-        <Field label="Freight & charges (₹)"><input type="number" value={f.freight} onChange={(e) => setF({ ...f, freight: Number(e.target.value) })} /></Field>
-        <Field label={L?.batchTracked ? "Batch (required for this line)" : "Batch (consumables)"}><input value={f.batchNo} onChange={(e) => setF({ ...f, batchNo: e.target.value })} placeholder="e.g. B2699" /></Field>
-        <Field label="Manufacturer QR / label code" full><input value={f.mfrCode} onChange={(e) => setF({ ...f, mfrCode: e.target.value })} placeholder="Scan or type the code printed on the cartons — e.g. SGP-4113" /></Field>
-        <Field label="Status"><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value as "POSTED" })}><option value="POSTED">Received now (GRN)</option><option value="IN_TRANSIT">In transit (PO)</option></select></Field>
-        {f.status === "IN_TRANSIT" && <Field label="ETA"><input type="date" value={f.eta} onChange={(e) => setF({ ...f, eta: e.target.value })} /></Field>}
-      </div>
-      {f.mfrCode && <Note style={{ marginTop: 9 }}>This label is filed against {it?.sku ?? "the item"} and stays scannable for good. Re-label it with your own code from Items → the item drawer.</Note>}
-      {f.status === "POSTED" && <div style={{ marginTop: 13 }}><div className="sm" style={{ marginBottom: 6, fontFamily: "inherit" }}>Godown allocation — must sum to the quantity</div><AllocInputs godowns={godowns ?? []} alloc={alloc} setAlloc={setAlloc} qty={f.qty} /><div className="sm" style={{ marginTop: 4 }}>goods value {money(f.qty * f.rate)} · landed cost <b>{money2(landed)}</b> per unit after freight</div></div>}
-    </>}
+    <div className="st" style={{ marginTop: 15 }}>Items on this invoice</div>
+    <div className="sm" style={{ marginBottom: 8 }}>Everything the vendor billed on one document, {L?.name ?? "this line"} only. Freight below is charged once and split across the lines by value.</div>
+
+    {rows.map((r, i) => {
+      const it = itemOf(r);
+      const landed = Number(r.qty) > 0 ? (Number(r.qty) * Number(r.rate) + (goods > 0 ? (Number(f.freight) * (Number(r.qty) * Number(r.rate))) / goods : 0)) / Number(r.qty) : 0;
+      return <div key={i} className="pol">
+        <div className="polh">
+          <span className="sm" style={{ fontWeight: 700 }}>Line {i + 1}</span>
+          {it && <span className="sm">{it.sku} · on hand {num(it.available)}</span>}
+          <span style={{ marginLeft: "auto" }} />
+          {rows.length > 1 && <button className="b b-g b-s" type="button" onClick={() => dropRow(i)} title="Remove this line"><Icon n="x" s={11} /></button>}
+        </div>
+        <div className="fg">
+          <Field label="Item" full>
+            <select value={r.itemId} onChange={(e) => setRow(i, { itemId: e.target.value, rate: its.find((x) => x.id === e.target.value)?.landedCost || r.rate })}>
+              <option value="">{its.length ? "Choose an item…" : `No ${L?.name} items yet`}</option>
+              {its.map((x) => <option key={x.id} value={x.id}>{x.sku} — {x.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Quantity"><input type="number" value={r.qty} onChange={(e) => setRow(i, { qty: Number(e.target.value) })} /></Field>
+          <Field label="Rate (₹)"><input type="number" value={r.rate} onChange={(e) => setRow(i, { rate: Number(e.target.value) })} /></Field>
+          <Field label={L?.batchTracked ? "Batch (required)" : "Batch (if any)"}><input value={r.batchNo} onChange={(e) => setRow(i, { batchNo: e.target.value })} placeholder="e.g. B2699" /></Field>
+          <Field label="Manufacturer label code"><input value={r.mfrCode} onChange={(e) => setRow(i, { mfrCode: e.target.value })} placeholder="e.g. SGP-4113" /></Field>
+        </div>
+        {f.status === "POSTED" && <div style={{ marginTop: 9 }}>
+          <div className="sm" style={{ marginBottom: 6, fontFamily: "inherit" }}>Godown allocation — must sum to the quantity</div>
+          <AllocInputs godowns={godowns ?? []} alloc={r.alloc} setAlloc={(a) => setRow(i, { alloc: a })} qty={Number(r.qty)} />
+        </div>}
+        {Number(r.qty) > 0 && Number(r.rate) > 0 && <div className="sm" style={{ marginTop: 7 }}>
+          goods {money(Number(r.qty) * Number(r.rate))} · landed <b>{money2(landed)}</b> per {it?.uom?.toLowerCase() ?? "unit"} after its share of freight
+        </div>}
+      </div>;
+    })}
+
+    <div style={{ display: "flex", gap: 7, marginTop: 4 }}>
+      <button className="b b-o b-s" type="button" disabled={!its.length} onClick={addRow}>+ Add another item</button>
+      <button className="b b-o b-s" type="button" onClick={() => setAdding((a) => !a)}>{adding ? "Cancel" : "+ Create a new item"}</button>
+    </div>
+
+    {adding && L && <NewItemInline line={L} vendorId={f.vendorId || vendors?.[0]?.id || ""} onDone={async (created) => {
+      await mutItems();
+      // The item somebody just created is what they meant to buy: drop it into
+      // the first empty line, or open a new one.
+      setRows((rs) => {
+        const blank = rs.findIndex((r) => !r.itemId);
+        const filled = { ...blankRow(), itemId: created.id, rate: created.landedCost || 0 };
+        return blank >= 0 ? rs.map((r, n) => (n === blank ? filled : r)) : [...rs, filled];
+      });
+      setAdding(false); toast(`${created.sku} created in ${L.name}`, "s"); refresh("/api/items");
+    }} />}
+
+    <div className="fg" style={{ marginTop: 13 }}>
+      <Field label="Freight & charges (₹) — whole document"><input type="number" value={f.freight} onChange={(e) => setF({ ...f, freight: Number(e.target.value) })} /></Field>
+      <Field label="Status"><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value as "POSTED" })}><option value="POSTED">Received now (GRN)</option><option value="IN_TRANSIT">In transit (PO)</option></select></Field>
+      {f.status === "IN_TRANSIT" && <Field label="ETA"><input type="date" value={f.eta} onChange={(e) => setF({ ...f, eta: e.target.value })} /></Field>}
+    </div>
+
+    <div className="pot">
+      <div className="df"><span className="k">Goods value · {rows.filter((r) => r.itemId).length} line{rows.filter((r) => r.itemId).length === 1 ? "" : "s"}</span><span className="v m">{money(goods)}</span></div>
+      <div className="df"><span className="k">Freight</span><span className="v m">{money(Number(f.freight))}</span></div>
+      <div className="df"><span className="k"><b>Document total</b></span><span className="v m" style={{ fontWeight: 700 }}>{money(goods + Number(f.freight))}</span></div>
+    </div>
+  </ModalFrame>;
+}
+
+interface PoRow { itemId: string; qty: number; rate: number; batchNo: string; mfrCode: string; alloc: Record<string, number> }
+const blankRow = (): PoRow => ({ itemId: "", qty: 0, rate: 0, batchNo: "", mfrCode: "", alloc: {} });
+
+// A vendor the office has not dealt with before, added without losing the
+// half-typed invoice behind it. Same fields as the vendor master, because it is
+// the vendor master — there is no lighter version of a firm you owe money to.
+function VendorInline({ onDone, onCancel }: { onDone: (v: Vendor) => void; onCancel: () => void }) {
+  const { toast } = useUI();
+  const [busy, setBusy] = useState(false);
+  const [v, setV] = useState({ name: "", gstin: "", terms: "Net 30", city: "", phone: "" });
+  const save = async () => {
+    if (!v.name.trim()) return toast("The vendor needs a name", "e");
+    setBusy(true);
+    try { onDone(await post<Vendor>("/api/masters/vendors", { ...v, gstin: v.gstin || undefined })); }
+    catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+  return <div className="inl">
+    <div className="inlh">New vendor</div>
+    <div className="fg">
+      <Field label="Vendor name *"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="e.g. Shubh Kagaz Mills" /></Field>
+      <Field label="GSTIN"><input value={v.gstin} onChange={(e) => setV({ ...v, gstin: e.target.value })} placeholder="33AABCS1429K1Z2" /></Field>
+      <Field label="City"><input value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} placeholder="Sivakasi" /></Field>
+      <Field label="Payment terms"><select value={v.terms} onChange={(e) => setV({ ...v, terms: e.target.value })}>{["Advance", "Net 15", "Net 30", "Net 45", "Net 60"].map((t) => <option key={t}>{t}</option>)}</select></Field>
+      <Field label="Phone" full><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} placeholder="+91 141 2200000" /></Field>
+    </div>
+    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+      <button className="b b-o b-s" type="button" onClick={onCancel}>Cancel</button>
+      <button className="b b-p b-s" type="button" disabled={busy} onClick={save}>Save vendor</button>
+    </div>
+  </div>;
+}
+
+// Editing one. A vendor's terms and numbers change; the documents that name it
+// keep their own figures, so this never rewrites what was already billed.
+export function VendorForm({ vendor }: { vendor: Vendor }) {
+  const { closeModal, toast } = useUI();
+  const [busy, setBusy] = useState(false);
+  const [v, setV] = useState({ name: vendor.name, gstin: vendor.gstin ?? "", terms: vendor.terms, city: vendor.city ?? "", phone: vendor.phone ?? "" });
+  const save = async () => {
+    if (!v.name.trim()) return toast("The vendor needs a name", "e");
+    setBusy(true);
+    try {
+      await patch(`/api/masters/vendors/${vendor.id}`, { ...v, gstin: v.gstin || undefined });
+      toast(`${v.name} updated`, "s"); closeModal(); refresh("/api/masters/vendors");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+  return <ModalFrame title={`Edit vendor — ${vendor.name}`} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={save}>Save changes</button></>}>
+    <div className="fg">
+      <Field label="Vendor name *"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></Field>
+      <Field label="GSTIN"><input value={v.gstin} onChange={(e) => setV({ ...v, gstin: e.target.value })} placeholder="33AABCS1429K1Z2" /></Field>
+      <Field label="City"><input value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} /></Field>
+      <Field label="Payment terms"><select value={v.terms} onChange={(e) => setV({ ...v, terms: e.target.value })}>{["Advance", "Net 15", "Net 30", "Net 45", "Net 60"].map((t) => <option key={t}>{t}</option>)}</select></Field>
+      <Field label="Phone" full><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} /></Field>
+    </div>
+    <Note style={{ marginTop: 11 }}>{vendor.documents} document{vendor.documents === 1 ? "" : "s"} name this vendor. They keep the figures they were billed at — only the vendor record changes.</Note>
   </ModalFrame>;
 }
 

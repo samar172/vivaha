@@ -550,3 +550,14 @@ input[type=number]{-moz-appearance:textfield}
 .pwov{position:fixed;inset:0;background:rgba(16,24,40,.45);z-index:400;display:flex;align-items:center;justify-content:center;padding:18px}
 .pwcd{width:100%;max-width:360px;background:#fff;border-radius:12px;padding:16px 17px;box-shadow:0 22px 60px rgba(16,24,40,.32)}
 .pwcd .tot{padding:7px 0}
+
+/* ============ MULTI-LINE PURCHASE INVOICE ============ */
+/* One block per item on the vendor's bill. Bordered rather than ruled, because
+   each line carries its own godown split and reads as a unit, not as a row. */
+.pol{border:1px solid var(--bd);border-radius:7px;padding:11px 12px;margin-bottom:9px;background:var(--panel-2)}
+.pol .fg{margin:0}
+.polh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.pot{margin-top:13px;padding-top:10px;border-top:1px solid var(--bd)}
+/* A record created without leaving the document that needed it. */
+.inl{margin-top:11px;border:1px solid var(--ac-bd);background:var(--ac-bg);border-radius:6px;padding:13px}
+.inlh{font-size:14px;font-weight:700;color:var(--ac-d);margin-bottom:9px}

@@ -7,7 +7,7 @@ import { requirePerm, can } from "../../middleware/auth";
 import { gatesForAll, customerFinance } from "../../services/credit";
 import { audit } from "../../services/audit";
 import { notify } from "../../services/notify";
-import { nextCustomerNo } from "../../services/sequence";
+import { nextCustomerNo, nextReferralNo } from "../../services/sequence";
 import { groupMultiplier } from "../../services/pricing";
 import { getMinMargin } from "../../services/settings";
 import { badRequest, notFound, forbidden } from "../../utils/httpError";
@@ -15,7 +15,14 @@ import { recordFix, validFix, metresBetween } from "../../services/geo";
 import { marginFloor, slabRate, M } from "@vivaha/shared";
 
 const router = Router();
-const custInclude = { contacts: true, machines: true, salesExec: { select: { id: true, name: true } }, users: { select: { username: true, isActive: true } } } as const;
+const custInclude = {
+  contacts: true, machines: true,
+  salesExec: { select: { id: true, name: true } },
+  users: { select: { username: true, isActive: true } },
+  // Who sent them, so the firm's own screen says it rather than the refer-and-earn
+  // report being the only place the link is visible.
+  referredBy: { select: { id: true, createdAt: true, state: true, by: { select: { id: true, name: true, referCode: true } } } },
+} as const;
 
 function serialize<T extends { creditLimit: unknown }>(c: T): Omit<T, "creditLimit"> & { creditLimit: number } {
   return { ...c, creditLimit: D(c.creditLimit as number) };
@@ -70,6 +77,8 @@ const custSchema = z.object({
   priceAdjPct: z.number().min(0, "A discount cannot be negative").max(90, "That is not a discount, that is a giveaway").default(0),
   machines: z.array(z.object({ type: z.string(), spec: z.record(z.string()).default({}) })).default([]),
   contacts: z.array(contactSchema).default([]),
+  // Whoever sent this firm to us, by the code printed on their own account.
+  referredByCode: z.string().trim().optional(),
   // Captured from the browser when the executive is standing in the shop and
   // permission is granted. Optional throughout — a refusal must never stop a
   // firm being created.
@@ -80,6 +89,12 @@ const custSchema = z.object({
 router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
   const b = custSchema.parse(req.body);
   if (await prisma.customer.findFirst({ where: { name: { equals: b.name, mode: "insensitive" } } })) throw badRequest("A firm with this name already exists");
+  // An unknown code is somebody mistyping at the counter. Say so before a firm
+  // exists, rather than creating one with the referral silently dropped.
+  const referrer = b.referredByCode
+    ? await prisma.customer.findFirst({ where: { referCode: { equals: b.referredByCode, mode: "insensitive" } } })
+    : null;
+  if (b.referredByCode && !referrer) throw badRequest(`No firm holds the refer code "${b.referredByCode}"`);
   const c = await prisma.$transaction(async (tx) => {
     const id = await nextCustomerNo(tx);
     const seq = Number(id.split("-")[1]);
@@ -96,6 +111,26 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
       await recordFix(tx, c.id, { lat: b.lat!, lng: b.lng!, accuracy: b.geoAccuracy ?? null }, "ONBOARDING", req.user!.name);
     }
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Customer created", entityType: "Customer", entityId: b.name, newValue: `${b.group} · limit ₹${b.creditLimit}`, reason: "New onboarding" });
+    if (referrer) {
+      // The referrer may have written this shop down months ago from their own
+      // portal. Attach that submission rather than raising a second one, so the
+      // reward is not counted twice — matched on the phone number, which is the
+      // one thing both sides type the same way.
+      const digits = (p: string) => p.replace(/\D/g, "").replace(/^(91|0)/, "");
+      const open = await tx.referral.findMany({ where: { byId: referrer.id, customerId: null } });
+      const already = open.find((r) => digits(r.phone) === digits(b.phone))
+        ?? open.find((r) => r.name.trim().toLowerCase() === b.name.trim().toLowerCase());
+      if (already) {
+        await tx.referral.update({ where: { id: already.id }, data: { customerId: c.id, state: "Joined" } });
+      } else {
+        await tx.referral.create({
+          data: { id: await nextReferralNo(tx), byId: referrer.id, name: b.name, tehsil: b.tehsil,
+                  phone: b.phone, address: b.address, state: "Joined", customerId: c.id },
+        });
+      }
+      await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Referral credited", entityType: "Customer", entityId: b.name, oldValue: referrer.referCode, newValue: referrer.name });
+      await notify(tx, { text: `${b.name} joined on ${referrer.name}'s refer code`, kind: "OK", role: "SALES_EXECUTIVE" });
+    }
     return c;
   });
   res.status(201).json(serialize(c));

@@ -77,6 +77,24 @@ router.post("/vendors", requirePerm("purchase.create"), asyncHandler(async (req,
   res.status(201).json(v);
 }));
 
+// A vendor's terms change, a GSTIN is corrected, a number moves. Editing one
+// leaves every purchase document that names it alone: the documents carry their
+// own figures, so correcting the vendor record never rewrites history.
+router.patch("/vendors/:id", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
+  const b = vendorSchema.partial().parse(req.body);
+  const before = await prisma.vendor.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Vendor not found");
+  if (b.name && b.name.trim() !== before.name) {
+    const clash = await prisma.vendor.findFirst({ where: { name: { equals: b.name.trim(), mode: "insensitive" }, id: { not: before.id } } });
+    if (clash) throw badRequest(`${clash.name} is already on file`);
+  }
+  const v = await prisma.vendor.update({ where: { id: before.id }, data: { ...b, ...(b.name ? { name: b.name.trim() } : {}) } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Vendor updated", entityType: "Vendor", entityId: v.id,
+                        oldValue: `${before.name} · ${before.terms} · ${before.gstin ?? "no GSTIN"}`,
+                        newValue: `${v.name} · ${v.terms} · ${v.gstin ?? "no GSTIN"}` });
+  res.json(v);
+}));
+
 router.get("/pricing-groups", asyncHandler(async (_req, res) => {
   const g = await prisma.pricingGroup.findMany();
   res.json(g.map((x) => ({ name: x.name, multiplier: D(x.multiplier) })));

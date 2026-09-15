@@ -53,7 +53,7 @@ export function CustomerDetail({ id }: { id: string }) {
               <DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} />
               <DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} />
               {!!c.priceAdjPct && <DF k="Firm discount" v={`${c.priceAdjPct}% off the group rate`} />}
-              <DF k="Refer code" v={c.referCode} mono /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} />
+              <DF k="Refer code" v={c.referCode} mono /><DF k="Referred by" v={c.referredBy ? <span style={{ cursor: "pointer" }} onClick={() => router.push(`/customers/${c.referredBy!.by.id}`)}>{c.referredBy.by.name} <span className="sm">{c.referredBy.by.referCode}</span></span> : "walked in"} /><DF k="Sales executive" v={c.salesExec?.name ?? "—"} />
               <DF k="Deals in" v={c.linesEnabled.map((l) => lines?.find((x) => x.id === l)?.name ?? l).join(", ")} />
             </Section>
           </div></div>
@@ -249,6 +249,9 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
     gateMode: (customer?.gateMode ?? "WARN") as "WARN" | "BLOCK",
     priceAdjPct: customer?.priceAdjPct ?? 0,
     lat: customer?.lat ?? null as number | null, lng: customer?.lng ?? null as number | null, geoAccuracy: customer?.geoAccuracy ?? null as number | null,
+    // Whoever sent them. Only asked at onboarding — a code cannot be applied
+    // afterwards without deciding whether months of business count as referred.
+    referredByCode: "",
   });
   const [contacts, setContacts] = useState<FormContact[]>(
     customer?.contacts?.length
@@ -267,7 +270,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
     if (!enabled.length) return toast("Tick at least one business line", "e");
     const clean = contacts.filter((c) => c.name.trim() && c.phone.trim());
     if (contacts.length !== clean.length) return toast("Every extra number needs a name and a phone — remove the blank rows", "e");
-    const body = { ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type) };
+    const body = { ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type), referredByCode: edit ? undefined : (f.referredByCode.trim() || undefined) };
     try {
       if (edit) { await patch(`/api/customers/${customer!.id}`, body); toast("Customer updated", "s"); }
       else { await post("/api/customers", body); toast("Customer created — refer code issued", "s"); }
@@ -276,7 +279,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
   };
 
   return <ModalFrame title={edit ? `Edit — ${customer!.name}` : "New customer"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>{edit ? "Save changes" : "Save customer"}</button></>}>
-    <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *" hint="The firm's primary number — more can be added below"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field><Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
+    <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *" hint="The firm's primary number — more can be added below"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field>{!edit && <Field label="Referred by — refer code" hint="The code on the referring firm's account. Leave blank if they walked in."><input value={f.referredByCode} onChange={(e) => setF({ ...f, referredByCode: e.target.value.toUpperCase() })} placeholder="VIVAHA-RJ4137" style={{ fontFamily: "var(--mono)" }} /></Field>}<Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
       <Field label="Address" full><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="Shop / street / landmark" /></Field>
       <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div></Field>
       <Field label="Pricing group"><select value={f.group} onChange={(e) => setF({ ...f, group: e.target.value })}>{groups?.map((g) => <option key={g.name} value={g.name}>{g.name} — ×{g.multiplier}</option>)}</select></Field><Field label="Sales executive"><select value={f.salesExecId} onChange={(e) => setF({ ...f, salesExecId: e.target.value })}><option value="">—</option>{execs?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>

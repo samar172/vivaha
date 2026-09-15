@@ -418,6 +418,7 @@ model Customer {
   kit        Kit?
   cart       Cart?
   referrals  Referral[]
+  referredBy Referral?     @relation("ReferredCustomer")
   recoveries CartRecovery[]
   stockoutHits StockoutSearch[]
 }
@@ -949,6 +950,12 @@ model Referral {
   state     String   @default("Submitted")
   reward    Decimal  @default(2000) @db.Decimal(12, 2)
   createdAt DateTime @default(now())
+  // The firm this referral turned into, once it signs up. Set when the office
+  // opens the account with the referrer's code in hand. Until this existed the
+  // report matched referral to firm on the name as typed, which missed every
+  // firm written down slightly differently from how it was registered.
+  customerId String?  @unique
+  customer   Customer? @relation("ReferredCustomer", fields: [customerId], references: [id], onDelete: SetNull)
 }
 
 // What the portal shows above the catalogue. Text-only and seeded-only until
