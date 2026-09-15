@@ -25,7 +25,9 @@ export default function PurchasePage() {
   const rows = pos ?? []; const pg = usePager(rows); useFooter(tab === "grn" ? rows.length : vendors?.length ?? 0, "", pg.page, pg.pages, pg.setPage);
   return <>
     <PageHead crumb={["Supply", "Purchase & GRN"]} title="Purchase & GRN" sub={`${rows.length} documents · ${vendors?.length ?? 0} vendors · landed cost recomputed on every receipt`} tabs={[{ k: "grn", l: "Purchase invoices", n: rows.length }, { k: "vend", l: "Vendors", n: vendors?.length }, { k: "pay", l: "Vendor payables", n: vendors?.length }]} tab={tab} onTab={setTab}
-      actions={<><button className="b b-o" onClick={() => exportCsv("purchase", ["PO", "Invoice", "Vendor", "Date", "Item", "Qty", "Rate", "Freight", "Status"], rows.map((p) => [p.id, p.invNo, p.vendor.name, fDate(p.date), p.lines[0]?.item.sku, p.lines[0]?.qty, p.lines[0]?.rate, p.freight, p.status]))}><Icon n="download" s={13} /> Export</button>{can("purchase.create") && <button className="b b-p" onClick={() => openModal(<PurchaseModal />, "w")}>+ New purchase invoice</button>}</>} />
+      actions={<><button className="b b-o" onClick={() => exportCsv("purchase", ["PO", "Invoice", "Vendor", "Date", "Item", "Qty", "Rate", "Freight", "Status"], rows.map((p) => [p.id, p.invNo, p.vendor.name, fDate(p.date), p.lines[0]?.item.sku, p.lines[0]?.qty, p.lines[0]?.rate, p.freight, p.status]))}><Icon n="download" s={13} /> Export</button>{can("purchase.create") && (tab === "grn"
+        ? <button className="b b-p" onClick={() => openModal(<PurchaseModal />, "w")}>+ New purchase invoice</button>
+        : <button className="b b-p" onClick={() => openModal(<VendorForm />)}>+ New vendor</button>)}</>} />
     <div className="wa">
       {tab === "grn" && <><div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="PO or invoice number…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
         <div className="gw"><table className="dg"><thead><tr><th>Document</th><th>Vendor</th><th>Date</th><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Freight</th><th className="n">Value</th><th>Godown split</th><th>Status</th></tr></thead><tbody>
@@ -58,6 +60,7 @@ export function PurchaseDetail({ id }: { id: string }) {
       sub={<>{p.status === "POSTED" ? "Goods received" : "In transit"} · {p.id} · {fDate(p.date)}{p.eta ? ` · ETA ${fDate(p.eta)}` : ""}</>}
       actions={<>
         <button className="b b-o" onClick={() => router.push("/purchase")}><Icon n="chevronL" s={13} /> Back to purchase</button>
+        {p.status === "IN_TRANSIT" && can("purchase.create") && <button className="b b-o" onClick={() => openModal(<PurchaseModal po={p} />, "w")}>Edit</button>}
         {p.status === "IN_TRANSIT" && can("purchase.create") && <button className="b b-p" onClick={() => openModal(<ReceiveModal p={p} />, "w")}>Receive goods</button>}
         <button className="b b-o" onClick={() => toast("Printed GRN", "i")}>Print GRN</button>
       </>}
@@ -119,13 +122,14 @@ function AllocInputs({ godowns, alloc, setAlloc, qty }: { godowns: { id: string;
   return <><div style={{ display: "flex", gap: 8 }}>{godowns.map((g) => <div key={g.id} style={{ flex: 1 }}><div className="sm" style={{ marginBottom: 3 }}>{g.short}</div><input type="number" value={alloc[g.id] ?? 0} onChange={(e) => setAlloc({ ...alloc, [g.id]: Number(e.target.value) || 0 })} style={{ width: "100%", height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></div>)}</div><div className="sm" style={{ marginTop: 7 }}>{s === qty ? <span style={{ color: "var(--ok)", fontWeight: 700 }}><Icon n="check" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} allocated</span> : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} — must equal quantity</span>}</div></>;
 }
 
-function PurchaseModal() {
+export function PurchaseModal({ po }: { po?: PO } = {}) {
   const { closeModal, toast } = useUI(); const { data: godowns } = useGodowns(); const { data: lines } = useLines(); const { data: vendors, mutate: mutVendors } = useApi<Vendor[]>("/api/masters/vendors");
   const { line: globalLine } = useAppState();
   // A purchase belongs to one module. The item list is scoped to that line and
   // never shows anything from another — cards here, ink there, no crossover.
   const stockLines = (lines ?? []).filter((l) => l.workflow !== "JOBWORK");
-  const [pickedLine, setPickedLine] = useState("");
+  const edit = !!po;
+  const [pickedLine, setPickedLine] = useState(po?.lines[0]?.item.lineId ?? "");
   const lineId = pickedLine || (globalLine !== "ALL" ? globalLine : "") || stockLines[0]?.id || "";
   const L = stockLines.find((l) => l.id === lineId);
   const { data: items, mutate: mutItems } = useApi<{ items: ItemView[] }>(lineId ? `/api/items?line=${lineId}` : null);
@@ -135,14 +139,24 @@ function PurchaseModal() {
   // A vendor invoice lists what the lorry brought, which is rarely one item.
   // Each row carries its own quantity, rate, batch, label and godown split;
   // freight is charged once on the document and apportioned across them.
-  const [rows, setRows] = useState<PoRow[]>([blankRow()]);
-  const [f, setF] = useState(() => ({ vendorId: "", invNo: "PINV-" + (7900 + Math.floor(Math.random() * 90)), freight: 1800, status: "POSTED" as "POSTED" | "IN_TRANSIT", eta: "" }));
+  const [rows, setRows] = useState<PoRow[]>(po
+    ? po.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, rate: l.rate, batchNo: l.batchNo ?? "", mfrCode: l.mfrCode ?? "", alloc: l.alloc ?? {} }))
+    : [blankRow()]);
+  const [f, setF] = useState(() => ({
+    vendorId: po?.vendor.id ?? "",
+    invNo: po?.invNo ?? "PINV-" + (7900 + Math.floor(Math.random() * 90)),
+    freight: po?.freight ?? 1800,
+    status: (po?.status ?? "POSTED") as "POSTED" | "IN_TRANSIT",
+    eta: po?.eta ? po.eta.slice(0, 10) : "",
+  }));
   const [busy, setBusy] = useState(false);
 
   const setRow = (i: number, patch: Partial<PoRow>) => setRows((rs) => rs.map((r, n) => (n === i ? { ...r, ...patch } : r)));
   const addRow = () => setRows((rs) => [...rs, blankRow()]);
   const dropRow = (i: number) => setRows((rs) => (rs.length === 1 ? rs : rs.filter((_, n) => n !== i)));
-  const switchLine = (id: string) => { setPickedLine(id); setRows([blankRow()]); setAdding(false); };
+  // Changing the line on an existing document would orphan its lines, so it is
+  // fixed once the document exists.
+  const switchLine = (id: string) => { if (edit) return; setPickedLine(id); setRows([blankRow()]); setAdding(false); };
 
   const itemOf = (r: PoRow) => its.find((i) => i.id === r.itemId) ?? null;
   const goods = rows.reduce((sum, r) => sum + Number(r.qty) * Number(r.rate), 0);
@@ -161,26 +175,31 @@ function PurchaseModal() {
       }
     }
     setBusy(true);
+    const body = {
+      vendorId: f.vendorId || vendors?.[0]?.id, invNo: f.invNo, freight: Number(f.freight), status: f.status,
+      eta: f.eta || undefined,
+      lines: picked.map((r) => ({
+        itemId: r.itemId, qty: Number(r.qty), rate: Number(r.rate), alloc: r.alloc,
+        batchNo: r.batchNo || undefined, mfrCode: r.mfrCode || undefined,
+      })),
+    };
     try {
-      await post("/api/purchases", {
-        vendorId: f.vendorId || vendors?.[0]?.id, invNo: f.invNo, freight: Number(f.freight), status: f.status,
-        eta: f.eta || undefined,
-        lines: picked.map((r) => ({
-          itemId: r.itemId, qty: Number(r.qty), rate: Number(r.rate), alloc: r.alloc,
-          batchNo: r.batchNo || undefined, mfrCode: r.mfrCode || undefined,
-        })),
-      });
-      toast(f.status === "POSTED"
-        ? `Receipt posted · ${picked.length} item${picked.length === 1 ? "" : "s"} · landed cost recalculated`
-        : `PO raised · ${picked.length} item${picked.length === 1 ? "" : "s"} — they show 'Arriving' until received`, "s");
+      if (edit) await patch(`/api/purchases/${po!.id}`, body);
+      else await post("/api/purchases", body);
+      toast(edit
+        ? `${po!.invNo} corrected · ${picked.length} item${picked.length === 1 ? "" : "s"}`
+        : f.status === "POSTED"
+          ? `Receipt posted · ${picked.length} item${picked.length === 1 ? "" : "s"} · landed cost recalculated`
+          : `PO raised · ${picked.length} item${picked.length === 1 ? "" : "s"} — they show 'Arriving' until received`, "s");
       closeModal(); refresh("/api/");
     } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
   };
 
-  return <ModalFrame title={`New purchase invoice — ${L?.name ?? "…"}`} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={adding || busy} onClick={submit}>{f.status === "POSTED" ? "Post receipt" : "Raise PO"}</button></>}>
+  return <ModalFrame title={edit ? `Edit — ${po!.invNo}` : `New purchase invoice — ${L?.name ?? "…"}`} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={adding || busy} onClick={submit}>{edit ? "Save changes" : f.status === "POSTED" ? "Post receipt" : "Raise PO"}</button></>}>
+    {edit && <Note style={{ marginBottom: 12 }}>This purchase is still in transit, so nothing has landed and the whole document can be corrected. Once it is received the goods are in a godown and the landed cost is recomputed around them — a correction after that is a stock adjustment, not an edit.</Note>}
     <div className="fg">
       <Field label="Business line — the document stays inside it" full>
-        <select value={lineId} onChange={(e) => switchLine(e.target.value)}>{stockLines.map((l) => <option key={l.id} value={l.id}>{l.name} · {l.uom} · GST {l.gstPct}%</option>)}</select>
+        <select value={lineId} disabled={edit} onChange={(e) => switchLine(e.target.value)}>{stockLines.map((l) => <option key={l.id} value={l.id}>{l.name} · {l.uom} · GST {l.gstPct}%</option>)}</select>
       </Field>
       <Field label="Vendor">
         <div style={{ display: "flex", gap: 7 }}>
@@ -293,20 +312,22 @@ function VendorInline({ onDone, onCancel }: { onDone: (v: Vendor) => void; onCan
 
 // Editing one. A vendor's terms and numbers change; the documents that name it
 // keep their own figures, so this never rewrites what was already billed.
-export function VendorForm({ vendor }: { vendor: Vendor }) {
+export function VendorForm({ vendor }: { vendor?: Vendor } = {}) {
   const { closeModal, toast } = useUI();
   const [busy, setBusy] = useState(false);
-  const [v, setV] = useState({ name: vendor.name, gstin: vendor.gstin ?? "", terms: vendor.terms, city: vendor.city ?? "", phone: vendor.phone ?? "" });
+  const [v, setV] = useState({ name: vendor?.name ?? "", gstin: vendor?.gstin ?? "", terms: vendor?.terms ?? "Net 30", city: vendor?.city ?? "", phone: vendor?.phone ?? "" });
   const save = async () => {
     if (!v.name.trim()) return toast("The vendor needs a name", "e");
     setBusy(true);
     try {
-      await patch(`/api/masters/vendors/${vendor.id}`, { ...v, gstin: v.gstin || undefined });
-      toast(`${v.name} updated`, "s"); closeModal(); refresh("/api/masters/vendors");
+      const body = { ...v, name: v.name.trim(), gstin: v.gstin || undefined };
+      if (vendor) { await patch(`/api/masters/vendors/${vendor.id}`, body); toast(`${v.name} updated`, "s"); }
+      else { await post("/api/masters/vendors", body); toast(`${v.name} added`, "s"); }
+      closeModal(); refresh("/api/masters/vendors");
     } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
   };
-  return <ModalFrame title={`Edit vendor — ${vendor.name}`} onClose={closeModal}
-    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={save}>Save changes</button></>}>
+  return <ModalFrame title={vendor ? `Edit vendor — ${vendor.name}` : "New vendor"} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={save}>{vendor ? "Save changes" : "Add vendor"}</button></>}>
     <div className="fg">
       <Field label="Vendor name *"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></Field>
       <Field label="GSTIN"><input value={v.gstin} onChange={(e) => setV({ ...v, gstin: e.target.value })} placeholder="33AABCS1429K1Z2" /></Field>
@@ -314,7 +335,9 @@ export function VendorForm({ vendor }: { vendor: Vendor }) {
       <Field label="Payment terms"><select value={v.terms} onChange={(e) => setV({ ...v, terms: e.target.value })}>{["Advance", "Net 15", "Net 30", "Net 45", "Net 60"].map((t) => <option key={t}>{t}</option>)}</select></Field>
       <Field label="Phone" full><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} /></Field>
     </div>
-    <Note style={{ marginTop: 11 }}>{vendor.documents} document{vendor.documents === 1 ? "" : "s"} name this vendor. They keep the figures they were billed at — only the vendor record changes.</Note>
+    {vendor
+      ? <Note style={{ marginTop: 11 }}>{vendor.documents} document{vendor.documents === 1 ? "" : "s"} name this vendor. They keep the figures they were billed at — only the vendor record changes.</Note>
+      : <Note style={{ marginTop: 11 }}>A vendor can also be added without leaving a purchase invoice — the <b>+ New</b> beside the vendor picker does the same thing.</Note>}
   </ModalFrame>;
 }
 

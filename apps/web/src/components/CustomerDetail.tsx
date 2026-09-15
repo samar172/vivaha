@@ -270,7 +270,16 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
     if (!enabled.length) return toast("Tick at least one business line", "e");
     const clean = contacts.filter((c) => c.name.trim() && c.phone.trim());
     if (contacts.length !== clean.length) return toast("Every extra number needs a name and a phone — remove the blank rows", "e");
-    const body = { ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined, contacts: clean, machines: machines.filter((m) => m.type), referredByCode: edit ? undefined : (f.referredByCode.trim() || undefined) };
+    // Numbers are coerced on the way out. The record comes back off the wire
+    // with the decimal columns as strings, and a field the operator never
+    // touched should not be able to fail the save.
+    const body = {
+      ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined,
+      creditLimit: Number(f.creditLimit) || 0, creditDays: Number(f.creditDays) || 0,
+      priceAdjPct: Number(f.priceAdjPct) || 0,
+      contacts: clean, machines: machines.filter((m) => m.type),
+      referredByCode: edit ? undefined : (f.referredByCode.trim() || undefined),
+    };
     try {
       if (edit) { await patch(`/api/customers/${customer!.id}`, body); toast("Customer updated", "s"); }
       else { await post("/api/customers", body); toast("Customer created — refer code issued", "s"); }

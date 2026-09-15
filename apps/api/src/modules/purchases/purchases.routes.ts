@@ -92,6 +92,52 @@ router.post("/", requirePerm("purchase.create"), asyncHandler(async (req, res) =
 }));
 
 // Receive an in-transit PO: allocate to godowns → stock lands, cost recomputed.
+// Correcting a document that has not landed yet.
+//
+// A purchase in transit has moved no stock and touched no landed cost, so its
+// lines can be replaced outright. Once it is received that stops being true —
+// the goods are in a godown and every item's landed cost has been recomputed
+// around them — so a posted receipt is refused here rather than silently
+// rewriting what the godown actually holds. That correction is a stock
+// adjustment, which is audited as one.
+router.patch("/:id", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
+  const b = poSchema.partial().parse(req.body);
+  const po = await prisma.purchase.findUnique({ where: { id: req.params.id }, include: { lines: true } });
+  if (!po) throw notFound("Purchase not found");
+  if (po.status === "POSTED") throw badRequest("This receipt is already posted — the goods are in the godown. Correct the quantity with a stock adjustment, which is audited against the item.");
+
+  if (b.lines) {
+    const items = await prisma.item.findMany({ where: { id: { in: b.lines.map((l) => l.itemId) } } });
+    if (items.length !== new Set(b.lines.map((l) => l.itemId)).size) throw badRequest("Unknown item on one of the lines");
+    if (new Set(items.map((i) => i.lineId)).size > 1) throw badRequest("A purchase invoice has to stay within one business line — raise a separate document per line");
+  }
+  const gross = (b.lines ?? po.lines.map((l) => ({ qty: l.qty, rate: D(l.rate) }))).reduce((s, l) => s + l.qty * l.rate, 0);
+
+  const out = await prisma.$transaction(async (tx) => {
+    if (b.lines) {
+      await tx.purchaseLine.deleteMany({ where: { purchaseId: po.id } });
+      await tx.purchaseLine.createMany({
+        data: b.lines.map((l) => ({ purchaseId: po.id, itemId: l.itemId, qty: l.qty, rate: l.rate, alloc: l.alloc, batchNo: l.batchNo ?? null, mfrCode: l.mfrCode ?? null })),
+      });
+    }
+    const next = await tx.purchase.update({
+      where: { id: po.id },
+      data: {
+        vendorId: b.vendorId ?? undefined, invNo: b.invNo ?? undefined,
+        date: b.date ? new Date(b.date) : undefined,
+        eta: b.eta === undefined ? undefined : (b.eta ? new Date(b.eta) : null),
+        freight: b.freight ?? undefined, total: gross,
+      },
+      include: { vendor: true, lines: { include: { item: { select: { id: true, sku: true, name: true, uom: true, lineId: true, landedCost: true } } } } },
+    });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Purchase order corrected", entityType: "Purchase", entityId: po.id,
+                      oldValue: `${po.lines.length} line(s) · ₹${D(po.total)} + ₹${D(po.freight)} freight`,
+                      newValue: `${next.lines.length} line(s) · ₹${D(next.total)} + ₹${D(next.freight)} freight` });
+    return next;
+  });
+  res.json({ ...out, total: D(out.total), freight: D(out.freight), lines: out.lines.map((l) => ({ ...l, rate: D(l.rate), item: { ...l.item, landedCost: D(l.item.landedCost) } })) });
+}));
+
 router.post("/:id/receive", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
   const b = z.object({ lines: z.array(z.object({ itemId: z.string(), alloc: z.record(z.number().int().min(0)), batchNo: z.string().optional(), mfrCode: z.string().optional() })) }).parse(req.body);
   const po = await prisma.purchase.findUnique({ where: { id: req.params.id }, include: { lines: { include: { item: true } } } });

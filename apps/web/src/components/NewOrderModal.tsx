@@ -41,7 +41,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   // Derived, not stored: until the operator picks a line it is the firm's first.
   const effLine = lineId || enabled[0] || "";
   // Changing firm re-prices everything, so the basket cannot carry over.
-  const pickFirm = (id: string) => { setCid(id); setLineId(""); setCart({}); };
+  const pickFirm = (id: string) => { setCid(id); setLineId(""); setCart({}); setSel(new Set()); };
 
   const { data: cat } = useApi<{ linesEnabled: string[]; items: CatItem[] }>(cid && effLine ? `/api/orders/catalogue?customerId=${cid}&line=${effLine}&q=${encodeURIComponent(q)}` : null);
   const picked = useMemo(() => Object.entries(cart).filter(([, v]) => v > 0), [cart]);
@@ -67,6 +67,25 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   const qErr = picked.length ? fresh?.err ?? "" : "";
 
   const add = (it: CatItem) => setCart((c) => ({ ...c, [it.id]: (c[it.id] ?? 0) + it.moq }));
+
+  // Ticking rows and adding them together. A card house ordering a season's
+  // range is putting forty designs on one bill, and clicking Add forty times is
+  // how the office ends up keeping the order on paper instead.
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const addable = useMemo(() => (cat?.items ?? []).filter((i) => i.available >= i.moq && !cart[i.id]), [cat, cart]);
+  const allTicked = addable.length > 0 && addable.every((i) => sel.has(i.id));
+  const toggleOne = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => setSel((s) => (allTicked ? new Set([...s].filter((id) => !addable.some((i) => i.id === id))) : new Set([...s, ...addable.map((i) => i.id)])));
+  const addTicked = () => {
+    const rows = (cat?.items ?? []).filter((i) => sel.has(i.id) && i.available >= i.moq);
+    if (!rows.length) return;
+    // Each lands at its own minimum, which is where a line has to start anyway.
+    setCart((c) => { const n = { ...c }; for (const it of rows) n[it.id] = (n[it.id] ?? 0) + it.moq; return n; });
+    setSel(new Set());
+    toast(`${rows.length} item${rows.length === 1 ? "" : "s"} added — set the quantities below`, "s");
+  };
+  // A different firm or line means a different catalogue; the ticks do not carry.
+  const ticked = sel.size;
 
   // A carton is scanned, not typed. The same resolver the portal scanner uses
   // accepts our own label or the manufacturer's, so a box that arrived under a
@@ -111,7 +130,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
         </select>
       </Field>
       <Field label="Business line" hint="One line per order — the hold window is set by the line">
-        <select value={effLine} onChange={(e) => { setLineId(e.target.value); setCart({}); }} disabled={!firm}>
+        <select value={effLine} onChange={(e) => { setLineId(e.target.value); setCart({}); setSel(new Set()); }} disabled={!firm}>
           {(enabled.length ? enabled : lines?.filter((l) => l.workflow !== "JOBWORK").map((l) => l.id) ?? []).map((id) => <option key={id} value={id}>{lines?.find((l) => l.id === id)?.name ?? id}</option>)}
         </select>
       </Field>
@@ -124,15 +143,22 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
     {cid && !blocked && <>
       <div className="st" style={{ marginTop: 15 }}>Add items</div>
       <div className="tsr" style={{ marginBottom: 8 }}><Icon n="search" s={13} /><input placeholder="SKU, design number, name — or scan a label and press Enter" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scan(q); } }} /></div>
+      {!!addable.length && <div className="tbar" style={{ marginBottom: 7 }}>
+        <label className="sm" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input className="ck" type="checkbox" checked={allTicked} onChange={toggleAll} /> Select all {addable.length} available
+        </label>
+        <button className="b b-p b-s" style={{ marginLeft: "auto" }} disabled={!ticked} onClick={addTicked}>Add {ticked || ""} selected</button>
+      </div>}
       <div className="gw" style={{ maxHeight: 190, overflowY: "auto" }}>
-        <table className="dg"><thead><tr><th>Item</th><th className="n">MOQ</th><th className="n">Available</th><th className="n">Rate</th><th></th></tr></thead><tbody>
+        <table className="dg"><thead><tr><th style={{ width: 30 }}></th><th>Item</th><th className="n">MOQ</th><th className="n">Available</th><th className="n">Rate</th><th></th></tr></thead><tbody>
           {cat?.items.length ? cat.items.map((it) => <tr key={it.id} style={{ cursor: "default" }}>
+            <td>{it.available >= it.moq && !cart[it.id] ? <input className="ck" type="checkbox" checked={sel.has(it.id)} onChange={() => toggleOne(it.id)} /> : null}</td>
             <td className="w"><div style={{ display: "flex", gap: 7, alignItems: "center" }}><Thumb it={it} w={26} h={34} /><div><div>{it.name}</div><div className="sm"><span className="rid">{it.sku}</span>{it.designNo ? ` · ${it.designNo}` : ""}</div></div></div></td>
             <td className="n tab">{num(it.moq)}</td>
             <td className="n tab">{num(it.available)} <BandPill b={it.band} /></td>
             <td className="n tab">{money(it.rate)}<div className="sm">at MOQ</div></td>
             <td>{cart[it.id] ? <span className="sm">Added</span> : <button className="b b-o b-s" disabled={it.available < it.moq} onClick={() => add(it)}>Add</button>}</td>
-          </tr>) : <tr><td colSpan={5}><Empty t="No items" d="Nothing active in this line matches that search." /></td></tr>}
+          </tr>) : <tr><td colSpan={6}><Empty t="No items" d="Nothing active in this line matches that search." /></td></tr>}
         </tbody></table>
       </div>
 

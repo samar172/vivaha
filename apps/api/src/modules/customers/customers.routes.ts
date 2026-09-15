@@ -24,8 +24,12 @@ const custInclude = {
   referredBy: { select: { id: true, createdAt: true, state: true, by: { select: { id: true, name: true, referCode: true } } } },
 } as const;
 
-function serialize<T extends { creditLimit: unknown }>(c: T): Omit<T, "creditLimit"> & { creditLimit: number } {
-  return { ...c, creditLimit: D(c.creditLimit as number) };
+// Both money-ish columns are Prisma Decimals, and a Decimal goes onto the wire
+// as a string. creditLimit was converted and priceAdjPct was not, so the edit
+// form read "0", sent "0" back, and the save was refused for a field nobody had
+// touched — which is what "the Save button does not work" looked like.
+function serialize<T extends { creditLimit: unknown; priceAdjPct?: unknown }>(c: T): Omit<T, "creditLimit" | "priceAdjPct"> & { creditLimit: number; priceAdjPct: number } {
+  return { ...c, creditLimit: D(c.creditLimit as number), priceAdjPct: D((c.priceAdjPct ?? 0) as number) };
 }
 
 router.get("/", requirePerm("cust.view"), asyncHandler(async (req, res) => {
