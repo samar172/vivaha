@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma, D } from "../../db";
@@ -33,7 +34,29 @@ router.get("/", requirePerm("purchase.view"), asyncHandler(async (req, res) => {
   res.json(rows.map((p) => ({ ...p, total: D(p.total), freight: D(p.freight), lines: p.lines.map((l) => ({ ...l, rate: D(l.rate), item: { ...l.item, landedCost: D(l.item.landedCost) } })) })));
 }));
 
-const lineSchema = z.object({ itemId: z.string(), qty: z.number().int().positive(), rate: z.number().min(0), alloc: z.record(z.number().int().min(0)), batchNo: z.string().optional(), expiry: z.string().optional(), mfrCode: z.string().optional() });
+const placeSchema = z.object({ godownId: z.string().min(1), rack: z.string().default(""), qty: z.number().int().min(0) });
+const lineSchema = z.object({
+  itemId: z.string(), qty: z.number().int().positive(), rate: z.number().min(0),
+  // Where the goods go. `places` names the rack; `alloc` is the godown roll-up
+  // and is what every other screen and the stock engine read. A caller may send
+  // either — a document raised before racks existed still sends only `alloc` —
+  // and the two are reconciled here so they can never drift apart.
+  places: z.array(placeSchema).optional(),
+  alloc: z.record(z.number().int().min(0)).optional(),
+  batchNo: z.string().optional(), expiry: z.string().optional(), mfrCode: z.string().optional(),
+});
+
+type Placed = { places: stock.Placement[]; alloc: Record<string, number> };
+/** One truth for where a line's goods went, whichever way the caller said it. */
+function placementsOf(l: { places?: { godownId: string; rack: string; qty: number }[]; alloc?: Record<string, number> }): Placed {
+  const places: stock.Placement[] = l.places?.length
+    ? l.places.filter((p) => p.qty > 0).map((p) => ({ godownId: p.godownId, rack: stock.rackOf(p.rack), qty: p.qty }))
+    : Object.entries(l.alloc ?? {}).filter(([, q]) => q > 0).map(([godownId, qty]) => ({ godownId, rack: stock.RACK_NONE, qty }));
+  return { places, alloc: stock.placementsToMap(places) };
+}
+const placedQty = (p: Placed) => p.places.reduce((s, x) => s + x.qty, 0);
+// Prisma types a Json column as a structural value; a list of placements is one.
+const asJson = (v: unknown) => v as Prisma.InputJsonValue;
 
 // The manufacturer's label travels with the goods. Register it against the item
 // so a scan of that carton resolves later, even after the office re-labels it.
@@ -62,21 +85,20 @@ router.post("/", requirePerm("purchase.create"), asyncHandler(async (req, res) =
   for (const l of b.lines) {
     const it = im[l.itemId]; if (!it) throw badRequest("Unknown item " + l.itemId);
     if (b.status === "POSTED") {
-      const sum = Object.values(l.alloc).reduce((s, v) => s + v, 0);
-      if (sum !== l.qty) throw badRequest(`${it.sku}: godown allocation must sum to the received quantity`);
+      if (placedQty(placementsOf(l)) !== l.qty) throw badRequest(`${it.sku}: godown allocation must sum to the received quantity`);
       if (it.batchTracked && !l.batchNo) throw badRequest(`${it.sku} is batch-tracked — a batch number is required at receipt`);
     }
   }
   const gross = b.lines.reduce((s, l) => s + l.qty * l.rate, 0);
   const po = await prisma.$transaction(async (tx) => {
     const id = await nextPurchaseNo(tx);
-    const po = await tx.purchase.create({ data: { id, vendorId: b.vendorId, invNo: b.invNo, date: b.date ? new Date(b.date) : new Date(), eta: b.eta ? new Date(b.eta) : null, freight: b.freight, total: gross, gstPct: im[b.lines[0].itemId].gstPct, status: b.status, by: req.user!.name, lines: { create: b.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, rate: l.rate, alloc: l.alloc, batchNo: l.batchNo ?? null, expiry: l.expiry ? new Date(l.expiry) : null, mfrCode: l.mfrCode?.trim() || null })) } } });
+    const po = await tx.purchase.create({ data: { id, vendorId: b.vendorId, invNo: b.invNo, date: b.date ? new Date(b.date) : new Date(), eta: b.eta ? new Date(b.eta) : null, freight: b.freight, total: gross, gstPct: im[b.lines[0].itemId].gstPct, status: b.status, by: req.user!.name, lines: { create: b.lines.map((l) => { const pl = placementsOf(l); return { itemId: l.itemId, qty: l.qty, rate: l.rate, alloc: pl.alloc, places: asJson(pl.places), batchNo: l.batchNo ?? null, expiry: l.expiry ? new Date(l.expiry) : null, mfrCode: l.mfrCode?.trim() || null }; }) } } });
     for (const l of b.lines) if (l.mfrCode) await registerMfrCode(tx, l.itemId, l.mfrCode, b.vendorId, req.user!.name);
     if (b.status === "POSTED") {
       for (const l of b.lines) {
         const it = im[l.itemId];
         const onHandBefore = (await stock.bucketsAll(tx, l.itemId)).onHand;
-        for (const g of Object.keys(l.alloc)) if (l.alloc[g] > 0) await stock.receive(tx, l.itemId, g, l.alloc[g], id, req.user!.name, l.batchNo ?? null, l.expiry ? new Date(l.expiry) : l.batchNo ? new Date(Date.now() + 365 * 864e5) : null);
+        for (const pl of placementsOf(l).places) await stock.receive(tx, l.itemId, pl.godownId, pl.qty, id, req.user!.name, l.batchNo ?? null, l.expiry ? new Date(l.expiry) : l.batchNo ? new Date(Date.now() + 365 * 864e5) : null, "GRN", pl.rack);
         const share = gross > 0 ? (b.freight * (l.qty * l.rate)) / gross : 0;
         const newCost = recomputeLandedCost(D(it.landedCost), onHandBefore, l.qty, l.rate, share);
         await tx.item.update({ where: { id: it.id }, data: { landedCost: newCost } });
@@ -117,7 +139,7 @@ router.patch("/:id", requirePerm("purchase.create"), asyncHandler(async (req, re
     if (b.lines) {
       await tx.purchaseLine.deleteMany({ where: { purchaseId: po.id } });
       await tx.purchaseLine.createMany({
-        data: b.lines.map((l) => ({ purchaseId: po.id, itemId: l.itemId, qty: l.qty, rate: l.rate, alloc: l.alloc, batchNo: l.batchNo ?? null, mfrCode: l.mfrCode ?? null })),
+        data: b.lines.map((l) => { const pl = placementsOf(l); return { purchaseId: po.id, itemId: l.itemId, qty: l.qty, rate: l.rate, alloc: pl.alloc, places: asJson(pl.places), batchNo: l.batchNo ?? null, mfrCode: l.mfrCode ?? null }; }),
       });
     }
     const next = await tx.purchase.update({
@@ -139,7 +161,7 @@ router.patch("/:id", requirePerm("purchase.create"), asyncHandler(async (req, re
 }));
 
 router.post("/:id/receive", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
-  const b = z.object({ lines: z.array(z.object({ itemId: z.string(), alloc: z.record(z.number().int().min(0)), batchNo: z.string().optional(), mfrCode: z.string().optional() })) }).parse(req.body);
+  const b = z.object({ lines: z.array(z.object({ itemId: z.string(), places: z.array(placeSchema).optional(), alloc: z.record(z.number().int().min(0)).optional(), batchNo: z.string().optional(), mfrCode: z.string().optional() })) }).parse(req.body);
   const po = await prisma.purchase.findUnique({ where: { id: req.params.id }, include: { lines: { include: { item: true } } } });
   if (!po) throw notFound("Purchase not found");
   if (po.status !== "IN_TRANSIT") throw badRequest("Already received");
@@ -147,15 +169,15 @@ router.post("/:id/receive", requirePerm("purchase.create"), asyncHandler(async (
   await prisma.$transaction(async (tx) => {
     for (const l of po.lines) {
       const inp = b.lines.find((x) => x.itemId === l.itemId); if (!inp) throw badRequest("Missing allocation for " + l.item.sku);
-      const sum = Object.values(inp.alloc).reduce((s, v) => s + v, 0); if (sum !== l.qty) throw badRequest(`${l.item.sku}: allocation must sum to ${l.qty}`);
+      const pl = placementsOf(inp); if (placedQty(pl) !== l.qty) throw badRequest(`${l.item.sku}: allocation must sum to ${l.qty}`);
       if (l.item.batchTracked && !inp.batchNo) throw badRequest(`${l.item.sku} is batch-tracked — batch number required`);
       const onHandBefore = (await stock.bucketsAll(tx, l.itemId)).onHand;
-      for (const g of Object.keys(inp.alloc)) if (inp.alloc[g] > 0) await stock.receive(tx, l.itemId, g, inp.alloc[g], po.id, req.user!.name, inp.batchNo ?? null, inp.batchNo ? new Date(Date.now() + 365 * 864e5) : null);
+      for (const p of pl.places) await stock.receive(tx, l.itemId, p.godownId, p.qty, po.id, req.user!.name, inp.batchNo ?? null, inp.batchNo ? new Date(Date.now() + 365 * 864e5) : null, "GRN", p.rack);
       const share = gross > 0 ? (D(po.freight) * (l.qty * D(l.rate))) / gross : 0;
       const newCost = recomputeLandedCost(D(l.item.landedCost), onHandBefore, l.qty, D(l.rate), share);
       await tx.item.update({ where: { id: l.itemId }, data: { landedCost: newCost } });
       const mfr = inp.mfrCode?.trim() || l.mfrCode || null;
-      await tx.purchaseLine.update({ where: { id: l.id }, data: { alloc: inp.alloc, batchNo: inp.batchNo ?? null, mfrCode: mfr } });
+      await tx.purchaseLine.update({ where: { id: l.id }, data: { alloc: pl.alloc, places: asJson(pl.places), batchNo: inp.batchNo ?? null, mfrCode: mfr } });
       if (mfr) await registerMfrCode(tx, l.itemId, mfr, po.vendorId, req.user!.name);
     }
     await tx.purchase.update({ where: { id: po.id }, data: { status: "POSTED" } });

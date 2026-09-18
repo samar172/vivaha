@@ -2,10 +2,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ROLE_LABELS, ROLES, fDT, num, type Role, type Perm } from "@vivaha/shared";
-import { useApi, useLines, refresh } from "@/lib/hooks";
+import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
-import { apiFetch, patch, post, put } from "@/lib/api";
+import { apiFetch, del, patch, post, put } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter } from "@/components/Shell";
 import { LineChip, Note, Panel, Field, ModalFrame } from "@/components/ui";
@@ -14,8 +14,8 @@ import { Icon } from "@/components/icons";
 export default function SettingsPage() {
   const [tab, setTab] = useState("lines"); const { data: lines } = useLines(); useFooter(lines?.length ?? 0);
   return <>
-    <PageHead crumb={["System", "Settings"]} title="Settings" sub="Business lines, pricing, permissions and masters — all configuration, no deployment" tabs={[{ k: "lines", l: "Business lines", n: lines?.length }, { k: "users", l: "Users & logins" }, { k: "price", l: "Pricing" }, { k: "rbac", l: "Roles & permissions" }, { k: "attrs", l: "Attribute masters" }, { k: "import", l: "Import" }, { k: "backup", l: "Backup & restore" }, { k: "data", l: "Demo data" }]} tab={tab} onTab={setTab} />
-    <div className="wa">{tab === "lines" && <LinesTab />}{tab === "users" && <UsersTab />}{tab === "price" && <PriceTab />}{tab === "rbac" && <RbacTab />}{tab === "attrs" && <AttrsTab />}{tab === "import" && <ImportTab />}{tab === "backup" && <BackupTab />}{tab === "data" && <DataTab />}</div>
+    <PageHead crumb={["System", "Settings"]} title="Settings" sub="Business lines, pricing, permissions and masters — all configuration, no deployment" tabs={[{ k: "lines", l: "Business lines", n: lines?.length }, { k: "users", l: "Users & logins" }, { k: "price", l: "Pricing" }, { k: "rbac", l: "Roles & permissions" }, { k: "attrs", l: "Attribute masters" }, { k: "godowns", l: "Godowns & racks" }, { k: "import", l: "Import" }, { k: "backup", l: "Backup & restore" }, { k: "data", l: "Demo data" }]} tab={tab} onTab={setTab} />
+    <div className="wa">{tab === "lines" && <LinesTab />}{tab === "users" && <UsersTab />}{tab === "price" && <PriceTab />}{tab === "rbac" && <RbacTab />}{tab === "attrs" && <AttrsTab />}{tab === "godowns" && <GodownsTab />}{tab === "import" && <ImportTab />}{tab === "backup" && <BackupTab />}{tab === "data" && <DataTab />}</div>
   </>;
 }
 // Same financial year the server numbers against: April to March.
@@ -161,6 +161,52 @@ function NewAttrModal() {
   const go = async () => { try { await post("/api/masters/attributes", { ...f, lineId: f.lineId || null, values: f.values.split(",").map((s) => s.trim()).filter(Boolean) }); toast("Attribute added", "s"); closeModal(); refresh("/api/masters/attributes"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="New attribute" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Add</button></>}><div className="fg"><Field label="Line"><select value={f.lineId} onChange={(e) => setF({ ...f, lineId: e.target.value })}><option value="">Customer-level</option>{lines?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field><Field label="Key"><input value={f.key} onChange={(e) => setF({ ...f, key: e.target.value })} placeholder="finish" /></Field><Field label="Label"><input value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} /></Field><Field label="Values (comma-separated)" full><input value={f.values} onChange={(e) => setF({ ...f, values: e.target.value })} /></Field><Field label="Multi-select"><select value={String(f.multiSelect)} onChange={(e) => setF({ ...f, multiSelect: e.target.value === "true" })}><option value="false">No</option><option value="true">Yes</option></select></Field><Field label="Portal facet"><select value={String(f.portalFacet)} onChange={(e) => setF({ ...f, portalFacet: e.target.value === "true" })}><option value="true">Yes</option><option value="false">No</option></select></Field></div></ModalFrame>;
 }
+// A godown is a building; a rack is a shelf inside it.
+//
+// Before this the two were the same thing, so the office made a "godown" per
+// rack — which left the transfer screen able to move goods between two shelves
+// of the same room as if they were separate premises, and the dispatch queue
+// listing twenty "godowns" that were one address. The racks live here, under
+// the godown they belong to.
+function GodownsTab() {
+  const { data: godowns, mutate } = useGodowns(); const { toast } = useUI();
+  const [add, setAdd] = useState<Record<string, { code: string; name: string }>>({});
+  const draft = (gid: string) => add[gid] ?? { code: "", name: "" };
+  const setDraft = (gid: string, patchDraft: Partial<{ code: string; name: string }>) => setAdd((a) => ({ ...a, [gid]: { ...draft(gid), ...patchDraft } }));
+
+  const run = async (fn: () => Promise<unknown>, msg: string) => {
+    try { await fn(); await mutate(); refresh("/api/masters/godowns"); toast(msg, "s"); }
+    catch (e) { toast(errMsg(e), "e"); }
+  };
+  const create = (gid: string) => {
+    const d = draft(gid);
+    if (!d.code.trim()) return toast("A rack needs a number or a code", "e");
+    run(async () => { await post(`/api/masters/godowns/${gid}/racks`, { code: d.code.trim(), name: d.name.trim() }); setAdd((a) => ({ ...a, [gid]: { code: "", name: "" } })); }, `Rack ${d.code.trim()} added`);
+  };
+
+  return <>
+    <Note style={{ marginBottom: 11 }}>Racks are where inside a godown the goods actually sit. Stock is still counted and reserved per godown — that is the number an order asks about — and the rack tells the picker where to go. A rack that has held stock is retired rather than deleted, so last season&apos;s movements still read back.</Note>
+    {godowns?.map((g) => <Panel key={g.id} t={<>{g.name} <span className="sm">· {g.id}</span></>} h={`${g.racks.length} rack${g.racks.length === 1 ? "" : "s"} · ${g.manager}`}>
+      <div className="pnb">
+        {g.racks.length
+          ? <table className="dg" style={{ marginBottom: 10 }}><thead><tr><th style={{ width: 120 }}>Rack</th><th>Where it is</th><th style={{ width: 110 }}></th></tr></thead><tbody>
+            {g.racks.map((r) => <tr key={r.id} style={{ cursor: "default" }}>
+              <td><input defaultValue={r.code} onBlur={(e) => e.target.value.trim() !== r.code && run(() => patch(`/api/masters/racks/${r.id}`, { code: e.target.value.trim() }), "Rack renumbered")} style={{ width: 96, height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></td>
+              <td><input defaultValue={r.name} placeholder="e.g. near the door, top shelf" onBlur={(e) => e.target.value.trim() !== r.name && run(() => patch(`/api/masters/racks/${r.id}`, { name: e.target.value.trim() }), "Rack updated")} style={{ width: "100%", height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></td>
+              <td><button className="b b-g b-s" onClick={() => run(() => del(`/api/masters/racks/${r.id}`), `Rack ${r.code} retired`)}>Retire</button></td>
+            </tr>)}
+          </tbody></table>
+          : <div className="sm" style={{ marginBottom: 10 }}>No racks recorded for this godown. Goods put away here are stored with the rack unrecorded, which is fine until somebody has to find them.</div>}
+        <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+          <input value={draft(g.id).code} onChange={(e) => setDraft(g.id, { code: e.target.value })} placeholder="R-1" style={{ width: 96, height: 29, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} />
+          <input value={draft(g.id).name} onChange={(e) => setDraft(g.id, { name: e.target.value })} placeholder="Where it is (optional)" style={{ flex: 1, height: 29, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} />
+          <button className="b b-o b-s" onClick={() => create(g.id)}>+ Add rack</button>
+        </div>
+      </div>
+    </Panel>)}
+  </>;
+}
+
 function ImportTab() {
   const { toast } = useUI();
   return <Panel t="Excel / CSV import" h="items, customers, opening stock, opening balances"><div className="pnb"><div className="stp">{["Upload", "Map columns", "Validate"].map((s) => <span key={s} style={{ display: "contents" }}><div className="s dn"><div className="d"><Icon n="check" s={11} /></div>{s}</div><div className="ln" /></span>)}<div className="s ac"><div className="d">4</div>Preview</div><div className="ln" /><div className="s"><div className="d">5</div>Commit</div></div>

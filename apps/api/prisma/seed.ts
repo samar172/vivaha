@@ -24,6 +24,7 @@ const GODOWNS = [
   { id: "GD-B", name: "Godown B — Napasar Road", short: "GD-B", manager: "Devendra Suthar", address: "Shed 7, Napasar Road, Bikaner" },
   { id: "GD-C", name: "Godown C — Pugal Road", short: "GD-C", manager: "Khadija Ansari", address: "Unit 3, Pugal Road Storage Complex, Bikaner" },
 ];
+const RACKS: [string, string][] = [["R-1", "Front, by the shutter"], ["R-2", "Middle aisle"], ["R-3", "Back wall"]];
 const VENDORS = [
   ["VND-01", "Shree Ganesh Print Works", "08AAQCS4471K1Z9", "Net 30", "Bikaner", "+91 94140 22781"], ["VND-02", "Rajwada Card House", "08AABCR8812M1ZK", "Net 15", "Jodhpur", "+91 94131 55620"],
   ["VND-03", "Marudhar Paper Mills", "08AACCM3390P1ZT", "Advance 50%", "Nokha", "+91 94148 71003"], ["VND-04", "Om Shanti Printers", "08AADCO7712L1ZB", "Net 45", "Bikaner", "+91 94602 31889"],
@@ -91,6 +92,9 @@ async function main() {
   await prisma.setting.createMany({ data: [{ key: "MIN_MARGIN", value: 0.18 }, { key: "COMPANY", value: { name: "Vivaha Cards", address: "Plot 14, Junagarh Road Industrial Area, Bikaner 334001", gstin: "08AAQCV7781K1ZR", state: "08", phone: "+91 151 220 0000" } }] });
   for (const l of LINES) await prisma.businessLine.create({ data: { ...l, packUoms: [...l.packUoms], stockDims: [...l.stockDims], facets: [...l.facets] } });
   await prisma.godown.createMany({ data: GODOWNS });
+  // Shelves inside each building. The office used to make a "godown" per rack
+  // because a rack had nowhere to live; these are what it meant all along.
+  await prisma.rack.createMany({ data: GODOWNS.flatMap((g) => RACKS.map((r, n) => ({ godownId: g.id, code: r[0], name: r[1], sortOrder: n }))) });
   await prisma.vendor.createMany({ data: VENDORS.map(([id, name, gstin, terms, city, phone]) => ({ id, name, gstin, terms, city, phone })) });
   await prisma.pricingGroup.createMany({ data: Object.entries(MULT).map(([name, multiplier]) => ({ name, multiplier })) });
   await prisma.attributeDef.createMany({ data: [

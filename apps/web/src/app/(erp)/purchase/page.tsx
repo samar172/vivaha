@@ -2,7 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { money, money2, num, fDate } from "@vivaha/shared";
-import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
+import { useApi, useGodowns, useLines, refresh, type Godown } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
@@ -15,7 +15,23 @@ import type { ItemView } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
 import { Icon } from "@/components/icons";
 
-interface PO { id: string; invNo: string; date: string; eta: string | null; freight: number; total: number; gstPct: number; status: string; vendor: { id: string; name: string; gstin: string | null; terms: string }; lines: { id: string; itemId: string; qty: number; rate: number; alloc: Record<string, number>; batchNo: string | null; mfrCode: string | null; item: { sku: string; name: string; uom: string; landedCost: number; lineId: string } }[] }
+interface PO { id: string; invNo: string; date: string; eta: string | null; freight: number; total: number; gstPct: number; status: string; vendor: { id: string; name: string; gstin: string | null; terms: string }; lines: { id: string; itemId: string; qty: number; rate: number; alloc: Record<string, number>; places?: Place[]; batchNo: string | null; mfrCode: string | null; item: { sku: string; name: string; uom: string; landedCost: number; lineId: string } }[] }
+/** One putaway: a godown, the rack inside it, and how many went there. */
+export interface Place { godownId: string; rack: string; qty: number }
+
+/** The godown roll-up a placement list adds up to — what every screen that has
+ *  only ever known about godowns still reads. */
+export const placesToAlloc = (places: Place[]) => {
+  const a: Record<string, number> = {};
+  for (const p of places) if (p.qty > 0) a[p.godownId] = (a[p.godownId] ?? 0) + Number(p.qty);
+  return a;
+};
+/** An older document carries only its godown split; show it as placements with
+ *  the rack unrecorded rather than as nothing at all. */
+export const allocToPlaces = (alloc: Record<string, number> | undefined, places: Place[] | undefined): Place[] =>
+  places?.length ? places.map((p) => ({ godownId: p.godownId, rack: p.rack ?? "", qty: p.qty }))
+    : Object.entries(alloc ?? {}).filter(([, q]) => q > 0).map(([godownId, qty]) => ({ godownId, rack: "", qty }));
+
 interface Vendor { id: string; name: string; gstin: string | null; terms: string; city: string; phone: string; documents: number; purchased: number; invoiced: number; paid: number; outstanding: number; oldestDays: number }
 
 export default function PurchasePage() {
@@ -76,7 +92,7 @@ export function PurchaseDetail({ id }: { id: string }) {
                   <td className="n tab">{num(l.qty)}</td>
                   <td className="n tab">{money(l.rate)}</td>
                   <td className="n tab">{money(l.qty * l.rate)}</td>
-                  <td className="sm">{Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => (godowns?.find((x) => x.id === g)?.short ?? g) + ":" + num(l.alloc[g])).join(" · ") : "—"}</td>
+                  <td className="sm">{placeLabel(l, godowns)}</td>
                 </tr>)}
               </tbody></table>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 11 }}><div style={{ minWidth: 230 }}>
@@ -117,9 +133,54 @@ export function PurchaseDetail({ id }: { id: string }) {
   </>;
 }
 
-function AllocInputs({ godowns, alloc, setAlloc, qty }: { godowns: { id: string; short: string }[]; alloc: Record<string, number>; setAlloc: (a: Record<string, number>) => void; qty: number }) {
-  const s = Object.values(alloc).reduce((a, v) => a + (Number(v) || 0), 0);
-  return <><div style={{ display: "flex", gap: 8 }}>{godowns.map((g) => <div key={g.id} style={{ flex: 1 }}><div className="sm" style={{ marginBottom: 3 }}>{g.short}</div><input type="number" value={alloc[g.id] ?? 0} onChange={(e) => setAlloc({ ...alloc, [g.id]: Number(e.target.value) || 0 })} style={{ width: "100%", height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></div>)}</div><div className="sm" style={{ marginTop: 7 }}>{s === qty ? <span style={{ color: "var(--ok)", fontWeight: 700 }}><Icon n="check" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} allocated</span> : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} — must equal quantity</span>}</div></>;
+// Where the goods are being put away.
+//
+// This used to be one number box per godown, laid out across the screen: with
+// four godowns the operator typed three zeroes to record one delivery, and the
+// rack a bundle actually went on had nowhere to go at all — which is why the
+// office ended up making a "godown" per rack. Now a placement is a row the
+// operator adds: choose the godown, choose the rack inside it, type how many.
+// Most receipts are one row.
+export function PlaceRows({ godowns, places, setPlaces, qty }: { godowns: Godown[]; places: Place[]; setPlaces: (p: Place[]) => void; qty: number }) {
+  const s = places.reduce((a, p) => a + (Number(p.qty) || 0), 0);
+  const first = godowns[0]?.id ?? "";
+  const set = (i: number, patch: Partial<Place>) => setPlaces(places.map((p, n) => (n === i ? { ...p, ...patch } : p)));
+  const racksOf = (gid: string) => godowns.find((g) => g.id === gid)?.racks ?? [];
+  // Whatever is still unplaced goes into the new row, so the common case —
+  // one delivery, one rack — is choose the rack and the quantity is already right.
+  const add = () => setPlaces([...places, { godownId: first, rack: "", qty: Math.max(0, qty - s) }]);
+
+  return <>
+    {places.map((p, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "1.3fr 1.3fr 90px auto", gap: 7, alignItems: "center", marginBottom: 6 }}>
+      <select value={p.godownId} onChange={(e) => set(i, { godownId: e.target.value, rack: "" })} style={{ height: 30 }}>
+        {godowns.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+      </select>
+      <select value={p.rack} onChange={(e) => set(i, { rack: e.target.value })} style={{ height: 30 }} title="Which rack inside that godown">
+        <option value="">Rack not recorded</option>
+        {racksOf(p.godownId).map((r) => <option key={r.id} value={r.code}>{r.code}{r.name ? ` — ${r.name}` : ""}</option>)}
+      </select>
+      <input type="number" value={p.qty} onChange={(e) => set(i, { qty: Number(e.target.value) || 0 })} style={{ height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} />
+      {places.length > 1
+        ? <button className="b b-g b-s" type="button" onClick={() => setPlaces(places.filter((_, n) => n !== i))} title="Remove"><Icon n="x" s={11} /></button>
+        : <span />}
+    </div>)}
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+      <button className="b b-o b-s" type="button" disabled={!godowns.length} onClick={add}>+ Another godown or rack</button>
+      <span className="sm">{s === qty
+        ? <span style={{ color: "var(--ok)", fontWeight: 700 }}><Icon n="check" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} placed</span>
+        : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} — must equal quantity</span>}</span>
+    </div>
+    {places.some((p) => !p.rack) && <div className="sm" style={{ marginTop: 5 }}>A row with no rack is stored as unrecorded — fine when the godown does not use racks, but the picker will not be told where to look.</div>}
+  </>;
+}
+
+// "GD-A R-3:400 · GD-B:100" — where the goods went, rack included when one was
+// recorded. Falls back to the godown split for documents raised before racks.
+function placeLabel(l: { alloc: Record<string, number>; places?: Place[] }, godowns: Godown[] | undefined) {
+  const shortOf = (id: string) => godowns?.find((x) => x.id === id)?.short ?? id;
+  const places = allocToPlaces(l.alloc, l.places);
+  if (!places.length) return "—";
+  return places.map((p) => `${shortOf(p.godownId)}${p.rack ? " " + p.rack : ""}:${num(p.qty)}`).join(" · ");
 }
 
 export function PurchaseModal({ po }: { po?: PO } = {}) {
@@ -140,7 +201,7 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
   // Each row carries its own quantity, rate, batch, label and godown split;
   // freight is charged once on the document and apportioned across them.
   const [rows, setRows] = useState<PoRow[]>(po
-    ? po.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, rate: l.rate, batchNo: l.batchNo ?? "", mfrCode: l.mfrCode ?? "", alloc: l.alloc ?? {} }))
+    ? po.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, rate: l.rate, batchNo: l.batchNo ?? "", mfrCode: l.mfrCode ?? "", places: allocToPlaces(l.alloc, l.places) }))
     : [blankRow()]);
   const [f, setF] = useState(() => ({
     vendorId: po?.vendor.id ?? "",
@@ -169,8 +230,8 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
     if (dupes.length) return toast("The same item is on two lines — put the whole quantity on one", "e");
     if (f.status === "POSTED") {
       for (const r of picked) {
-        const sum = Object.values(r.alloc).reduce((a, v) => a + (Number(v) || 0), 0);
-        if (sum !== Number(r.qty)) return toast(`${itemOf(r)?.sku ?? "A line"}: the godown split must add up to ${num(Number(r.qty))}`, "e");
+        const sum = r.places.reduce((a, pl) => a + (Number(pl.qty) || 0), 0);
+        if (sum !== Number(r.qty)) return toast(`${itemOf(r)?.sku ?? "A line"}: what was put away must add up to ${num(Number(r.qty))}`, "e");
         if (L?.batchTracked && !r.batchNo.trim()) return toast(`${itemOf(r)?.sku ?? "A line"} is batch-tracked — enter the batch number`, "e");
       }
     }
@@ -179,7 +240,7 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
       vendorId: f.vendorId || vendors?.[0]?.id, invNo: f.invNo, freight: Number(f.freight), status: f.status,
       eta: f.eta || undefined,
       lines: picked.map((r) => ({
-        itemId: r.itemId, qty: Number(r.qty), rate: Number(r.rate), alloc: r.alloc,
+        itemId: r.itemId, qty: Number(r.qty), rate: Number(r.rate), places: r.places, alloc: placesToAlloc(r.places),
         batchNo: r.batchNo || undefined, mfrCode: r.mfrCode || undefined,
       })),
     };
@@ -238,8 +299,8 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
           <Field label="Manufacturer label code"><input value={r.mfrCode} onChange={(e) => setRow(i, { mfrCode: e.target.value })} placeholder="e.g. SGP-4113" /></Field>
         </div>
         {f.status === "POSTED" && <div style={{ marginTop: 9 }}>
-          <div className="sm" style={{ marginBottom: 6, fontFamily: "inherit" }}>Godown allocation — must sum to the quantity</div>
-          <AllocInputs godowns={godowns ?? []} alloc={r.alloc} setAlloc={(a) => setRow(i, { alloc: a })} qty={Number(r.qty)} />
+          <div className="sm" style={{ marginBottom: 6, fontFamily: "inherit" }}>Put away — which godown, which rack, how many</div>
+          <PlaceRows godowns={godowns ?? []} places={r.places} setPlaces={(pl) => setRow(i, { places: pl })} qty={Number(r.qty)} />
         </div>}
         {Number(r.qty) > 0 && Number(r.rate) > 0 && <div className="sm" style={{ marginTop: 7 }}>
           goods {money(Number(r.qty) * Number(r.rate))} · landed <b>{money2(landed)}</b> per {it?.uom?.toLowerCase() ?? "unit"} after its share of freight
@@ -278,8 +339,8 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
   </ModalFrame>;
 }
 
-interface PoRow { itemId: string; qty: number; rate: number; batchNo: string; mfrCode: string; alloc: Record<string, number> }
-const blankRow = (): PoRow => ({ itemId: "", qty: 0, rate: 0, batchNo: "", mfrCode: "", alloc: {} });
+interface PoRow { itemId: string; qty: number; rate: number; batchNo: string; mfrCode: string; places: Place[] }
+const blankRow = (): PoRow => ({ itemId: "", qty: 0, rate: 0, batchNo: "", mfrCode: "", places: [] });
 
 // A vendor the office has not dealt with before, added without losing the
 // half-typed invoice behind it. Same fields as the vendor master, because it is
@@ -385,12 +446,15 @@ function NewItemInline({ line, vendorId, onDone }: { line: { id: string; name: s
 }
 
 function ReceiveModal({ p }: { p: PO }) { const { closeModal, toast } = useUI(); const { data: godowns } = useGodowns();
-  const [al, setAl] = useState<Record<string, Record<string, number>>>(Object.fromEntries(p.lines.map((l) => [l.itemId, { "GD-A": l.qty, "GD-B": 0, "GD-C": 0 }])));
+  // Opens on whatever the buyer wrote down when the order was raised, and on
+  // one blank row otherwise. It used to open on a hard-coded GD-A/GD-B/GD-C
+  // split, which is a list of godowns this firm may never have had.
+  const [al, setAl] = useState<Record<string, Place[]>>(() => Object.fromEntries(p.lines.map((l) => [l.itemId, allocToPlaces(l.alloc, l.places)])));
   const [batch, setBatch] = useState<Record<string, string>>({});
   const [mfr, setMfr] = useState<Record<string, string>>(() => Object.fromEntries(p.lines.map((l) => [l.itemId, l.mfrCode ?? ""])));
-  const go = async () => { try { await post(`/api/purchases/${p.id}/receive`, { lines: p.lines.map((l) => ({ itemId: l.itemId, alloc: al[l.itemId], batchNo: batch[l.itemId] || undefined, mfrCode: mfr[l.itemId] || undefined })) }); toast("Goods received — stock landed, landed cost recomputed", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
+  const go = async () => { try { await post(`/api/purchases/${p.id}/receive`, { lines: p.lines.map((l) => ({ itemId: l.itemId, places: al[l.itemId] ?? [], alloc: placesToAlloc(al[l.itemId] ?? []), batchNo: batch[l.itemId] || undefined, mfrCode: mfr[l.itemId] || undefined })) }); toast("Goods received — stock landed, landed cost recomputed", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Receive — " + p.invNo} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Post GRN</button></>}>
-    {p.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 7 }}>{l.item.sku} — {l.item.name} · {num(l.qty)} {l.item.uom}</div><AllocInputs godowns={godowns ?? []} alloc={al[l.itemId]} setAlloc={(a) => setAl({ ...al, [l.itemId]: a })} qty={l.qty} /><Field label="Batch (if batch-tracked)"><input value={batch[l.itemId] ?? ""} onChange={(e) => setBatch({ ...batch, [l.itemId]: e.target.value })} /></Field><Field label="Manufacturer QR / label code on the cartons"><input value={mfr[l.itemId] ?? ""} onChange={(e) => setMfr({ ...mfr, [l.itemId]: e.target.value })} placeholder="Scan or type — e.g. SGP-4113" /></Field></div>)}
+    {p.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 7 }}>{l.item.sku} — {l.item.name} · {num(l.qty)} {l.item.uom}</div><PlaceRows godowns={godowns ?? []} places={al[l.itemId] ?? []} setPlaces={(pl) => setAl({ ...al, [l.itemId]: pl })} qty={l.qty} /><Field label="Batch (if batch-tracked)"><input value={batch[l.itemId] ?? ""} onChange={(e) => setBatch({ ...batch, [l.itemId]: e.target.value })} /></Field><Field label="Manufacturer QR / label code on the cartons"><input value={mfr[l.itemId] ?? ""} onChange={(e) => setMfr({ ...mfr, [l.itemId]: e.target.value })} placeholder="Scan or type — e.g. SGP-4113" /></Field></div>)}
     <Note style={{ marginTop: 4 }}>Whatever label arrives on the cartons is filed against the item here. It stays scannable even after the office sticks its own code over it.</Note>
   </ModalFrame>;
 }

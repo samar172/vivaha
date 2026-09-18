@@ -230,6 +230,53 @@ export function PaymentModal({ customerId }: { customerId?: string }) { const { 
   </ModalFrame>;
 }
 
+// What ticking a line actually gets this firm.
+//
+// "Deals in" reads like a label until you see the shelf behind it: tick Cards
+// and the firm can order 214 designs, tick Ink and it can order nine. The list
+// opens as soon as a line is ticked, on the same screen, so nobody has to save
+// the customer and go hunting through the catalogue to find out whether they
+// gave them the right lines. It is a preview and nothing more — no choice is
+// made here, and untick the line and it goes away again.
+function LineProducts({ enabled }: { enabled: string[] }) {
+  const { data: lines } = useLines();
+  // Nothing is fetched until a line is actually ticked.
+  const { data } = useApi<{ items: ItemView[] }>(enabled.length ? "/api/items" : null);
+  const [open, setOpen] = useState(true);
+  if (!enabled.length) return <div className="sm" style={{ marginTop: 2 }}>Tick a line to see what this firm will be able to order.</div>;
+  if (!data) return <div className="sm" style={{ marginTop: 2 }}>Looking up the catalogue…</div>;
+
+  const live = data.items.filter((i) => i.status === "ACTIVE");
+  const groups = enabled.map((id) => ({
+    line: lines?.find((l) => l.id === id),
+    id,
+    items: live.filter((i) => i.lineId === id),
+  }));
+  const total = groups.reduce((s2, g) => s2 + g.items.length, 0);
+
+  return <div style={{ border: "1px solid var(--bd)", borderRadius: 6, marginTop: 4 }}>
+    <button type="button" onClick={() => setOpen((o) => !o)}
+      style={{ width: "100%", textAlign: "left", background: "var(--panel-2)", border: 0, borderRadius: "6px 6px 0 0", padding: "7px 10px", fontSize: 13, cursor: "pointer" }}>
+      <b>{num(total)}</b> product{total === 1 ? "" : "s"} across {groups.length} line{groups.length === 1 ? "" : "s"} — what this firm will be able to order
+      <span style={{ float: "right", color: "var(--t4)" }}>{open ? "hide" : "show"}</span>
+    </button>
+    {open && <div style={{ maxHeight: 210, overflow: "auto", padding: "4px 10px 9px" }}>
+      {groups.map((g) => <div key={g.id} style={{ marginTop: 7 }}>
+        <div className="sm" style={{ fontWeight: 700, color: "var(--t9)" }}>{g.line?.name ?? g.id} · {num(g.items.length)}</div>
+        {g.items.length
+          ? <table className="dg" style={{ fontSize: 12.5 }}><tbody>
+            {g.items.slice(0, 40).map((i) => <tr key={i.id} style={{ cursor: "default" }}>
+              <td className="w"><span className="rid">{i.sku}</span> {i.name}</td>
+              <td className="n tab" style={{ width: 92, color: i.available > 0 ? "var(--t6)" : "var(--er)" }}>{i.available > 0 ? `${num(i.available)} ${i.uom.toLowerCase()}` : "out of stock"}</td>
+            </tr>)}
+            {g.items.length > 40 && <tr style={{ cursor: "default" }}><td colSpan={2} className="sm">…and {num(g.items.length - 40)} more</td></tr>}
+          </tbody></table>
+          : <div className="sm">Nothing live on this line yet — the firm will see an empty shelf until an item is added.</div>}
+      </div>)}
+    </div>}
+  </div>;
+}
+
 const ROLES = ["Owner", "Staff", "Office", "Accounts", "Other"];
 const MACHINE_TYPES = ["Offset", "Screen", "Flex", "UV", "Digital", "Binding", "Other"];
 type FormContact = { id?: string; name: string; role: string; phone: string; authority: "Owner" | "Staff"; billsTo: boolean };
@@ -290,7 +337,8 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
   return <ModalFrame title={edit ? `Edit — ${customer!.name}` : "New customer"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>{edit ? "Save changes" : "Save customer"}</button></>}>
     <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *" hint="The firm's primary number — more can be added below"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field>{!edit && <Field label="Referred by — refer code" hint="The code on the referring firm's account. Leave blank if they walked in."><input value={f.referredByCode} onChange={(e) => setF({ ...f, referredByCode: e.target.value.toUpperCase() })} placeholder="VIVAHA-RJ4137" style={{ fontFamily: "var(--mono)" }} /></Field>}<Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
       <Field label="Address" full><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="Shop / street / landmark" /></Field>
-      <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div></Field>
+      <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div>
+        <LineProducts enabled={f.linesEnabled} /></Field>
       <Field label="Pricing group"><select value={f.group} onChange={(e) => setF({ ...f, group: e.target.value })}>{groups?.map((g) => <option key={g.name} value={g.name}>{g.name} — ×{g.multiplier}</option>)}</select></Field><Field label="Sales executive"><select value={f.salesExecId} onChange={(e) => setF({ ...f, salesExecId: e.target.value })}><option value="">—</option>{execs?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
       <Field label="Credit limit (₹)" hint="Suggested ₹1,80,000 from machine capacity"><input type="number" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: Number(e.target.value) })} /></Field><Field label="Credit days" hint="Time or amount, whichever breaches first"><input type="number" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: Number(e.target.value) })} /></Field>
       <Field label="Firm discount (%)" hint="Off the group rate, on everything they buy. Per-item prices are set from the drawer."><input type="number" value={f.priceAdjPct} onChange={(e) => setF({ ...f, priceAdjPct: Number(e.target.value) })} /></Field>

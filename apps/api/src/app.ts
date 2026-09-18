@@ -43,6 +43,9 @@ app.use("/api/settings/restore", express.json({ limit: "128mb" }));
 // A photograph on an ordinary JSON body needs more headroom than a form post,
 // and rather less than a whole-database restore.
 app.use("/api/items/:id/image", express.json({ limit: "12mb" }));
+// A bus consignment carries two photographs of the loaded bundle on the same
+// body as the dispatch itself, so it needs the same headroom.
+app.use("/api/orders/:id/dispatch", express.json({ limit: "12mb" }));
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(morgan("dev"));

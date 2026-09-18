@@ -234,10 +234,35 @@ model Godown {
   address  String
   isActive Boolean @default(true)
 
+  racks     Rack[]
   balances  StockBalance[]
   txns      StockTxn[]
   transfersFrom Transfer[] @relation("TransferFrom")
   transfersTo   Transfer[] @relation("TransferTo")
+}
+
+// A rack is a place inside a godown — the shelf a bundle is actually put on.
+//
+// Until now the office ran one "godown" per rack, because a rack had nowhere
+// else to live. That made a building and a shelf the same kind of thing: stock
+// could be transferred between racks as if they were separate premises, and
+// the dispatch screen listed twenty "godowns" that were all the same room.
+//
+// A godown is a building; a rack is where inside it the goods sit. Stock is
+// counted and reserved per godown — that is the number the order screen asks
+// about — and the rack rides along on each balance row so the picker is told
+// where to go. "-" is the rack of stock that was put away before anybody wrote
+// a rack down, and of a godown that does not use them.
+model Rack {
+  id        String  @id @default(cuid())
+  godownId  String
+  godown    Godown  @relation(fields: [godownId], references: [id], onDelete: Cascade)
+  code      String  // "R-1", "A-03"
+  name      String  @default("") // "Near the door", "Top shelf"
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  @@unique([godownId, code])
 }
 
 model Vendor {
@@ -511,8 +536,13 @@ model StockBalance {
   item        Item      @relation(fields: [itemId], references: [id])
   godownId    String
   godown      Godown    @relation(fields: [godownId], references: [id])
+  // Where inside the godown. "-" means nobody recorded a rack.
+  rack        String    @default("-")
   batchNo     String    @default("-")
   expiry      DateTime?
+  // When this pile was first put away, so first-in-first-out has something to
+  // sort on. Set on the first receipt into the row and never moved after.
+  firstIn     DateTime?
   onHand      Int       @default(0)
   reserved    Int       @default(0)
   hold        Int       @default(0)
@@ -520,7 +550,7 @@ model StockBalance {
   quarantined Int       @default(0)
   updatedAt   DateTime  @updatedAt
 
-  @@unique([itemId, godownId, batchNo])
+  @@unique([itemId, godownId, rack, batchNo])
   @@index([itemId])
 }
 
@@ -548,6 +578,7 @@ model StockTxn {
   item     Item         @relation(fields: [itemId], references: [id])
   godownId String
   godown   Godown       @relation(fields: [godownId], references: [id])
+  rack     String?
   batchNo  String?
   qty      Int
   ref      String?
@@ -589,7 +620,11 @@ model PurchaseLine {
   item       Item     @relation(fields: [itemId], references: [id])
   qty        Int
   rate       Decimal  @db.Decimal(12, 2)
-  alloc      Json     @default("{}") // { godownId: qty }
+  alloc      Json     @default("{}") // { godownId: qty } — the godown roll-up
+  // Where the goods were actually put: [{ godownId, rack, qty }]. `alloc` is
+  // this summed per godown and stays the field every screen and the stock
+  // engine read, so a receipt booked before racks existed still adds up.
+  places     Json     @default("[]")
   batchNo    String?
   expiry     DateTime?
   // The label the goods physically arrived carrying. Kept on the document so a
@@ -703,20 +738,58 @@ model OrderEvent {
   at      DateTime @default(now())
 }
 
+// How a consignment left the building.
+//
+// A transport company gives an LR number and the goods travel on a lorry. A
+// great deal of Bikaner's trade does not: a bundle is handed to the conductor
+// of the evening bus, and what the customer needs is the bus number, the
+// driver's phone, a photograph of the bundle actually on it, and the time it
+// left. There is no LR to quote and nobody to chase, so the photographs and the
+// number ARE the consignment note — which is why they are recorded here rather
+// than left to a WhatsApp thread nobody can find a week later.
+enum DispatchMode {
+  TRANSPORT
+  BUS
+}
+
 model Dispatch {
   id          String   @id @default(cuid())
   orderId     String
   order       Order    @relation(fields: [orderId], references: [id])
+  mode        DispatchMode @default(TRANSPORT)
   transporter String
   lr          String
   tracking    String   @default("")
   packages    Int      @default(1)
   freight     Decimal  @default(0) @db.Decimal(12, 2)
   ewb         String?
+  // Bus consignments only.
+  busNo       String   @default("")
+  driverPhone String   @default("")
+  loadedAt    DateTime?
+  photos      Json     @default("[]") // [url]
   lines       Json     @default("[]") // [{ itemId, qty, godownId }]
   invoiceNo   String?
   at          DateTime @default(now())
   by          String
+
+  shares      DispatchShare[]
+}
+
+// Records that the dispatch note was sent from here, to a number somebody
+// chose — the same thing InvoiceShare records for a bill, and named the same
+// way: sent from here, not delivered. WhatsApp does not tell us the rest.
+model DispatchShare {
+  id         String   @id @default(cuid())
+  dispatchId String
+  dispatch   Dispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+  channel    String   @default("WHATSAPP")
+  toName     String   @default("")
+  toPhone    String
+  by         String
+  at         DateTime @default(now())
+
+  @@index([dispatchId, at])
 }
 
 model Invoice {

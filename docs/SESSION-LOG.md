@@ -6,6 +6,104 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-18 — Racks, first-in-first-out, and sending goods by bus
+
+Five client items. Four were features; the first was a modelling mistake the
+office had been working around for months.
+
+### A godown is a building; a rack is a shelf in it
+
+There was only ever one kind of place — `Godown` — so when the office needed to
+record which rack a bundle went on, it made a "godown" per rack. That is why the
+transfer screen could move goods between two shelves of the same room as if they
+were separate premises, and why the dispatch queue listed a column of "godowns"
+that were one address.
+
+`Rack` is now its own master, hanging off the godown it belongs to, editable
+under **Settings → Godowns & racks**. `StockBalance` carries the rack as part of
+its key, so a pile on R-1 and a pile on R-3 are different rows, and `StockTxn`
+records which rack each movement came off. A rack that has held stock is retired,
+never deleted: the movement log names it by its code.
+
+Stock is still counted and reserved **per godown** — that is the number an order
+asks about, and making reservation rack-aware would have meant the sales screen
+knowing about shelves. The rack rides along so the picker is told where to go.
+
+The goods-receipt screen changed shape to match. It used to be one number box
+per godown laid out across the form — with four godowns the operator typed three
+zeroes to record one delivery, and the receive modal opened on a hard-coded
+`GD-A / GD-B / GD-C` split that is a list of godowns a firm may never have had.
+A putaway is now a row the operator adds: choose the godown, choose the rack,
+type how many. Most receipts are one row.
+
+`PurchaseLine.places` holds `[{godownId, rack, qty}]`; `alloc` stays as the
+godown roll-up, and is derived from `places` on the way in so the two cannot
+drift. Every screen and the whole reservation engine still read `alloc` and did
+not have to change. Documents raised before racks existed were backfilled into
+`places` with the rack unrecorded.
+
+### First in, first out
+
+`StockBalance.firstIn` is stamped the first time a pile is stocked and never
+moved after — topping a rack up does not make the stock underneath it younger.
+Backfilled from the earliest inward movement on file; rows with nothing on file
+keep NULL and sort **last**, because we do not know when they landed and guessing
+would push them ahead of stock we do know about.
+
+Two things use it. The stock engine now picks expiry-first, then oldest-first,
+whenever a quantity has to come out of a godown holding several piles — so a
+card sitting since last season leaves before the one that landed in June. And
+the allocation screen has an **Auto-allocate · oldest stock first** button, per
+line or for the whole order, next to the by-availability split a booking takes.
+
+### Sending goods by bus
+
+A transport company issues an LR and the consignment can be traced through it. A
+great deal of this trade does not work that way: the bundle is handed to the
+conductor of the evening bus, and there is no LR, no booking office and nobody
+to ring. What the firm needs then is the bus number, the driver's phone, the time
+it was loaded and a photograph of the bundle actually on board — that *is* the
+consignment note.
+
+`Dispatch.mode` is `TRANSPORT` or `BUS`; the modal swaps the fields rather than
+showing both and leaving half blank. Each mode has one thing that cannot be
+blank, enforced on the server as well as the form: an LR for a transporter, a bus
+number and a driver's phone for a bus. The photographs travel as data URLs on the
+dispatch body — the browser has already redrawn them to 1400px — and are stored
+the same way item photographs are.
+
+Then the message. Everything the firm needs is recorded by the time the
+consignment is saved, so it writes itself; it opens ready-addressed on WhatsApp
+to whichever of the firm's numbers is chosen, and a person presses send. The same
+rule a bill follows, and it is recorded the same way — `DispatchShare` says *sent
+from here*, never *delivered*, because WhatsApp does not tell us the rest.
+
+### What ticking a business line actually gets a firm
+
+"Deals in" read like a label. It now opens a list, on the same screen, as soon as
+a line is ticked: every live product on it, with what is in stock. Nothing is
+chosen there — it exists so nobody has to save the customer and go hunting
+through the catalogue to find out whether they were given the right lines.
+
+### Found while testing
+
+Creating an item picked its SKU as `1000 + count×3 + random(0..2)`. On a
+well-stocked line that collides with an already-issued code often enough to
+matter, and SKU is unique — so the collision was a 500 and the office lost the
+form. It now takes the first free number from that point. Not on the client's
+list; it turned up because it broke the harness twice in a row.
+
+### Verified
+
+31 targeted checks on the new paths (racks, placements, the godown roll-up,
+FIFO drain order, both dispatch modes and their refusals, the photograph, the
+share record), and the 241-check end-to-end harness re-run against a clean
+database: 237 pass, 4 fail — all four are the cards line being seeded with
+`allowCustomPricing: false` where production has it true, so the harness's
+per-item price overrides are correctly refused. No regression.
+
+---
+
 ## 2026-09-11 — The twenty-point update round
 
 A client list of twenty changes, under a standing instruction: analyse what

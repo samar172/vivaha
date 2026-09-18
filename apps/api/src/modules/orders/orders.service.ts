@@ -125,9 +125,31 @@ export async function advance(o: OrderFull, actor: Actor, to: OrderStatus) {
   });
 }
 
-export interface DispatchInput { ship: Record<string, number>; transporter: string; lr: string; tracking?: string; packages?: number; freight?: number; ewb?: string }
+// How the goods actually left.
+//
+// A transport company issues an LR and the consignment can be traced through
+// it. A great deal of this trade does not work that way: the bundle is handed
+// to the conductor of the evening bus, and there is no LR, no booking office
+// and nobody to ring. What the customer needs then is the bus number, the
+// driver's phone, the time it was loaded, and a photograph of the bundle
+// actually on the bus — that is the consignment note, and it is recorded here
+// rather than left in a WhatsApp thread nobody can find a week later.
+export interface DispatchInput {
+  ship: Record<string, number>;
+  mode?: "TRANSPORT" | "BUS";
+  transporter: string; lr?: string; tracking?: string; packages?: number; freight?: number; ewb?: string;
+  busNo?: string; driverPhone?: string; loadedAt?: string; photos?: string[];
+}
 export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
   if (!["READY_TO_DISPATCH", "PARTIALLY_DISPATCHED"].includes(o.status)) throw badRequest("Order is not staged for dispatch");
+  const mode = inp.mode ?? "TRANSPORT";
+  // Each way of sending goods has one thing that must not be blank, because it
+  // is the only handle anybody has on the consignment afterwards.
+  if (mode === "TRANSPORT" && !inp.lr?.trim()) throw badRequest("A transporter consignment needs its LR number — it is the only way to trace it");
+  if (mode === "BUS") {
+    if (!inp.busNo?.trim()) throw badRequest("A bus consignment needs the bus number — there is no LR to trace it by");
+    if (!inp.driverPhone?.trim()) throw badRequest("A bus consignment needs the driver or conductor's phone — the customer rings it to collect");
+  }
   const homeState = await getHomeState();
   let any = false;
   for (const l of o.lines) { const q = inp.ship[l.itemId] ?? 0; if (q < 0 || q > l.qty - l.shipped) throw badRequest(`Cannot ship more than the outstanding quantity for ${l.item.sku}`); if (q > 0) any = true; }
@@ -152,12 +174,20 @@ export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
     const no = await nextInvoiceNo(tx, series);
     await tx.invoice.create({ data: { no, lineId, orderId: o.id, customerId: o.customerId, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: invLines.map((x) => ({ itemId: x.l.itemId, itemName: x.l.item.name, sku: x.l.item.sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })) } } });
     await tx.ledgerEntry.create({ data: { customerId: o.customerId, date: new Date(), type: "INVOICE", ref: no, particular: `Tax Invoice ${no} · ${o.id}`, debit: t.total, credit: 0 } });
-    const d = await tx.dispatch.create({ data: { orderId: o.id, transporter: inp.transporter, lr: inp.lr, tracking: inp.tracking ?? "", packages: inp.packages ?? 1, freight: inp.freight ?? 0, ewb: inp.ewb ?? null, lines: shippedLines, invoiceNo: no, by: actor.name } });
+    const d = await tx.dispatch.create({ data: {
+      orderId: o.id, mode, transporter: inp.transporter, lr: inp.lr?.trim() ?? "", tracking: inp.tracking ?? "",
+      packages: inp.packages ?? 1, freight: inp.freight ?? 0, ewb: inp.ewb ?? null,
+      busNo: inp.busNo?.trim() ?? "", driverPhone: inp.driverPhone?.trim() ?? "",
+      loadedAt: inp.loadedAt ? new Date(inp.loadedAt) : mode === "BUS" ? new Date() : null,
+      photos: inp.photos ?? [],
+      lines: shippedLines, invoiceNo: no, by: actor.name,
+    } });
     const fresh = await tx.orderLine.findMany({ where: { orderId: o.id } });
     const full = fresh.every((l) => l.shipped >= l.qty);
-    await transition(tx, o, full ? "DISPATCHED" : "PARTIALLY_DISPATCHED", actor.name, `Dispatched via ${inp.transporter}, LR ${inp.lr}`);
+    const how = mode === "BUS" ? `on bus ${inp.busNo!.trim()}` : `via ${inp.transporter}, LR ${inp.lr!.trim()}`;
+    await transition(tx, o, full ? "DISPATCHED" : "PARTIALLY_DISPATCHED", actor.name, `Dispatched ${how}`);
     await audit(tx, { userId: actor.id, actor: actor.name, action: "Order dispatched", entityType: "Order", entityId: o.id, oldValue: o.status, newValue: full ? "Dispatched" : "Partially Dispatched", reason: `Invoice ${no} for ₹${t.total.toFixed(2)}` });
-    await notify(tx, { text: `Order ${o.id} dispatched to ${o.customer.name} — LR ${inp.lr}`, kind: "OK", role: "SALES_EXECUTIVE", link: `/orders/${o.id}` });
+    await notify(tx, { text: `Order ${o.id} dispatched to ${o.customer.name} — ${how}`, kind: "OK", role: "SALES_EXECUTIVE", link: `/orders/${o.id}` });
     return { invoiceNo: no, total: t.total, full, dispatchId: d.id };
   });
 }

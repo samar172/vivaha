@@ -64,7 +64,14 @@ router.post("/", requirePerm("item.edit"), asyncHandler(async (req, res) => {
   if (!line) throw badRequest("Unknown business line");
   const prefix = { cards: "WC", consumables: "CN", signage: "SG", acp: "AC", jobwork: "JW" }[line.code] ?? line.code.slice(0, 2).toUpperCase();
   const count = await prisma.item.count({ where: { lineId: line.id } });
-  const sku = `${prefix}-${1000 + count * 3 + Math.floor(Math.random() * 3)}`;
+  // The number is spaced out so codes do not read as a strict serial — but it
+  // used to be spaced out with a random jump of 0 to 2, which collides with an
+  // already-issued code often enough that creating an item on a well-stocked
+  // line failed outright. SKU is unique, so a clash was a 500 and the office
+  // lost the form. Now the first free number from that point is taken.
+  const taken = new Set((await prisma.item.findMany({ where: { sku: { startsWith: prefix + "-" } }, select: { sku: true } })).map((x) => x.sku));
+  let sku = "";
+  for (let n = 1000 + count * 3; !sku; n++) if (!taken.has(`${prefix}-${n}`)) sku = `${prefix}-${n}`;
   const id = `ITM-${Date.now().toString(36).toUpperCase()}`;
   const item = await prisma.item.create({
     data: { id, sku, designNo: b.designNo || null, name: b.name, nameHi: b.nameHi, lineId: b.lineId, attrs: b.attrs, uom: b.uom, packUom: b.packUom, perPack: b.perPack, moq: b.moq, landedCost: b.landedCost, hsn: b.hsn, gstPct: b.gstPct, vendorId: b.vendorId ?? null, season: b.season ?? null, batchTracked: b.batchTracked, wastagePct: b.wastagePct ?? null, setupCharge: b.setupCharge ?? null, artSeed: count, status: b.status, slabs: { create: b.slabs } },

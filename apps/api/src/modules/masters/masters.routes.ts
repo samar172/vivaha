@@ -58,7 +58,59 @@ router.post("/lines", requirePerm("settings.manage"), asyncHandler(async (req, r
   res.status(201).json(line);
 }));
 
-router.get("/godowns", asyncHandler(async (_req, res) => res.json(await prisma.godown.findMany({ where: { isActive: true }, orderBy: { id: "asc" } }))));
+router.get("/godowns", asyncHandler(async (_req, res) => res.json(await prisma.godown.findMany({
+  where: { isActive: true },
+  orderBy: { id: "asc" },
+  include: { racks: { where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }], select: { id: true, code: true, name: true } } },
+}))));
+
+// ── Racks inside a godown ───────────────────────────────────────────────────
+// A godown is a building and a rack is a shelf in it. They were the same thing
+// until now — a "godown" per rack — which let the transfer screen move goods
+// between two shelves of the same room as if they were separate premises. The
+// rack list is the firm's own and is kept here, next to the godowns.
+const rackSchema = z.object({
+  code: z.string().trim().min(1, "A rack needs a number or a code").max(20),
+  name: z.string().trim().max(60).default(""),
+  sortOrder: z.number().int().min(0).optional(),
+  isActive: z.boolean().optional(),
+});
+
+router.post("/godowns/:id/racks", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = rackSchema.parse(req.body);
+  const g = await prisma.godown.findUnique({ where: { id: req.params.id } });
+  if (!g) throw notFound("Godown not found");
+  const clash = await prisma.rack.findUnique({ where: { godownId_code: { godownId: g.id, code: b.code } } });
+  if (clash) throw badRequest(`${g.short} already has a rack ${b.code}`);
+  const rack = await prisma.rack.create({ data: { godownId: g.id, code: b.code, name: b.name, sortOrder: b.sortOrder ?? 0 } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Rack added", entityType: "Godown", entityId: g.name, newValue: `${b.code}${b.name ? " · " + b.name : ""}` });
+  res.status(201).json(rack);
+}));
+
+router.patch("/racks/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = rackSchema.partial().parse(req.body);
+  const before = await prisma.rack.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Rack not found");
+  if (b.code && b.code !== before.code) {
+    const clash = await prisma.rack.findUnique({ where: { godownId_code: { godownId: before.godownId, code: b.code } } });
+    if (clash) throw badRequest(`That godown already has a rack ${b.code}`);
+  }
+  const rack = await prisma.rack.update({ where: { id: before.id }, data: b });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Rack changed", entityType: "Godown", entityId: before.godownId, oldValue: `${before.code}${before.name ? " · " + before.name : ""}${before.isActive ? "" : " · retired"}`, newValue: `${rack.code}${rack.name ? " · " + rack.name : ""}${rack.isActive ? "" : " · retired"}` });
+  res.json(rack);
+}));
+
+// Retired rather than deleted: stock rows and the movement log name the rack by
+// its code, and a shelf that held goods last season should still read back.
+router.delete("/racks/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const before = await prisma.rack.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Rack not found");
+  const held = await prisma.stockBalance.aggregate({ where: { godownId: before.godownId, rack: before.code }, _sum: { onHand: true } });
+  if ((held._sum.onHand ?? 0) > 0) throw badRequest(`Rack ${before.code} still holds ${held._sum.onHand} units — move them off it first`);
+  await prisma.rack.update({ where: { id: before.id }, data: { isActive: false } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Rack retired", entityType: "Godown", entityId: before.godownId, oldValue: before.code });
+  res.json({ ok: true });
+}));
 
 router.get("/vendors", asyncHandler(async (_req, res) => {
   const vendors = await prisma.vendor.findMany({ orderBy: { id: "asc" }, include: { purchases: { select: { total: true, freight: true, date: true } }, payments: { select: { amount: true } } } });

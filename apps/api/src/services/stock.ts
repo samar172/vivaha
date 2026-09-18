@@ -9,12 +9,36 @@ import { badRequest } from "../utils/httpError";
 
 export type GodownMap = Record<string, number>; // { godownId: qty }
 
+/** Where goods were physically put: a godown, and the rack inside it. */
+export interface Placement { godownId: string; rack?: string | null; qty: number }
+
+/** The godown roll-up of a set of placements — the shape every screen, every
+ *  order line and the whole reservation engine already speak. */
+export function placementsToMap(places: Placement[]): GodownMap {
+  const m: GodownMap = {};
+  for (const p of places) if (p.qty > 0) m[p.godownId] = (m[p.godownId] ?? 0) + p.qty;
+  return m;
+}
+
+export const RACK_NONE = "-";
+export const rackOf = (r?: string | null) => (r ?? "").trim() || RACK_NONE;
+
 async function rows(db: Db, itemId: string, godownId?: string) {
   return db.stockBalance.findMany({ where: { itemId, ...(godownId ? { godownId } : {}) } });
 }
 
-const fefo = <T extends { expiry: Date | null }>(a: T, b: T) =>
-  (a.expiry ? a.expiry.getTime() : 9e15) - (b.expiry ? b.expiry.getTime() : 9e15);
+// Which pile to touch first, whenever a quantity has to come out of a godown
+// that holds several. Expiry leads, because a batch that goes out of date is
+// money already lost; among piles that expire together — which, on cards, is
+// all of them — the oldest one goes first. That is the first-in-first-out the
+// godown has always worked to by eye, and it is now what the machine does on
+// its own.
+type Pickable = { expiry: Date | null; firstIn: Date | null };
+const fefo = <T extends Pickable>(a: T, b: T) =>
+  ((a.expiry ? a.expiry.getTime() : 9e15) - (b.expiry ? b.expiry.getTime() : 9e15))
+  // A pile with no recorded arrival sorts last: we do not know when it landed
+  // and guessing would push it ahead of stock we do know about.
+  || ((a.firstIn ? a.firstIn.getTime() : 9e15) - (b.firstIn ? b.firstIn.getTime() : 9e15));
 
 export async function availGodown(db: Db, itemId: string, godownId: string) {
   return (await rows(db, itemId, godownId)).reduce((s, b) => s + available(b), 0);
@@ -29,18 +53,19 @@ export async function bucketsGodown(db: Db, itemId: string, godownId: string) {
   return sumBuckets(await rows(db, itemId, godownId));
 }
 
-async function log(db: Db, t: { type: StockTxnType; itemId: string; godownId: string; batchNo?: string | null; qty: number; ref?: string | null; reason?: string | null; by: string }) {
-  await db.stockTxn.create({ data: { type: t.type, itemId: t.itemId, godownId: t.godownId, batchNo: t.batchNo ?? null, qty: t.qty, ref: t.ref ?? null, reason: t.reason ?? null, by: t.by } });
+async function log(db: Db, t: { type: StockTxnType; itemId: string; godownId: string; rack?: string | null; batchNo?: string | null; qty: number; ref?: string | null; reason?: string | null; by: string }) {
+  await db.stockTxn.create({ data: { type: t.type, itemId: t.itemId, godownId: t.godownId, rack: t.rack ?? null, batchNo: t.batchNo ?? null, qty: t.qty, ref: t.ref ?? null, reason: t.reason ?? null, by: t.by } });
 }
 
-async function balance(db: Db, itemId: string, godownId: string, batchNo?: string | null, expiry?: Date | null) {
+async function balance(db: Db, itemId: string, godownId: string, rack: string, batchNo?: string | null, expiry?: Date | null) {
   const bn = batchNo || "-";
-  const existing = await db.stockBalance.findUnique({ where: { itemId_godownId_batchNo: { itemId, godownId, batchNo: bn } } });
+  const rk = rackOf(rack);
+  const existing = await db.stockBalance.findUnique({ where: { itemId_godownId_rack_batchNo: { itemId, godownId, rack: rk, batchNo: bn } } });
   if (existing) {
     if (expiry && !existing.expiry) return db.stockBalance.update({ where: { id: existing.id }, data: { expiry } });
     return existing;
   }
-  return db.stockBalance.create({ data: { itemId, godownId, batchNo: bn, expiry: expiry ?? null } });
+  return db.stockBalance.create({ data: { itemId, godownId, rack: rk, batchNo: bn, expiry: expiry ?? null } });
 }
 
 // Temporary hold (booking). Checks every godown first, then takes FEFO.
@@ -54,7 +79,7 @@ export async function tryHold(db: Db, itemId: string, map: GodownMap, ref: strin
       const take = Math.min(available(r), need);
       if (take > 0) {
         await db.stockBalance.update({ where: { id: r.id }, data: { hold: { increment: take } } });
-        await log(db, { type: "HOLD", itemId, godownId: gid, batchNo: r.batchNo, qty: take, ref, by });
+        await log(db, { type: "HOLD", itemId, godownId: gid, rack: r.rack, batchNo: r.batchNo, qty: take, ref, by });
         need -= take;
       }
     }
@@ -70,7 +95,7 @@ export async function releaseHold(db: Db, itemId: string, map: GodownMap, ref: s
       const take = Math.min(r.hold, need);
       if (take > 0) {
         await db.stockBalance.update({ where: { id: r.id }, data: { hold: { decrement: take } } });
-        await log(db, { type: "HOLD_RELEASE", itemId, godownId: gid, batchNo: r.batchNo, qty: take, ref, reason, by });
+        await log(db, { type: "HOLD_RELEASE", itemId, godownId: gid, rack: r.rack, batchNo: r.batchNo, qty: take, ref, reason, by });
         need -= take;
       }
     }
@@ -85,7 +110,7 @@ export async function holdToReserved(db: Db, itemId: string, map: GodownMap, ref
       const take = Math.min(r.hold, need);
       if (take > 0) {
         await db.stockBalance.update({ where: { id: r.id }, data: { hold: { decrement: take }, reserved: { increment: take } } });
-        await log(db, { type: "RESERVE", itemId, godownId: gid, batchNo: r.batchNo, qty: take, ref, by });
+        await log(db, { type: "RESERVE", itemId, godownId: gid, rack: r.rack, batchNo: r.batchNo, qty: take, ref, by });
         need -= take;
       }
     }
@@ -100,7 +125,7 @@ export async function releaseReserved(db: Db, itemId: string, map: GodownMap, re
       const take = Math.min(r.reserved, need);
       if (take > 0) {
         await db.stockBalance.update({ where: { id: r.id }, data: { reserved: { decrement: take } } });
-        await log(db, { type: "RESERVE_RELEASE", itemId, godownId: gid, batchNo: r.batchNo, qty: take, ref, reason, by });
+        await log(db, { type: "RESERVE_RELEASE", itemId, godownId: gid, rack: r.rack, batchNo: r.batchNo, qty: take, ref, reason, by });
         need -= take;
       }
     }
@@ -136,7 +161,7 @@ export async function shipReserved(db: Db, itemId: string, map: GodownMap, ref: 
       const take = Math.min(r.reserved, need);
       if (take > 0) {
         await db.stockBalance.update({ where: { id: r.id }, data: { reserved: { decrement: take }, onHand: { decrement: take } } });
-        await log(db, { type: "DISPATCH", itemId, godownId: gid, batchNo: r.batchNo, qty: take, ref, by });
+        await log(db, { type: "DISPATCH", itemId, godownId: gid, rack: r.rack, batchNo: r.batchNo, qty: take, ref, by });
         need -= take;
       }
     }
@@ -144,10 +169,15 @@ export async function shipReserved(db: Db, itemId: string, map: GodownMap, ref: 
   }
 }
 
-export async function receive(db: Db, itemId: string, godownId: string, qty: number, ref: string, by: string, batchNo?: string | null, expiry?: Date | null, type: StockTxnType = "GRN") {
-  const b = await balance(db, itemId, godownId, batchNo, expiry);
-  await db.stockBalance.update({ where: { id: b.id }, data: { onHand: { increment: qty } } });
-  await log(db, { type, itemId, godownId, batchNo: b.batchNo, qty, ref, by });
+export async function receive(db: Db, itemId: string, godownId: string, qty: number, ref: string, by: string, batchNo?: string | null, expiry?: Date | null, type: StockTxnType = "GRN", rack?: string | null) {
+  const b = await balance(db, itemId, godownId, rackOf(rack), batchNo, expiry);
+  await db.stockBalance.update({
+    where: { id: b.id },
+    // firstIn is stamped once and never moved: topping a rack up does not make
+    // the pile underneath it younger.
+    data: { onHand: { increment: qty }, ...(b.firstIn ? {} : { firstIn: new Date() }) },
+  });
+  await log(db, { type, itemId, godownId, rack: b.rack, batchNo: b.batchNo, qty, ref, by });
 }
 
 // Outward without a reservation (transfer out, job-work base card draw).
@@ -161,7 +191,7 @@ export async function issue(db: Db, itemId: string, godownId: string, qty: numbe
     const take = Math.min(available(r), need);
     if (take > 0) {
       await db.stockBalance.update({ where: { id: r.id }, data: { onHand: { decrement: take } } });
-      await log(db, { type, itemId, godownId, batchNo: r.batchNo, qty: take, ref, by });
+      await log(db, { type, itemId, godownId, rack: r.rack, batchNo: r.batchNo, qty: take, ref, by });
       need -= take; batchUsed = batchUsed ?? r.batchNo;
     }
   }
@@ -172,18 +202,18 @@ export type AdjustDir = "damage" | "quarantine" | "recover" | "writeoff";
 export async function adjust(db: Db, itemId: string, godownId: string, qty: number, dir: AdjustDir, reason: string, by: string, batchNo?: string | null) {
   const rs = (await rows(db, itemId, godownId)).sort(fefo);
   const pick = batchNo ? rs.find((r) => r.batchNo === batchNo) : rs[0];
-  const b = pick ?? (await balance(db, itemId, godownId, batchNo));
+  const b = pick ?? (await balance(db, itemId, godownId, RACK_NONE, batchNo));
   const dm = rs.reduce((s, r) => s + r.damaged, 0);
   if ((dir === "damage" || dir === "quarantine") && available(b) < qty) {
     // spread across batches if the chosen one is short
     let need = qty;
-    for (const r of rs) { if (need <= 0) break; const take = Math.min(available(r), need); if (take > 0) { await db.stockBalance.update({ where: { id: r.id }, data: dir === "damage" ? { damaged: { increment: take } } : { quarantined: { increment: take } } }); await log(db, { type: dir === "damage" ? "DAMAGE" : "QUARANTINE", itemId, godownId, batchNo: r.batchNo, qty: take, reason, by }); need -= take; } }
+    for (const r of rs) { if (need <= 0) break; const take = Math.min(available(r), need); if (take > 0) { await db.stockBalance.update({ where: { id: r.id }, data: dir === "damage" ? { damaged: { increment: take } } : { quarantined: { increment: take } } }); await log(db, { type: dir === "damage" ? "DAMAGE" : "QUARANTINE", itemId, godownId, rack: r.rack, batchNo: r.batchNo, qty: take, reason, by }); need -= take; } }
     if (need > 0) throw badRequest(`Cannot move more than the available quantity`);
     return;
   }
   if ((dir === "recover" || dir === "writeoff") && dm < qty) throw badRequest(`Cannot recover more than currently damaged (${dm})`);
-  if (dir === "damage") { await db.stockBalance.update({ where: { id: b.id }, data: { damaged: { increment: qty } } }); await log(db, { type: "DAMAGE", itemId, godownId, batchNo: b.batchNo, qty, reason, by }); }
-  else if (dir === "quarantine") { await db.stockBalance.update({ where: { id: b.id }, data: { quarantined: { increment: qty } } }); await log(db, { type: "QUARANTINE", itemId, godownId, batchNo: b.batchNo, qty, reason, by }); }
+  if (dir === "damage") { await db.stockBalance.update({ where: { id: b.id }, data: { damaged: { increment: qty } } }); await log(db, { type: "DAMAGE", itemId, godownId, rack: b.rack, batchNo: b.batchNo, qty, reason, by }); }
+  else if (dir === "quarantine") { await db.stockBalance.update({ where: { id: b.id }, data: { quarantined: { increment: qty } } }); await log(db, { type: "QUARANTINE", itemId, godownId, rack: b.rack, batchNo: b.batchNo, qty, reason, by }); }
   else {
     let need = qty;
     for (const r of rs.filter((r) => r.damaged > 0)) {
@@ -191,7 +221,7 @@ export async function adjust(db: Db, itemId: string, godownId: string, qty: numb
       const take = Math.min(r.damaged, need);
       if (dir === "recover") await db.stockBalance.update({ where: { id: r.id }, data: { damaged: { decrement: take } } });
       else await db.stockBalance.update({ where: { id: r.id }, data: { damaged: { decrement: take }, onHand: { decrement: take } } });
-      await log(db, { type: dir === "recover" ? "RECOVER" : "WRITE_OFF", itemId, godownId, batchNo: r.batchNo, qty: take, reason, by });
+      await log(db, { type: dir === "recover" ? "RECOVER" : "WRITE_OFF", itemId, godownId, rack: r.rack, batchNo: r.batchNo, qty: take, reason, by });
       need -= take;
     }
   }

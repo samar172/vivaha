@@ -43,12 +43,15 @@ router.post("/transfers", requirePerm("stock.transfer"), asyncHandler(async (req
 }));
 
 router.post("/transfers/:id/receive", requirePerm("stock.transfer"), asyncHandler(async (req, res) => {
+  // Which shelf it was put on at the far end. Optional: a godown that does not
+  // run racks receives exactly as it always did.
+  const { rack } = z.object({ rack: z.string().default("") }).parse(req.body ?? {});
   const t = await prisma.transfer.findUnique({ where: { id: req.params.id } });
   if (!t) throw notFound("Transfer not found");
   if (t.status !== "IN_TRANSIT") throw badRequest("Already received");
   const out = await prisma.$transaction(async (tx) => {
-    await stock.receive(tx, t.itemId, t.toId, t.qty, t.id, req.user!.name, t.batchNo === "-" ? null : t.batchNo, null, "TRANSFER_IN");
-    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Stock transfer received", entityType: "Transfer", entityId: t.id, oldValue: "In Transit", newValue: "Received" });
+    await stock.receive(tx, t.itemId, t.toId, t.qty, t.id, req.user!.name, t.batchNo === "-" ? null : t.batchNo, null, "TRANSFER_IN", rack);
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Stock transfer received", entityType: "Transfer", entityId: t.id, oldValue: "In Transit", newValue: rack ? `Received · rack ${rack}` : "Received" });
     return tx.transfer.update({ where: { id: t.id }, data: { status: "RECEIVED", receivedAt: new Date() } });
   });
   res.json(out);

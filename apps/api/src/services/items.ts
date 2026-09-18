@@ -5,7 +5,15 @@ import { prisma, D } from "../db";
 // Enriched item view: availability across godowns, per-godown split, band.
 export type ItemWithSlabs = Prisma.ItemGetPayload<{ include: { slabs: true; line: true; vendor: true } }>;
 
-export interface GodownSplit { godownId: string; onHand: number; reserved: number; hold: number; damaged: number; quarantined: number; available: number }
+/** What sits on one rack inside a godown, so a picker can be told where to go. */
+export interface RackSplit { rack: string; onHand: number; available: number; firstIn: string | null }
+export interface GodownSplit {
+  godownId: string; onHand: number; reserved: number; hold: number; damaged: number; quarantined: number; available: number;
+  /** When the oldest pile still available here landed — what first-in-first-out
+   *  sorts on. Null when nothing available, or nothing on file about its age. */
+  oldestAt: string | null;
+  racks: RackSplit[];
+}
 export interface ItemView {
   id: string; sku: string; designNo: string | null; name: string; nameHi: string; lineId: string; attrs: Record<string, string>;
   uom: string; packUom: string; perPack: number; moq: number; landedCost: number; hsn: string; gstPct: number; vendorId: string | null;
@@ -33,9 +41,19 @@ export async function loadItemViews(where: Prisma.ItemWhereInput = {}, godownId?
     const tot = sumBuckets(all);
     const gmap: Record<string, GodownSplit> = {};
     for (const b of all) {
-      const g = (gmap[b.godownId] = gmap[b.godownId] || { godownId: b.godownId, onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0 });
-      g.onHand += b.onHand; g.reserved += b.reserved; g.hold += b.hold; g.damaged += b.damaged; g.quarantined += b.quarantined; g.available += available(b);
+      const g = (gmap[b.godownId] = gmap[b.godownId] || { godownId: b.godownId, onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0, oldestAt: null, racks: [] });
+      g.onHand += b.onHand; g.reserved += b.reserved; g.hold += b.hold; g.damaged += b.damaged; g.quarantined += b.quarantined;
+      const av = available(b);
+      g.available += av;
+      const r = g.racks.find((x) => x.rack === b.rack) ?? (g.racks[g.racks.push({ rack: b.rack, onHand: 0, available: 0, firstIn: null }) - 1]);
+      r.onHand += b.onHand; r.available += av;
+      if (b.firstIn && (!r.firstIn || b.firstIn.toISOString() < r.firstIn)) r.firstIn = b.firstIn.toISOString();
+      // Only stock that can actually be given out sets the age of the pile —
+      // a rack holding nothing but damaged goods must not make this godown
+      // look like the oldest one and pull an allocation towards it.
+      if (av > 0 && b.firstIn && (!g.oldestAt || b.firstIn.toISOString() < g.oldestAt)) g.oldestAt = b.firstIn.toISOString();
     }
+    for (const g of Object.values(gmap)) g.racks.sort((a, b) => a.rack.localeCompare(b.rack, undefined, { numeric: true }));
     const scoped = godownId && godownId !== "ALL" ? gmap[godownId] ?? { onHand: 0, reserved: 0, hold: 0, damaged: 0, quarantined: 0, available: 0 } : tot;
     const eta = etaByItem[it.id] ? etaByItem[it.id].toISOString() : null;
     return {

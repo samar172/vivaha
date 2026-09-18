@@ -8,6 +8,7 @@ import { requirePerm } from "../../middleware/auth";
 import { gatesForAll, gateFor } from "../../services/credit";
 import { audit } from "../../services/audit";
 import { getCompany, getSetting } from "../../services/settings";
+import { storeImage } from "../../services/uploads";
 import * as svc from "./orders.service";
 
 const router = Router();
@@ -118,9 +119,61 @@ router.post("/:id/status", requirePerm("order.pick", "order.dispatch"), asyncHan
   res.json(svc.serializeOrder(await svc.getOrder(prisma, req.params.id)));
 }));
 router.post("/:id/dispatch", requirePerm("order.dispatch"), asyncHandler(async (req, res) => {
-  const b = z.object({ ship: z.record(z.number().int().min(0)), transporter: z.string().min(1), lr: z.string().min(1), tracking: z.string().optional(), packages: z.number().int().min(1).optional(), freight: z.number().min(0).optional(), ewb: z.string().optional() }).parse(req.body);
-  const r = await svc.dispatch(await svc.getOrder(prisma, req.params.id), actor(req), b);
+  const b = z.object({
+    ship: z.record(z.number().int().min(0)),
+    mode: z.enum(["TRANSPORT", "BUS"]).default("TRANSPORT"),
+    transporter: z.string().min(1), lr: z.string().optional(), tracking: z.string().optional(),
+    packages: z.number().int().min(1).optional(), freight: z.number().min(0).optional(), ewb: z.string().optional(),
+    // Bus consignments. The photographs arrive as data URLs on the JSON body,
+    // the same road item photographs take — the browser has already redrawn
+    // them down to a sensible size.
+    busNo: z.string().optional(), driverPhone: z.string().optional(), loadedAt: z.string().optional(),
+    photos: z.array(z.string()).max(4).optional(),
+  }).parse(req.body);
+  // Stored before the consignment is written, because an upload is a network
+  // call and has no business inside the transaction that moves the stock.
+  const photos: string[] = [];
+  for (const [n, data] of (b.photos ?? []).entries()) {
+    if (!data.startsWith("data:")) { photos.push(data); continue; }
+    photos.push((await storeImage("dispatch", `${req.params.id}-${Date.now()}-${n}`, data)).url);
+  }
+  const r = await svc.dispatch(await svc.getOrder(prisma, req.params.id), actor(req), { ...b, photos });
   res.json(r);
+}));
+
+// What was sent, to whom it can be sent on, and whether it already was. The
+// firm's own numbers come with it so the message can be addressed to whoever
+// actually receives goods — the same way a bill is shared.
+router.get("/:id/dispatches", requirePerm("order.view"), asyncHandler(async (req, res) => {
+  const o = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    select: {
+      id: true,
+      customer: { select: { id: true, name: true, phone: true, tehsil: true, contacts: { select: { id: true, name: true, role: true, phone: true, billsTo: true } } } },
+      dispatches: { orderBy: { at: "asc" }, include: { shares: { orderBy: { at: "desc" } } } },
+      invoices: { select: { no: true, total: true } },
+    },
+  });
+  if (!o) return res.status(404).json({ error: "Order not found" });
+  res.json({
+    ...o,
+    dispatches: o.dispatches.map((d) => ({ ...d, freight: D(d.freight), photos: (d.photos as string[]) ?? [], sentCount: d.shares.length, lastSent: d.shares[0] ?? null })),
+    invoices: o.invoices.map((i) => ({ ...i, total: D(i.total) })),
+    company: await getCompany(),
+    whatsappFrom: await getSetting<string>("WHATSAPP_FROM", ""),
+  });
+}));
+
+// Records that the dispatch note went out from here, to a chosen number —
+// written when the office opens the ready-addressed message, which is the
+// moment we actually know about.
+router.post("/:id/dispatch/:did/share", requirePerm("order.dispatch"), asyncHandler(async (req, res) => {
+  const b = z.object({ channel: z.string().default("WHATSAPP"), toName: z.string().default(""), toPhone: z.string().min(4) }).parse(req.body);
+  const d = await prisma.dispatch.findFirst({ where: { id: req.params.did, orderId: req.params.id } });
+  if (!d) return res.status(404).json({ error: "Dispatch not found on this order" });
+  const share = await prisma.dispatchShare.create({ data: { dispatchId: d.id, channel: b.channel, toName: b.toName, toPhone: b.toPhone, by: req.user!.name } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Dispatch details sent", entityType: "Order", entityId: req.params.id, newValue: `${b.channel} · ${b.toName || b.toPhone}` });
+  res.status(201).json(share);
 }));
 router.post("/:id/revive", requirePerm("order.approve"), asyncHandler(async (req, res) => {
   await svc.revive(await svc.getOrder(prisma, req.params.id), actor(req));
