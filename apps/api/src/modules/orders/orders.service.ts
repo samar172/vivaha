@@ -16,7 +16,7 @@ export const orderInclude = {
   lines: { include: { item: { select: { id: true, sku: true, name: true, nameHi: true, uom: true, designNo: true, artSeed: true, lineId: true, imageUrl: true, landedCost: true } } } },
   events: { orderBy: { at: "asc" as const } },
   dispatches: { orderBy: { at: "asc" as const } },
-  invoices: { include: { lines: true }, orderBy: { date: "asc" as const } },
+  invoices: { include: { lines: { orderBy: { id: "asc" as const } } }, orderBy: { date: "asc" as const } },
 } satisfies Prisma.OrderInclude;
 export type OrderFull = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
 

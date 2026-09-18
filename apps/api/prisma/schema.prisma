@@ -80,10 +80,35 @@ model User {
   updatedAt        DateTime  @updatedAt
 
   auditLogs         AuditLog[]
+  grants            UserPermission[]
   contact           CustomerContact?
   notifications     Notification[]
   notificationReads NotificationRead[]
   salesCustomers    Customer[]         @relation("CustomerSalesExec")
+}
+
+// A capability given to, or withheld from, one person — on top of whatever the
+// role they hold already carries.
+//
+// A role answers "what does an accounts manager do". It cannot answer "Rahin,
+// and only Rahin, may correct a bill" — and that is the question the office
+// actually asks, because the person trusted with a correction is a person, not
+// a job title. Widening the whole role to let one person do one thing is how
+// everybody ends up able to do everything.
+//
+// `allow = false` is a withholding rather than an absence: it takes a
+// capability off one person while their role keeps it, which is the other half
+// of the same question and is recorded with the same trail.
+model UserPermission {
+  userId String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  perm   String
+  allow  Boolean @default(true)
+  by     String
+  reason String   @default("")
+  at     DateTime @default(now())
+
+  @@id([userId, perm])
 }
 
 // Permissions are data, not code — Settings → Roles & permissions.
@@ -814,9 +839,33 @@ model Invoice {
   status     String   @default("Posted") // Posted | Cancelled (number never reused)
   lines      InvoiceLine[]
   shares     InvoiceShare[]
+  amendments InvoiceAmendment[]
 
   @@index([customerId, date])
   @@index([lineId, date])
+}
+
+// A correction made to a bill after it was raised.
+//
+// A tax invoice is not an ordinary record: the number is filed, the ledger is
+// posted from it and the GST return is built out of it. So a correction is
+// never a silent overwrite — the bill carries how many times it was corrected,
+// what it said before, who changed it and why, and the ledger is put right with
+// a fresh entry rather than by editing the one already there. The number itself
+// never changes and is never reused.
+model InvoiceAmendment {
+  id        String   @id @default(cuid())
+  invoiceNo String
+  invoice   Invoice  @relation(fields: [invoiceNo], references: [no], onDelete: Cascade)
+  reason    String
+  oldTotal  Decimal  @db.Decimal(14, 2)
+  newTotal  Decimal  @db.Decimal(14, 2)
+  // What each line said before and after: [{ sku, was: {qty, rate}, now: {qty, rate} }]
+  detail    Json     @default("[]")
+  by        String
+  at        DateTime @default(now())
+
+  @@index([invoiceNo, at])
 }
 
 // Every time a bill was sent out, to whom and by whom. A bill goes more than

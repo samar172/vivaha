@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import type { Perm, Role } from "@vivaha/shared";
 import { env } from "../env";
 import { unauthorized, forbidden } from "../utils/httpError";
-import { permsForRole } from "../services/permissions";
+import { permsForUser } from "../services/permissions";
 
 export interface AuthUser {
   id: string;
@@ -32,7 +32,7 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   } catch {
     return next(unauthorized("Invalid or expired token"));
   }
-  permsForRole(payload.role)
+  permsForUser(payload.id, payload.role)
     .then((perms) => {
       req.user = { id: payload.id, role: payload.role, name: payload.name, customerId: payload.customerId ?? null, perms };
       next();

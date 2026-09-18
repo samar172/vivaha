@@ -61,7 +61,7 @@ function UsersTab() {
       <td>{pwState(u)}</td>
       <td className="sm">{u.lastLoginAt ? fDT(u.lastLoginAt) : "never"}</td>
       <td>{u.lockedUntil && new Date(u.lockedUntil) > new Date() ? <span className="bd b-er">Locked</span> : u.isActive ? <span className="bd b-ok">Active</span> : <span className="bd b-nu">Inactive</span>}</td>
-      <td><button className="b b-o b-s" onClick={() => reset(u)}>Reset password</button> <button className="b b-g b-s" disabled={me?.id === u.id} onClick={() => toggle(u)}>{u.isActive ? "Deactivate" : "Activate"}</button></td>
+      <td>{!portal && <><button className="b b-o b-s" disabled={me?.id === u.id} title={me?.id === u.id ? "Ask another administrator to change your own capabilities" : "What this person may do, on top of their role"} onClick={() => openModal(<GrantsModal u={u} />, "w")}>Capabilities</button>{" "}</>}<button className="b b-o b-s" onClick={() => reset(u)}>Reset password</button> <button className="b b-g b-s" disabled={me?.id === u.id} onClick={() => toggle(u)}>{u.isActive ? "Deactivate" : "Activate"}</button></td>
     </tr>) : <tr><td colSpan={7}><Note style={{ margin: 9 }}>No {portal ? "portal logins" : "staff accounts"} yet.</Note></td></tr>}
     <tr style={{ cursor: "default", background: "var(--panel-2)" }}><td colSpan={7} style={{ textAlign: "center" }}>
       <button className="b b-o b-s" onClick={() => openModal(<NewUserModal portal={portal} onDone={mutate} />)}>+ {portal ? "Issue a portal login" : "Add an employee"}</button>
@@ -69,9 +69,117 @@ function UsersTab() {
   </tbody></table></div>;
   return <>
     <Note style={{ marginBottom: 11 }}>Every account is created with a temporary password that the office can see once. The holder is forced to replace it the first time they sign in, and after that nobody in the office can read it — a reset issues a fresh temporary one and is written to the audit log.</Note>
+    <Note style={{ marginBottom: 11 }}>A role answers what a job does. <b>Capabilities</b> answers what one person may do — give an employee the right to correct a bill, or take one away, without widening the job for everybody who holds it. Every grant records who gave it and why, and applies on their next click rather than their next sign-in.</Note>
     <Panel t="Staff accounts" h={`${data?.staff.length ?? 0} accounts`}>{table(data?.staff, false)}</Panel>
     <Panel t="Customer portal logins" h={`${data?.portal.length ?? 0} logins`}>{table(data?.portal, true)}</Panel>
   </>;
+}
+
+// What one person may do, on top of the role they hold.
+//
+// Three states per capability, because two is not enough: it comes with the
+// role, it was given to this person, or it was taken off this person while the
+// role keeps it. The last one is why this is not simply a longer role list.
+//
+// Only the difference from the role is stored. A grant that agrees with the
+// role is noise, and would go stale the moment somebody edits the role.
+interface GrantsState {
+  user: { id: string; name: string; username: string; role: Role };
+  perms: Perm[]; rolePerms: string[];
+  grants: { perm: string; allow: boolean; by: string; reason: string; at: string }[];
+  effective: string[];
+}
+type Stance = "role" | "grant" | "withhold";
+
+// What reads well on a row: the capability, in the words the office uses.
+const PERM_LABEL: Record<string, string> = {
+  "invoice.amend": "Correct a bill after it is raised",
+  "item.edit": "Add and edit items",
+  "cust.edit": "Add and edit customers",
+  "cust.price": "Set a firm's prices",
+  "cust.block": "Block and unblock a firm",
+  "purchase.create": "Raise and correct purchase invoices",
+  "stock.adjust": "Adjust stock (damage, write-off)",
+  "stock.transfer": "Transfer stock between godowns",
+  "order.create": "Book an order",
+  "order.approve": "Approve and reject orders",
+  "order.allocate": "Allocate stock to an order",
+  "order.pick": "Pick and pack",
+  "order.dispatch": "Dispatch goods",
+  "return.process": "Process returns",
+  "payment.create": "Record payments",
+  "credit.override": "Override the credit gate",
+  "margin.override": "Price below the margin floor",
+  "settings.manage": "Change settings, roles and capabilities",
+  "audit.view": "Read the audit log",
+};
+
+function GrantsModal({ u }: { u: AppUser }) {
+  const { closeModal, toast } = useUI();
+  const { data, mutate } = useApi<GrantsState>(`/api/settings/users/${u.id}/permissions`);
+  const [edits, setEdits] = useState<Record<string, Stance>>({});
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (!data) return <ModalFrame title={`Capabilities — ${u.name}`} onClose={closeModal} actions={<button className="b b-p" onClick={closeModal}>Close</button>}><div className="sm">Loading…</div></ModalFrame>;
+
+  const stored = (p: string): Stance => {
+    const g = data.grants.find((x) => x.perm === p);
+    return g ? (g.allow ? "grant" : "withhold") : "role";
+  };
+  const stance = (p: string): Stance => edits[p] ?? stored(p);
+  const effective = (p: string) => { const st = stance(p); return st === "grant" ? true : st === "withhold" ? false : data.rolePerms.includes(p); };
+  const dirty = data.perms.filter((p) => stance(p) !== stored(p));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await put(`/api/settings/users/${u.id}/permissions`, {
+        grants: data.perms.map((p) => ({ perm: p, allow: effective(p) })),
+        reason: reason.trim(),
+      });
+      toast(`${u.name}: ${dirty.length} capabilit${dirty.length === 1 ? "y" : "ies"} changed — it applies on their next click`, "s");
+      setEdits({}); setReason(""); await mutate(); refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  const cell = (p: Perm, want: Stance, label: string, title: string) => {
+    const on = stance(p) === want;
+    return <button type="button" title={title} className={"b b-s " + (on ? "b-p" : "b-o")}
+      onClick={() => setEdits((e) => ({ ...e, [p]: want }))} style={{ minWidth: 76 }}>{label}</button>;
+  };
+
+  return <ModalFrame title={`Capabilities — ${u.name}`} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Close</button><button className="b b-p" disabled={busy || !dirty.length} onClick={save}>{dirty.length ? `Save ${dirty.length} change${dirty.length === 1 ? "" : "s"}` : "No changes"}</button></>}>
+    <Note style={{ marginBottom: 12 }}>
+      <b>{u.name}</b> signs in as <b>{ROLE_LABELS[data.user.role]}</b>, which carries {data.rolePerms.length} of {data.perms.length} capabilities. Anything set to <b>Granted</b> or <b>Withheld</b> here applies to this person only — the role itself is untouched, and everybody else who holds it is unaffected. Change the role in <i>Roles &amp; permissions</i> when the job itself has changed.
+    </Note>
+    <div className="gw"><table className="dg"><thead><tr><th>Capability</th><th>From the role</th><th style={{ width: 260 }}>For this person</th><th>Result</th></tr></thead><tbody>
+      {data.perms.map((p) => {
+        const inRole = data.rolePerms.includes(p);
+        const changedHere = stance(p) !== stored(p);
+        return <tr key={p} style={{ cursor: "default", background: changedHere ? "var(--panel-2)" : undefined }}>
+          <td className="w">{PERM_LABEL[p] ?? p}<div className="sm tab">{p}</div></td>
+          <td className="sm">{inRole ? "yes" : "no"}</td>
+          <td>
+            <div style={{ display: "flex", gap: 5 }}>
+              {cell(p, "role", "Role", "Follow the role — whatever it says now and later")}
+              {cell(p, "grant", "Granted", "Give this person this capability, even though the role does not")}
+              {cell(p, "withhold", "Withheld", "Take this capability off this person, even though the role has it")}
+            </div>
+          </td>
+          <td>{effective(p)
+            ? <span className="bd b-ok">can</span>
+            : <span className="bd b-nu">cannot</span>}
+          </td>
+        </tr>;
+      })}
+    </tbody></table></div>
+    {data.grants.length ? <div className="sm" style={{ marginTop: 10 }}>
+      Currently set by hand: {data.grants.map((g) => `${g.allow ? "granted" : "withheld"} ${g.perm} by ${g.by}${g.reason ? ` (${g.reason})` : ""}`).join(" · ")}
+    </div> : null}
+    <Field label="Why (optional, kept with the grant)" full><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Handles corrections while Rahin is away" /></Field>
+  </ModalFrame>;
 }
 
 function NewUserModal({ portal, onDone }: { portal: boolean; onDone: () => void }) {

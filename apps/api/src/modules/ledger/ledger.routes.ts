@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma, D } from "../../db";
 import { fyCode } from "../../services/sequence";
 import { asyncHandler } from "../../utils/asyncHandler";
@@ -8,9 +9,10 @@ import { gatesForAll, customerFinance } from "../../services/credit";
 import { audit } from "../../services/audit";
 import { notify } from "../../services/notify";
 import { nextReceiptNo } from "../../services/sequence";
-import { outstanding } from "@vivaha/shared";
+import { outstanding, invoiceTotals, marginFloor } from "@vivaha/shared";
 import { ledgerLines } from "../../services/credit";
-import { notFound } from "../../utils/httpError";
+import { getHomeState, getMinMargin } from "../../services/settings";
+import { badRequest, forbidden, notFound } from "../../utils/httpError";
 
 const router = Router();
 
@@ -39,7 +41,7 @@ router.get("/invoices", requirePerm("ledger.view"), asyncHandler(async (req, res
       ...(q.from || q.to ? { date: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to + "T23:59:59") } : {}) } } : {}),
       ...(q.q ? { OR: [{ no: { contains: q.q, mode: "insensitive" } }, { customer: { name: { contains: q.q, mode: "insensitive" } } }, { orderId: { contains: q.q, mode: "insensitive" } }] } : {}),
     },
-    include: { customer: { select: { name: true, gstin: true, firmType: true, tehsil: true } }, line: { select: { id: true, name: true } }, shares: { orderBy: { at: "desc" } } },
+    include: { customer: { select: { name: true, gstin: true, firmType: true, tehsil: true } }, line: { select: { id: true, name: true } }, shares: { orderBy: { at: "desc" } }, amendments: { orderBy: { at: "desc" } } },
     orderBy: { date: "desc" },
   });
   res.json(rows.map((i) => ({
@@ -48,7 +50,142 @@ router.get("/invoices", requirePerm("ledger.view"), asyncHandler(async (req, res
     // "sent from here" rather than "delivered" — see InvoiceShare.
     lastSent: i.shares[0] ?? null,
     sentCount: i.shares.length,
+    // A corrected bill says so on the register rather than quietly reading as
+    // if it had always said this.
+    amendCount: i.amendments.length,
+    lastAmend: i.amendments[0] ? { at: i.amendments[0].at, by: i.amendments[0].by, reason: i.amendments[0].reason, oldTotal: D(i.amendments[0].oldTotal), newTotal: D(i.amendments[0].newTotal) } : null,
+    amendments: undefined,
   })));
+}));
+
+// ── Correcting a bill ───────────────────────────────────────────────────────
+// A tax invoice is not an ordinary record. The number is filed, the ledger is
+// posted from it and the GST return is built out of it — so this is an
+// amendment, not an edit:
+//
+//   * the number never changes and is never reused;
+//   * what the bill said before is kept, with who changed it and why;
+//   * the ledger is put right with a fresh entry, never by rewriting the debit
+//     that is already there. A reduction posts a credit, an increase posts a
+//     further debit, and outstanding recomputes off the ledger as it always has.
+//
+// What it will not do is bill more than left the godown. Quantity is checked
+// against what the order actually shipped, across every bill raised on that
+// order, because the one thing a bill must agree with is the stock.
+router.post("/invoices/:no/amend", requirePerm("invoice.amend"), asyncHandler(async (req, res) => {
+  const b = z.object({
+    lines: z.array(z.object({ id: z.string(), qty: z.number().int().min(1, "A line has to be at least one unit — to take it off the bill entirely, raise a return"), rate: z.number().min(0) })).min(1),
+    date: z.string().optional(),
+    reason: z.string().trim().min(4, "Say why the bill is being corrected — it goes on the record with the change"),
+  }).parse(req.body);
+
+  const inv = await prisma.invoice.findUnique({
+    where: { no: req.params.no },
+    include: {
+      lines: true,
+      customer: { select: { id: true, name: true, gstin: true } },
+      order: { include: { lines: { select: { itemId: true, shipped: true, item: { select: { sku: true, landedCost: true } } } } } },
+    },
+  });
+  if (!inv) throw notFound("Invoice not found");
+  if (inv.status !== "Posted") throw badRequest(`${inv.no} is ${inv.status.toLowerCase()} — a bill that is not posted cannot be corrected`);
+
+  const byId = new Map(inv.lines.map((l) => [l.id, l]));
+  for (const x of b.lines) if (!byId.has(x.id)) throw badRequest("One of the lines is not on this bill");
+  // Anything the caller did not send keeps what it said.
+  const next = inv.lines.map((l) => {
+    const x = b.lines.find((y) => y.id === l.id);
+    return { line: l, qty: x ? x.qty : l.qty, rate: x ? x.rate : D(l.rate) };
+  });
+
+  // Never bill more than the godown shipped — counted across every posted bill
+  // on this order, with this one's new figures standing in for its old ones.
+  const others = await prisma.invoiceLine.findMany({
+    where: { invoice: { orderId: inv.orderId, status: "Posted", no: { not: inv.no } } },
+    select: { itemId: true, qty: true },
+  });
+  const billedElsewhere = new Map<string, number>();
+  for (const o of others) billedElsewhere.set(o.itemId, (billedElsewhere.get(o.itemId) ?? 0) + o.qty);
+  const wantByItem = new Map<string, number>();
+  for (const n of next) wantByItem.set(n.line.itemId, (wantByItem.get(n.line.itemId) ?? 0) + n.qty);
+  for (const [itemId, want] of wantByItem) {
+    const ol = inv.order.lines.find((x) => x.itemId === itemId);
+    const shipped = ol?.shipped ?? 0;
+    const already = billedElsewhere.get(itemId) ?? 0;
+    if (want + already > shipped) {
+      throw badRequest(`${ol?.item.sku ?? itemId}: only ${shipped} left the godown on this order${already ? ` and ${already} is already billed elsewhere` : ""} — a bill cannot say more went out than did. Dispatch the rest first, or reduce this line.`);
+    }
+  }
+
+  // The same margin floor the pricing engine holds. Going under it is somebody's
+  // decision to make, not a side effect of a correction.
+  const minMargin = await getMinMargin();
+  const under = next
+    .map((n) => ({ n, floor: marginFloor(D(inv.order.lines.find((x) => x.itemId === n.line.itemId)?.item.landedCost ?? 0), minMargin) }))
+    .filter((x) => x.n.rate < x.floor);
+  if (under.length && !req.user!.perms.includes("margin.override")) {
+    const w = under[0];
+    throw forbidden(`${w.n.line.sku} at ${w.n.rate.toFixed(2)} is below the margin floor of ${w.floor.toFixed(2)}. That needs margin.override.`);
+  }
+
+  const homeState = await getHomeState();
+  const t = invoiceTotals(next.map((n) => ({ amount: n.qty * n.rate, gstPct: n.line.gstPct })), inv.customer.gstin, homeState);
+  const oldTotal = D(inv.total);
+  const delta = Math.round((t.total - oldTotal) * 100) / 100;
+  const changed = next.filter((n) => n.qty !== n.line.qty || n.rate !== D(n.line.rate));
+  if (!changed.length && !b.date) throw badRequest("Nothing on the bill is different — change a quantity, a rate or the date");
+
+  const out = await prisma.$transaction(async (tx) => {
+    for (const n of changed) {
+      await tx.invoiceLine.update({ where: { id: n.line.id }, data: { qty: n.qty, rate: n.rate, amount: Math.round(n.qty * n.rate * 100) / 100 } });
+    }
+    await tx.invoice.update({
+      where: { no: inv.no },
+      data: {
+        taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total,
+        blocks: t.blocks as unknown as Prisma.InputJsonValue,
+        ...(b.date ? { date: new Date(b.date) } : {}),
+      },
+    });
+    // The original debit stays exactly as it was posted. The difference is its
+    // own entry, so the statement reads as what happened rather than as what we
+    // wish had happened.
+    if (delta !== 0) {
+      await tx.ledgerEntry.create({ data: {
+        customerId: inv.customerId, date: new Date(),
+        type: delta > 0 ? "INVOICE" : "CREDIT",
+        ref: inv.no,
+        particular: `Correction to ${inv.no} — ${b.reason}`,
+        debit: delta > 0 ? delta : 0,
+        credit: delta < 0 ? -delta : 0,
+      } });
+    }
+    const amendment = await tx.invoiceAmendment.create({ data: {
+      invoiceNo: inv.no, reason: b.reason, oldTotal, newTotal: t.total, by: req.user!.name,
+      detail: changed.map((n) => ({ sku: n.line.sku, was: { qty: n.line.qty, rate: D(n.line.rate) }, now: { qty: n.qty, rate: n.rate } })) as unknown as Prisma.InputJsonValue,
+    } });
+    await audit(tx, {
+      userId: req.user!.id, actor: req.user!.name, action: "Tax invoice corrected",
+      entityType: "Invoice", entityId: inv.no,
+      oldValue: `₹${oldTotal.toFixed(2)} · ` + inv.lines.map((l) => `${l.sku} ${l.qty}×${D(l.rate)}`).join(", "),
+      newValue: `₹${t.total.toFixed(2)} · ` + next.map((n) => `${n.line.sku} ${n.qty}×${n.rate}`).join(", "),
+      reason: b.reason,
+    });
+    return amendment;
+  });
+
+  await notify(prisma, {
+    text: `${inv.no} corrected by ${req.user!.name} — ${inv.customer.name}, ₹${oldTotal.toFixed(0)} → ₹${t.total.toFixed(0)}`,
+    kind: "WARN", role: "ACCOUNTS_MANAGER",
+  });
+  res.json({
+    ok: true, no: inv.no, oldTotal, total: t.total, delta,
+    amendmentId: out.id,
+    belowFloor: under.map((x) => ({ sku: x.n.line.sku, rate: x.n.rate, floor: x.floor })),
+    // Said plainly rather than left for somebody to work out: the money moved,
+    // the stock did not.
+    stockUnchanged: changed.some((n) => n.qty !== n.line.qty),
+  });
 }));
 
 // Records that a bill was sent from here, to a chosen number. Written when the

@@ -5,7 +5,7 @@ import { prisma } from "../../db";
 import { env } from "../../env";
 import { badRequest, notFound, unauthorized } from "../../utils/httpError";
 import { audit } from "../../services/audit";
-import { permsForRole } from "../../services/permissions";
+import { permsForUser } from "../../services/permissions";
 
 const ACCESS_TOKEN_TTL = "30m";
 const REFRESH_TOKEN_TTL_DAYS = 7;
@@ -19,7 +19,7 @@ const signAccess = (u: TokenUser) => jwt.sign(u, env.JWT_ACCESS_SECRET, { expire
 const signRefresh = (u: TokenUser) => jwt.sign({ id: u.id }, env.JWT_REFRESH_SECRET, { expiresIn: `${REFRESH_TOKEN_TTL_DAYS}d` });
 
 async function sessionFor(user: { id: string; role: Role; name: string; customerId: string | null; username: string; initials: string; authority: string | null; mustChangePassword?: boolean }): Promise<SessionUser> {
-  const perms = await permsForRole(user.role);
+  const perms = await permsForUser(user.id, user.role);
   const cust = user.customerId ? await prisma.customer.findUnique({ where: { id: user.customerId }, select: { name: true } }) : null;
   return { id: user.id, role: user.role, name: user.name, customerId: user.customerId, username: user.username, initials: user.initials, perms, customerName: cust?.name ?? null, authority: user.authority, mustChangePassword: !!user.mustChangePassword };
 }

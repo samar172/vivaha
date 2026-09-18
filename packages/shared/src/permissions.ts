@@ -27,6 +27,10 @@ export const PERMS = [
   "cust.view", "cust.edit", "cust.price", "cust.block",
   "order.view", "order.create", "order.approve", "order.allocate", "order.pick", "order.dispatch",
   "return.view", "return.process", "ledger.view", "payment.create", "credit.override",
+  // Correcting a bill after it has been raised. Deliberately its own
+  // capability rather than part of ledger.view: reading the invoice register is
+  // an everyday job, and putting a figure right on a filed tax invoice is not.
+  "invoice.amend",
   "margin.override", "report.view", "audit.view", "settings.manage",
 ] as const;
 export type Perm = (typeof PERMS)[number];
@@ -37,6 +41,9 @@ export const DEFAULT_ROLE_PERMS: Record<Role, Perm[]> = {
   SALES_EXECUTIVE: ["dash.view", "item.view", "stock.view", "cust.view", "cust.edit", "order.view", "order.create", "order.approve", "report.view"],
   GODOWN_MANAGER: ["item.view", "stock.view", "stock.adjust", "stock.transfer", "order.view", "order.allocate", "order.pick", "return.view", "return.process"],
   DISPATCH_MANAGER: ["order.view", "order.pick", "order.dispatch", "stock.view"],
+  // invoice.amend is not given to a role by default, not even Accounts: it is
+  // granted to a named person from Settings → Users & logins, which is the
+  // whole point of a per-person grant.
   ACCOUNTS_MANAGER: ["dash.view", "cust.view", "cust.block", "order.view", "ledger.view", "payment.create", "credit.override", "return.view", "report.view", "audit.view"],
   CUSTOMER: [],
 };

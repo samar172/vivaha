@@ -6,6 +6,78 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-18 — Correcting a bill, and capabilities given to a person
+
+Two asks, one behind the other: an edit-bill option for the Super Admin, and
+the ability to hand that — and editing customers, items, purchases — to named
+employees.
+
+### A role cannot answer the question being asked
+
+Permissions were already data rather than code, editable from Settings → Roles
+& permissions, and they already gated the navigation and every action button.
+What they could not express is "Rahin, and only Rahin, may correct a bill",
+because a role answers what a *job* does. The office's way round that is to
+widen the whole role, which is how everybody ends up able to do everything.
+
+`UserPermission` is a capability given to, or withheld from, one person, on top
+of whatever their role carries. Three states per capability rather than two —
+*from the role*, *granted*, *withheld* — because the withholding is the other
+half of the same question: take dispatch off one person while the role keeps it.
+
+Only the **difference** from the role is stored. A grant that repeats what the
+role already says is noise, and would go stale the moment somebody edits the
+role. Resolved per request rather than trusted from the token, so a capability
+taken away this morning is gone on the next click, not at the next sign-in —
+verified from the employee's own live session.
+
+Two guards, both of which exist to stop the system locking itself: nobody edits
+their own capabilities, and a Super Admin cannot be withheld `settings.manage`.
+
+### Correcting a bill is an amendment, not an edit
+
+A tax invoice is not an ordinary record. The number is filed, the ledger is
+posted from it and the GST return is built out of it. So:
+
+- the number never changes and is never reused;
+- what the bill said before is kept — every line, before and after, with who
+  changed it and why — and printed **on the bill**, not buried in the audit log,
+  because a customer holding an earlier copy is entitled to know this one differs;
+- the ledger is put right with a fresh entry. The original debit stays exactly as
+  posted; a reduction posts a credit, an increase a further debit, and outstanding
+  recomputes off the ledger as it always has. The statement reads as what
+  happened, not as what we wish had happened.
+
+The one thing it will not do is bill more than left the godown. Quantity is
+checked against the order's shipped figure, across every posted bill on that
+order. A rate below the margin floor needs `margin.override`, the same rule the
+pricing engine holds. A reason of four characters or more is mandatory.
+
+Said plainly on screen rather than left to be worked out: **changing a billed
+quantity moves the money, not the stock.** If the goods came back, that is a
+return — which is what puts them on the shelf and credits the firm for them.
+
+`invoice.amend` is granted to **no role by default**, not even Accounts. Super
+Admin has it by way of holding everything; anyone else is given it by name. That
+is the whole point of a per-person grant.
+
+### Also
+
+Invoice lines had no ordering on their reads, so Postgres was free to shuffle
+them once a row had been updated — a tax invoice whose lines reorder after a
+correction. Ordered explicitly now, and asserted.
+
+### Verified
+
+46 checks, all passing: the grant round trip (granted, withheld, only-the-
+difference, mid-session effect, both guards), and the amendment (refusals for no
+reason / no change / over-billing, the recomputed total against the rule rather
+than against itself, the number unchanged, the trail, the original debit intact,
+the compensating entry, outstanding falling by exactly the difference, line order
+stable, and a correction upwards putting it all back).
+
+---
+
 ## 2026-09-18 — Racks, first-in-first-out, and sending goods by bus
 
 Five client items. Four were features; the first was a modelling mistake the

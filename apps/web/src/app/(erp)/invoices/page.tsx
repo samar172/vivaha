@@ -18,6 +18,8 @@ interface Inv {
   taxable: number; cgst: number; sgst: number; igst: number; tax: number; total: number; status: string;
   sentCount: number;
   lastSent: { at: string; by: string; toName: string; toPhone: string; channel: string } | null;
+  amendCount: number;
+  lastAmend: { at: string; by: string; reason: string; oldTotal: number; newTotal: number } | null;
 }
 interface Series { lineId: string; name: string; prefix: string; start: number; fy: string; issued: number; nextNo: string; started: boolean }
 
@@ -55,7 +57,7 @@ export default function InvoicesPage() {
       crumb={["Finance", "Invoices"]}
       title="Invoices"
       sub="Every tax invoice raised, newest first. Each business line bills on its own series — the series and the number it starts from are set against the line in Settings."
-      actions={<button className="b b-o" onClick={() => exportCsv("invoices", ["Invoice", "Date", "Line", "Firm", "GSTIN", "Order", "Taxable", "CGST", "SGST", "IGST", "Total", "Sent on", "Sent to", "Times sent"], rows.map((r) => [r.no, fDate(r.date), r.line?.name ?? "—", r.customer.name, r.customer.gstin ?? "Unregistered", r.orderId, r.taxable, r.cgst, r.sgst, r.igst, r.total, r.lastSent ? fDate(r.lastSent.at) : "", r.lastSent?.toName ?? "", r.sentCount]))}><Icon n="download" s={13} /> Export</button>}
+      actions={<button className="b b-o" onClick={() => exportCsv("invoices", ["Invoice", "Date", "Line", "Firm", "GSTIN", "Order", "Taxable", "CGST", "SGST", "IGST", "Total", "Sent on", "Sent to", "Times sent", "Corrections"], rows.map((r) => [r.no, fDate(r.date), r.line?.name ?? "—", r.customer.name, r.customer.gstin ?? "Unregistered", r.orderId, r.taxable, r.cgst, r.sgst, r.igst, r.total, r.lastSent ? fDate(r.lastSent.at) : "", r.lastSent?.toName ?? "", r.sentCount, r.amendCount]))}><Icon n="download" s={13} /> Export</button>}
     />
     <div className="wa">
       <div className="kpis c5">
@@ -94,11 +96,14 @@ export default function InvoicesPage() {
           <td>{r.lastSent
             ? <><span className="bd b-ok">Sent</span><div className="sm">{fDate(r.lastSent.at)} · {r.lastSent.toName || r.lastSent.toPhone}{r.sentCount > 1 ? ` · ${r.sentCount}×` : ""}</div></>
             : <span className="bd b-wa">Not sent</span>}</td>
-          <td>{r.status === "Posted" ? <span className="bd b-ok">Posted</span> : <span className="bd b-er">{r.status}</span>}</td>
+          <td>{r.status === "Posted" ? <span className="bd b-ok">Posted</span> : <span className="bd b-er">{r.status}</span>}
+            {/* A corrected bill says so here, not only in the audit log. */}
+            {r.amendCount ? <div className="sm" style={{ color: "var(--wa)" }}>corrected {r.amendCount === 1 ? "once" : `${r.amendCount}×`}{r.lastAmend ? ` · ${money2(r.lastAmend.oldTotal)} → ${money2(r.lastAmend.newTotal)}` : ""}</div> : null}</td>
         </tr>) : <tr><td colSpan={9}><Empty t="No invoices" d={line === "ALL" ? "No invoice has been raised yet. One is raised automatically when an order is dispatched." : `No invoice on the ${L?.name ?? "selected"} line for this search.`} /></td></tr>}
       </tbody></table></div>
 
       <Note style={{ marginTop: 11 }}>An invoice is raised automatically when an order is dispatched, on the business line that order was for. A number is never reused — a cancelled invoice keeps its number and its place in the series.</Note>
+      <Note k="i" style={{ marginTop: 9 }}><b>Corrected</b> means the bill was put right after it was raised. The number stays, what it said before is kept with the reason and who changed it, and the difference is posted to the firm&apos;s ledger as its own entry. Opening the bill shows the whole trail. Who may do it is set per person under Settings → Users &amp; logins → Capabilities.</Note>
       <Note k="i" style={{ marginTop: 9 }}><b>Sent</b> records that the bill was sent from here, to that number, by that person — it is written when Share on WhatsApp opens the message. WhatsApp does not tell us whether it was delivered or read, so this never claims the firm received it.</Note>
     </div>
   </>;

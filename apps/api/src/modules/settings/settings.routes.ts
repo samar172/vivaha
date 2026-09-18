@@ -4,7 +4,7 @@ import { PERMS, ROLES, DEFAULT_ROLE_PERMS } from "@vivaha/shared";
 import { prisma } from "../../db";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
-import { allRolePerms, invalidatePermCache } from "../../services/permissions";
+import { allRolePerms, invalidatePermCache, permsForRole, permsForUser } from "../../services/permissions";
 import { getMinMargin, getCompany, getPanelLang, setSetting } from "../../services/settings";
 import { audit } from "../../services/audit";
 import { badRequest, notFound } from "../../utils/httpError";
@@ -165,6 +165,61 @@ router.post("/permissions/reset", requirePerm("settings.manage"), asyncHandler(a
   invalidatePermCache();
   res.json({ ok: true });
 }));
+// ── Capabilities given to one person ───────────────────────────────────────
+// A role answers "what does a dispatch manager do". It cannot answer "Farhan,
+// and only Farhan, may correct a bill" — so that is granted here, by name, on
+// top of whatever the role carries. Every grant names who gave it and why.
+
+router.get("/users/:id/permissions", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const u = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, username: true, role: true } });
+  if (!u) throw notFound("User not found");
+  const [rolePerms, grants] = await Promise.all([
+    permsForRole(u.role),
+    prisma.userPermission.findMany({ where: { userId: u.id }, orderBy: { perm: "asc" } }),
+  ]);
+  res.json({
+    user: u, perms: PERMS, rolePerms,
+    grants: grants.map((g) => ({ perm: g.perm, allow: g.allow, by: g.by, reason: g.reason, at: g.at })),
+    effective: await permsForUser(u.id, u.role),
+  });
+}));
+
+router.put("/users/:id/permissions", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = z.object({
+    grants: z.array(z.object({ perm: z.enum(PERMS), allow: z.boolean() })).max(PERMS.length),
+    reason: z.string().trim().max(200).default(""),
+  }).parse(req.body);
+  const u = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, username: true, role: true } });
+  if (!u) throw notFound("User not found");
+  // Nobody edits their own capabilities. Not a policy flourish — it is what
+  // stops the last administrator locking the system's own settings away from
+  // everybody, including themselves.
+  if (u.id === req.user!.id) throw badRequest("You cannot change your own capabilities — ask another administrator");
+  if (u.role === "CUSTOMER") throw badRequest("A portal login's authority is the firm's to set, from its own staff screen");
+  // Withholding settings.manage from a Super Admin is the same trap by another
+  // route: it leaves an account that looks like an administrator and cannot
+  // administer.
+  const rolePerms = await permsForRole(u.role);
+  const stripped = b.grants.find((g) => !g.allow && g.perm === "settings.manage" && u.role === "SUPER_ADMIN");
+  if (stripped) throw badRequest("A Super Admin cannot be withheld settings.manage — change their role instead");
+  // Only record what actually differs from the role. A grant that repeats what
+  // the role already says is noise, and would go stale the moment the role does.
+  const real = b.grants.filter((g) => g.allow !== rolePerms.includes(g.perm));
+
+  const before = await prisma.userPermission.findMany({ where: { userId: u.id } });
+  await prisma.$transaction([
+    prisma.userPermission.deleteMany({ where: { userId: u.id } }),
+    prisma.userPermission.createMany({ data: real.map((g) => ({ userId: u.id, perm: g.perm, allow: g.allow, by: req.user!.name, reason: b.reason })) }),
+  ]);
+  const show = (rows: { perm: string; allow: boolean }[]) =>
+    rows.length ? rows.map((g) => (g.allow ? "+" : "−") + g.perm).sort().join(" ") : "role only";
+  await audit(prisma, {
+    userId: req.user!.id, actor: req.user!.name, action: "Capabilities changed for a person",
+    entityType: "User", entityId: u.username, oldValue: show(before), newValue: show(real), reason: b.reason,
+  });
+  res.json({ ok: true, grants: real, effective: await permsForUser(u.id, u.role) });
+}));
+
 router.get("/counts", asyncHandler(async (_req, res) => {
   const [items, firms, orders, invoices, stockRows, txns, auditRows] = await Promise.all([prisma.item.count(), prisma.customer.count(), prisma.order.count(), prisma.invoice.count(), prisma.stockBalance.count(), prisma.stockTxn.count(), prisma.auditLog.count()]);
   res.json({ items, firms, orders, invoices, stockRows, txns, audit: auditRows });

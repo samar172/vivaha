@@ -188,10 +188,18 @@ router.post("/:id/cancel", requirePerm("order.approve"), asyncHandler(async (req
 router.get("/:id/invoice/:no", requirePerm("order.view", "ledger.view"), asyncHandler(async (req, res) => {
   // Contacts come with the bill so Share can offer the firm's actual numbers
   // rather than only the one on the customer record.
-  const inv = await prisma.invoice.findUnique({ where: { no: req.params.no }, include: { lines: true, customer: { include: { contacts: true } }, order: { select: { id: true, dispatches: true } } } });
+  const inv = await prisma.invoice.findUnique({ where: { no: req.params.no }, include: { lines: { orderBy: { id: "asc" } }, customer: { include: { contacts: true } }, order: { select: { id: true, dispatches: true, lines: { select: { itemId: true, shipped: true } } } }, amendments: { orderBy: { at: "desc" } } } });
   if (!inv) return res.status(404).json({ error: "Invoice not found" });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Invoice viewed", entityType: "Invoice", entityId: inv.no });
-  res.json({ ...inv, taxable: D(inv.taxable), cgst: D(inv.cgst), sgst: D(inv.sgst), igst: D(inv.igst), total: D(inv.total), customer: { ...inv.customer, creditLimit: D(inv.customer.creditLimit) }, lines: inv.lines.map((l) => ({ ...l, rate: D(l.rate), amount: D(l.amount) })), company: await getCompany(), whatsappFrom: await getSetting<string>("WHATSAPP_FROM", "") });
+  res.json({
+    ...inv, taxable: D(inv.taxable), cgst: D(inv.cgst), sgst: D(inv.sgst), igst: D(inv.igst), total: D(inv.total),
+    customer: { ...inv.customer, creditLimit: D(inv.customer.creditLimit) },
+    // Shipped-per-item travels with the bill so the correction screen can say
+    // what the ceiling on each line is before anybody types over it.
+    lines: inv.lines.map((l) => ({ ...l, rate: D(l.rate), amount: D(l.amount), shipped: inv.order.lines.find((x) => x.itemId === l.itemId)?.shipped ?? 0 })),
+    amendments: inv.amendments.map((a) => ({ ...a, oldTotal: D(a.oldTotal), newTotal: D(a.newTotal) })),
+    company: await getCompany(), whatsappFrom: await getSetting<string>("WHATSAPP_FROM", ""),
+  });
 }));
 
 export default router;
