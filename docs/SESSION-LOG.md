@@ -6,6 +6,75 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 — A price list, and a supplier's account
+
+### Pricing a list, not an item at a time
+
+The office does not price one item; it prices a list. And it thinks in a chain —
+what the supplier charges, the markup on top, the figure that comes out — so
+that is the row, under **Catalogue → Price list**. Type any of the three and the
+others follow: a markup gives a price, a price gives back the markup it implies.
+Tick rows and apply one multiplier across all of them, which is how a season's
+list is actually set.
+
+`Item.purchasePrice` is new and is **not** landed cost. It is the supplier's own
+rate before freight — the number the office negotiates and remembers — kept
+current automatically from every goods receipt, and backfilled from each item's
+most recent purchase line. Landed cost carries freight, moves on its own with
+every receipt, and exists to hold the margin floor; it is shown on the screen
+for that reason and is not what anybody prices off. Confusing the two is how a
+margin quietly disappears.
+
+### Effective dates
+
+A price list is agreed in advance — "from the first of next month" — and the
+office should be able to key it the day it is agreed. `PriceChange` holds the
+new rates with the date they start on. Until then the item keeps what it has, so
+every order in between is priced on what was published.
+
+Applied by a sweeper rather than read at quote time, deliberately: once it
+lands, the item's own rates are the truth, exactly as if somebody had typed them
+that morning, and every screen, report and export that already reads slabs keeps
+working without learning what a pending change is. A list dated today is applied
+on the spot, because somebody pressed save and expects the catalogue to read
+differently. A queued change shows against its item and can be called off.
+
+The margin floor is checked **per row**, because pricing a whole list under it in
+one go is exactly the mistake a bulk screen makes easy. Going under still needs
+`margin.override`.
+
+### A supplier's account
+
+Vendor payables were a tab inside *Purchase & GRN* — which is where you go to
+key a goods receipt, not to ask who is owed money. **Vendor ledger** is its own
+screen now, and a row opens the statement: every purchase a credit to them,
+every payment a debit, oldest first, with a running balance and the same ageing
+buckets the customer side uses. A supplier's balance runs the other way from a
+customer's, and the screen says so.
+
+A payment settled by a customer paying that supplier directly appears here as an
+ordinary payment carrying our own reference. The supplier is not told whose
+money it was and this screen does not say either — the settlement register
+remains the only place both halves are named.
+
+### Caught while building
+
+`GET /api/items/:id` was declared above the new `/price-list`, so `:id` would
+have swallowed it — the same Express trap as before. The literal paths are
+declared first.
+
+### Verified
+
+23 checks in `scripts/check_prices.py`, now in the repo: a list dated today
+quoted to customers immediately, a list dated next month leaving the catalogue
+alone until then, the queued change surfacing and cancelling, and the floor
+refusing a bulk under-pricing for a user without `margin.override` — tested as
+that user, because testing it as an administrator who holds every capability
+would prove nothing. Plus the whole supplier statement, its balance and its
+ageing. `check_money.py` and `check_settlement.py` still pass.
+
+---
+
 ## 2026-09-23 (evening) — Receipts with evidence, and money that takes one journey
 
 ### A receipt now carries a time and a photograph

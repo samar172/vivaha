@@ -188,6 +188,69 @@ async function guardVendorCode(code: string | null, exceptId?: string) {
   const clash = await prisma.vendor.findFirst({ where: { code, ...(exceptId ? { id: { not: exceptId } } : {}) }, select: { name: true } });
   if (clash) throw badRequest(`${clash.name} already has the number ${code}`);
 }
+// A supplier's account, the way the customer ledger reads.
+//
+// The payables tab could say what we owe in total and never what it was made
+// of. This is the statement: every purchase a debit against us, every payment a
+// credit, oldest first, with a running balance — so "why do we owe them this"
+// has an answer on the screen instead of in a drawer.
+//
+// A payment settled by a customer paying them directly appears here as an
+// ordinary payment carrying our own reference. The supplier is never told whose
+// money it was, and this screen does not say either — the only place both
+// halves are named is the settlement register.
+router.get("/vendors/:id/ledger", requirePerm("purchase.view"), asyncHandler(async (req, res) => {
+  const v = await prisma.vendor.findUnique({
+    where: { id: req.params.id },
+    include: {
+      purchases: { include: { lines: { select: { qty: true, itemId: true } } }, orderBy: { date: "asc" } },
+      payments: { orderBy: { date: "asc" } },
+      items: { select: { id: true } },
+    },
+  });
+  if (!v) throw notFound("Vendor not found");
+
+  type Line = { id: string; date: Date; kind: "PURCHASE" | "PAYMENT"; ref: string; particular: string; debit: number; credit: number; bal: number };
+  const rows: Omit<Line, "bal">[] = [
+    ...v.purchases.map((p) => ({
+      id: p.id, date: p.date, kind: "PURCHASE" as const, ref: p.invNo,
+      particular: `Purchase ${p.invNo}${D(p.freight) ? ` (incl. freight ₹${D(p.freight).toFixed(2)})` : ""} · ${p.lines.length} line${p.lines.length === 1 ? "" : "s"}${p.status === "IN_TRANSIT" ? " · in transit" : ""}`,
+      debit: 0, credit: D(p.total) + D(p.freight),
+    })),
+    ...v.payments.map((p) => ({
+      id: p.id, date: p.date, kind: "PAYMENT" as const, ref: p.ref || "—",
+      particular: p.settlementId ? `Payment · settled against ${p.settlementId}` : `Payment made${p.ref ? ` · ${p.ref}` : ""}`,
+      debit: D(p.amount), credit: 0,
+    })),
+  ].sort((a, b) => a.date.getTime() - b.date.getTime() || (a.kind === "PURCHASE" ? -1 : 1));
+
+  // Their money runs the other way from a customer's: a purchase puts us in
+  // credit to them, a payment takes it back.
+  let bal = 0;
+  const statement: Line[] = rows.map((r) => { bal += r.credit - r.debit; return { ...r, bal }; });
+
+  const invoiced = v.purchases.reduce((t, p) => t + D(p.total) + D(p.freight), 0);
+  const paid = v.payments.reduce((t, p) => t + D(p.amount), 0);
+  // Ageing on what is still unpaid, oldest purchase first — the same buckets
+  // the customer side uses, so the two screens read alike.
+  const buckets = [0, 0, 0, 0, 0];
+  let unpaid = invoiced - paid;
+  for (const p of [...v.purchases].sort((a, b) => b.date.getTime() - a.date.getTime())) {
+    if (unpaid <= 0) break;
+    const amt = Math.min(unpaid, D(p.total) + D(p.freight));
+    const days = Math.floor((Date.now() - p.date.getTime()) / 864e5);
+    buckets[days <= 30 ? 0 : days <= 45 ? 1 : days <= 60 ? 2 : days <= 90 ? 3 : 4] += amt;
+    unpaid -= amt;
+  }
+
+  res.json({
+    vendor: { id: v.id, code: v.code, name: v.name, gstin: v.gstin, terms: v.terms, city: v.city, phone: v.phone, upiId: v.upiId, items: v.items.length },
+    statement, invoiced, paid, outstanding: Math.round((invoiced - paid) * 100) / 100,
+    ageing: { buckets, labels: ["0–30 d", "31–45 d", "46–60 d", "61–90 d", "90+ d"] },
+    documents: v.purchases.length,
+  });
+}));
+
 router.post("/vendors", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
   const b = vendorSchema.parse(req.body);
   await guardVendorCode(b.code?.trim() || null);

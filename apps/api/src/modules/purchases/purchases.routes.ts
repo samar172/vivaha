@@ -101,7 +101,10 @@ router.post("/", requirePerm("purchase.create"), asyncHandler(async (req, res) =
         for (const pl of placementsOf(l).places) await stock.receive(tx, l.itemId, pl.godownId, pl.qty, id, req.user!.name, l.batchNo ?? null, l.expiry ? new Date(l.expiry) : l.batchNo ? new Date(Date.now() + 365 * 864e5) : null, "GRN", pl.rack);
         const share = gross > 0 ? (b.freight * (l.qty * l.rate)) / gross : 0;
         const newCost = recomputeLandedCost(D(it.landedCost), onHandBefore, l.qty, l.rate, share);
-        await tx.item.update({ where: { id: it.id }, data: { landedCost: newCost } });
+        // Landed cost carries freight and is what the margin floor is measured
+        // against; purchasePrice is the supplier's own rate, which is what the
+        // office prices off. Both move on a receipt, and neither is the other.
+        await tx.item.update({ where: { id: it.id }, data: { landedCost: newCost, purchasePrice: l.rate } });
         await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Purchase invoice posted", entityType: "Purchase", entityId: b.invNo, newValue: "₹" + Math.round(l.qty * l.rate + share), reason: `Landed cost ₹${D(it.landedCost)} → ₹${newCost}` });
         await notify(tx, { text: `Goods receipt ${b.invNo} posted — ${l.qty} ${it.uom} of ${it.sku}`, kind: "OK", role: "PURCHASE_MANAGER" });
       }
@@ -175,7 +178,7 @@ router.post("/:id/receive", requirePerm("purchase.create"), asyncHandler(async (
       for (const p of pl.places) await stock.receive(tx, l.itemId, p.godownId, p.qty, po.id, req.user!.name, inp.batchNo ?? null, inp.batchNo ? new Date(Date.now() + 365 * 864e5) : null, "GRN", p.rack);
       const share = gross > 0 ? (D(po.freight) * (l.qty * D(l.rate))) / gross : 0;
       const newCost = recomputeLandedCost(D(l.item.landedCost), onHandBefore, l.qty, D(l.rate), share);
-      await tx.item.update({ where: { id: l.itemId }, data: { landedCost: newCost } });
+      await tx.item.update({ where: { id: l.itemId }, data: { landedCost: newCost, purchasePrice: D(l.rate) } });
       const mfr = inp.mfrCode?.trim() || l.mfrCode || null;
       await tx.purchaseLine.update({ where: { id: l.id }, data: { alloc: pl.alloc, places: asJson(pl.places), batchNo: inp.batchNo ?? null, mfrCode: mfr } });
       if (mfr) await registerMfrCode(tx, l.itemId, mfr, po.vendorId, req.user!.name);

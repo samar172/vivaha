@@ -1,4 +1,4 @@
-import { M } from "@vivaha/shared";
+import { M, marginFloor, paise } from "@vivaha/shared";
 import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -7,10 +7,11 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { loadItemViews, loadItemView } from "../../services/items";
 import { audit } from "../../services/audit";
-import { notFound, badRequest } from "../../utils/httpError";
+import { notFound, badRequest, forbidden } from "../../utils/httpError";
 import { getMinMargin } from "../../services/settings";
 import { fyCode } from "../../services/sequence";
 import { storeItemImage, removeItemImage } from "../../services/uploads";
+import { applyDuePriceChanges } from "../../jobs/priceChanges";
 
 const router = Router();
 
@@ -31,6 +32,160 @@ router.get("/", requirePerm("item.view"), asyncHandler(async (req, res) => {
 
 // Price movements for one item, newest first — previous, current, the change
 // and who made it. Read straight off ItemPriceHistory; nothing is estimated.
+// ── The price list ──────────────────────────────────────────────────────────
+// One screen for what everything sells at, which is a different question from
+// what any one item is. The office thinks in a chain: what the supplier charges,
+// the markup on top, and the figure that comes out — so that is what this
+// returns, per item, with whatever change is already queued against it.
+//
+// The purchase price is the supplier's own rate before freight. Landed cost is
+// not the same number and is not offered here: it carries freight, it moves on
+// its own with every receipt, and it exists to hold the margin floor, not to
+// price from.
+router.get("/price-list", requirePerm("item.view"), asyncHandler(async (req, res) => {
+  const q = z.object({ line: z.string().optional(), q: z.string().optional() }).parse(req.query);
+  const items = await prisma.item.findMany({
+    where: {
+      ...(q.line && q.line !== "ALL" ? { lineId: q.line } : {}),
+      ...(q.q ? { OR: [
+        { name: { contains: q.q, mode: "insensitive" } },
+        { designNo: { contains: q.q, mode: "insensitive" } },
+        { sku: { contains: q.q, mode: "insensitive" } },
+        { codes: { some: { code: { contains: q.q, mode: "insensitive" } } } },
+      ] } : {}),
+    },
+    include: {
+      slabs: { orderBy: { fromQty: "asc" } },
+      line: { select: { id: true, name: true, uom: true } },
+      vendor: { select: { id: true, name: true, code: true } },
+      codes: { where: { status: "ACTIVE" }, select: { code: true, kind: true } },
+      priceChanges: { where: { status: "PENDING" }, orderBy: { effectiveFrom: "asc" } },
+    },
+    orderBy: [{ lineId: "asc" }, { name: "asc" }],
+  });
+  const groups = await prisma.pricingGroup.findMany();
+  // What the table illustrates the final figure with when an item has no
+  // multiplier of its own. Named on the screen so the number is never unexplained.
+  const base = groups.find((g) => g.name === "Regular") ?? groups[0];
+
+  res.json({
+    baseGroup: base ? { name: base.name, multiplier: D(base.multiplier) } : { name: "Regular", multiplier: 1.25 },
+    items: items.map((i) => {
+      const own = i.codes.find((c) => c.kind === "OWN")?.code ?? i.codes[0]?.code ?? null;
+      const slabs = i.slabs.map((s) => ({ fromQty: s.fromQty, toQty: s.toQty, rate: D(s.rate) }));
+      const pend = i.priceChanges[0];
+      return {
+        id: i.id, sku: i.sku, ref: (own || i.designNo || "").trim(), name: i.name, status: i.status,
+        lineId: i.lineId, lineName: i.line.name, uom: i.uom, moq: i.moq,
+        vendor: i.vendor, purchasePrice: i.purchasePrice == null ? null : D(i.purchasePrice),
+        landedCost: D(i.landedCost),
+        multiplier: i.multiplier == null ? null : D(i.multiplier),
+        slabs, sellingPrice: slabs[0]?.rate ?? 0,
+        pending: pend ? {
+          id: pend.id, effectiveFrom: pend.effectiveFrom, reason: pend.reason, by: pend.by,
+          purchasePrice: pend.purchasePrice == null ? null : D(pend.purchasePrice),
+          multiplier: pend.multiplier == null ? null : D(pend.multiplier),
+          sellingPrice: ((pend.slabs as unknown as { rate: number }[]) ?? [])[0]?.rate ?? null,
+        } : null,
+      };
+    }),
+  });
+}));
+
+// Saving a price list. One date for the batch, because that is how a list is
+// agreed; a date today or in the past is applied on the spot, a future one
+// waits for the sweeper.
+const priceRow = z.object({
+  itemId: z.string(),
+  purchasePrice: z.number().min(0).nullable().optional(),
+  multiplier: z.number().min(0.1).max(20).nullable().optional(),
+  sellingPrice: z.number().min(0, "A selling price cannot be negative"),
+});
+router.post("/price-list", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const b = z.object({
+    effectiveFrom: z.string(),
+    reason: z.string().trim().max(200).default(""),
+    rows: z.array(priceRow).min(1, "Nothing to save"),
+  }).parse(req.body);
+  const from = new Date(b.effectiveFrom);
+  if (Number.isNaN(from.getTime())) throw badRequest("That effective date is not a date");
+
+  const items = await prisma.item.findMany({
+    where: { id: { in: b.rows.map((r) => r.itemId) } },
+    include: { slabs: { orderBy: { fromQty: "asc" } }, line: { select: { priceListAnnual: true, name: true } } },
+  });
+  if (items.length !== new Set(b.rows.map((r) => r.itemId)).size) throw badRequest("One of the items is not on file");
+
+  const minMargin = await getMinMargin();
+  const canOverride = req.user!.perms.includes("margin.override");
+  for (const r of b.rows) {
+    const it = items.find((x) => x.id === r.itemId)!;
+    // The same floor the pricing engine holds. Pricing a whole list under it is
+    // exactly the mistake a bulk screen makes easy, so it is checked per row.
+    const floor = marginFloor(D(it.landedCost), minMargin);
+    if (r.sellingPrice > 0 && r.sellingPrice < floor && !canOverride) {
+      throw forbidden(`${it.name} at ₹${r.sellingPrice.toFixed(2)} is below its margin floor of ₹${floor.toFixed(2)}. That needs margin.override.`);
+    }
+  }
+
+  const immediate = from.getTime() <= Date.now();
+  const made = await prisma.$transaction(async (tx) => {
+    const out: string[] = [];
+    for (const r of b.rows) {
+      const it = items.find((x) => x.id === r.itemId)!;
+      // Deeper slabs keep the shape this catalogue has always used, derived to
+      // the paisa from the figure the office typed.
+      const base = r.sellingPrice;
+      const slabs = it.slabs.length >= 4
+        ? [
+          { fromQty: it.slabs[0].fromQty, toQty: it.slabs[0].toQty, rate: paise(base) },
+          { fromQty: it.slabs[1].fromQty, toQty: it.slabs[1].toQty, rate: paise(base * 0.89) },
+          { fromQty: it.slabs[2].fromQty, toQty: it.slabs[2].toQty, rate: paise(base * 0.8) },
+          { fromQty: it.slabs[3].fromQty, toQty: it.slabs[3].toQty, rate: paise(base * 0.74) },
+        ]
+        : [{ fromQty: 1, toQty: 499, rate: paise(base) }, { fromQty: 500, toQty: 1999, rate: paise(base * 0.89) },
+          { fromQty: 2000, toQty: 4999, rate: paise(base * 0.8) }, { fromQty: 5000, toQty: 1e9, rate: paise(base * 0.74) }];
+
+      // A second change queued for the same item and date replaces the first,
+      // rather than both landing and the later one silently winning.
+      await tx.priceChange.updateMany({
+        where: { itemId: r.itemId, status: "PENDING", effectiveFrom: from },
+        data: { status: "CANCELLED" },
+      });
+      const ch = await tx.priceChange.create({ data: {
+        itemId: r.itemId, effectiveFrom: from,
+        purchasePrice: r.purchasePrice ?? null,
+        multiplier: r.multiplier ?? null,
+        slabs: slabs as unknown as Prisma.InputJsonValue,
+        reason: b.reason, by: req.user!.name,
+      } });
+      out.push(ch.id);
+    }
+    await audit(tx, {
+      userId: req.user!.id, actor: req.user!.name,
+      action: immediate ? "Price list updated" : "Price list scheduled",
+      entityType: "Item", entityId: `${b.rows.length} item${b.rows.length === 1 ? "" : "s"}`,
+      newValue: `effective ${from.toISOString().slice(0, 10)}`, reason: b.reason,
+    });
+    return out;
+  });
+
+  // A list dated today takes effect now rather than on the sweeper's next pass:
+  // somebody pressed save and expects the catalogue to read differently.
+  const applied = immediate ? await applyDuePriceChanges() : 0;
+  res.status(201).json({ scheduled: made.length, applied, effectiveFrom: from, immediate });
+}));
+
+// A change that has not landed yet can simply be called off.
+router.delete("/price-changes/:id", requirePerm("item.edit"), asyncHandler(async (req, res) => {
+  const ch = await prisma.priceChange.findUnique({ where: { id: req.params.id }, include: { item: { select: { sku: true, name: true } } } });
+  if (!ch) throw notFound("That price change is not on file");
+  if (ch.status !== "PENDING") throw badRequest(`This change has already been ${ch.status.toLowerCase()} — a price that is in force is changed by setting a new one.`);
+  await prisma.priceChange.update({ where: { id: ch.id }, data: { status: "CANCELLED" } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Scheduled price change cancelled", entityType: "Item", entityId: ch.item.sku, oldValue: `effective ${ch.effectiveFrom.toISOString().slice(0, 10)}` });
+  res.json({ ok: true });
+}));
+
 router.get("/:id/price-history", requirePerm("item.view"), asyncHandler(async (req, res) => {
   const rows = await prisma.itemPriceHistory.findMany({ where: { itemId: req.params.id }, orderBy: { at: "desc" }, take: 50 });
   res.json(rows.map((r) => {

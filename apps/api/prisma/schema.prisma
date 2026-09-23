@@ -359,6 +359,12 @@ model Item {
   perPack      Int          @default(1)
   moq          Int          @default(1)
   landedCost   Decimal      @db.Decimal(12, 2)
+  // What the supplier charges for it, before freight — the figure on their
+  // invoice, not the weighted average landed cost. The office prices off this,
+  // because it is the number they negotiate and the one they remember; landed
+  // cost is what the margin floor is measured against and moves on its own with
+  // every receipt. Kept in step automatically at goods receipt.
+  purchasePrice Decimal?    @db.Decimal(12, 2)
   // This item's own markup, replacing the buying firm's group multiplier.
   // Null is the normal case: the firm's group decides. Set it when a design
   // sells at a fixed markup whoever is buying — an exclusive block, a licensed
@@ -399,6 +405,7 @@ model Item {
   stockoutHits  StockoutSearch[]
   kitItems      KitVersionItem[]
   ads           Ad[]
+  priceChanges  PriceChange[]
 }
 
 // A wedding card is not one picture. It opens: a double fold has a front and an
@@ -420,6 +427,35 @@ model ItemImage {
   at        DateTime @default(now())
 
   @@index([itemId, sortOrder])
+}
+
+// A price change with a date it starts on.
+//
+// A price list is agreed in advance — "from the first of next month" — and the
+// office should be able to key it when it is agreed rather than remember to do
+// it on the morning. Until that date arrives the item keeps the rates it has,
+// so every order in between is priced on what was actually published.
+//
+// It is applied by a sweeper rather than read at quote time on purpose: once
+// applied, the item's own rates are the truth, exactly as if somebody had typed
+// them that morning, and every screen and report that already reads slabs keeps
+// working without learning what a pending change is.
+model PriceChange {
+  id            String    @id @default(cuid())
+  itemId        String
+  item          Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  effectiveFrom DateTime
+  purchasePrice Decimal?  @db.Decimal(12, 2)
+  multiplier    Decimal?  @db.Decimal(6, 3)
+  slabs         Json      @default("[]") // [{ fromQty, toQty, rate }]
+  status        String    @default("PENDING") // PENDING | APPLIED | CANCELLED
+  reason        String    @default("")
+  by            String
+  createdAt     DateTime  @default(now())
+  appliedAt     DateTime?
+
+  @@index([status, effectiveFrom])
+  @@index([itemId, effectiveFrom])
 }
 
 // Every movement of an item's price list, so "why is this dearer than last
