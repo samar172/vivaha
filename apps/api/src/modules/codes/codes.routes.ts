@@ -19,8 +19,19 @@ const codeSelect = {
 // and read back over the phone, so it carries the design number, not a hash.
 // The prefix is the firm's, not ours — a shop called Jain Card Gallery should
 // not be issuing codes that start VC.
-export function ownCodeFor(designNo: string | null, sku: string, prefix = "VC") {
-  return `${prefix}-` + (designNo || sku).replace(/[^A-Za-z0-9]+/g, "-").toUpperCase();
+export function ownCodeFor(designNo: string | null, sku: string, prefix = "VC", name?: string | null) {
+  // The design number first, because that is what the trade calls the card.
+  //
+  // Falling straight back to the SKU was a mistake: WC-1002 is the key the
+  // system generates and nobody thinks in, and suggesting VC-WC-1002 dragged it
+  // straight back into the one code meant to replace it — so it went on labels,
+  // on the picker and on bills after all that work to hide it. The item's own
+  // name is a better answer, and the SKU is a last resort for an item with
+  // neither, which cannot happen in practice since a name is mandatory.
+  const slug = (v: string) => v.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toUpperCase();
+  const fromName = name ? slug(name).slice(0, 20).replace(/-+$/, "") : "";
+  const body = (designNo && slug(designNo)) || fromName || slug(sku);
+  return `${prefix}-${body}`;
 }
 
 // Resolve ANY code — the office's own or a manufacturer label that was replaced
@@ -47,9 +58,9 @@ router.get("/resolve", requirePerm("item.view"), asyncHandler(async (req, res) =
 // What this item's own code would be if nobody typed one — so the screen can
 // show it in the box rather than making somebody guess the convention.
 router.get("/item/:itemId/suggest", requirePerm("item.view"), asyncHandler(async (req, res) => {
-  const item = await prisma.item.findUnique({ where: { id: req.params.itemId }, select: { designNo: true, sku: true } });
+  const item = await prisma.item.findUnique({ where: { id: req.params.itemId }, select: { designNo: true, sku: true, name: true } });
   if (!item) throw notFound("Item not found");
-  const suggested = ownCodeFor(item.designNo, item.sku, await getCodePrefix());
+  const suggested = ownCodeFor(item.designNo, item.sku, await getCodePrefix(), item.name);
   const taken = await prisma.itemCode.findUnique({ where: { code: suggested }, select: { itemId: true } });
   res.json({ suggested, free: !taken || taken.itemId === req.params.itemId });
 }));
@@ -86,7 +97,7 @@ router.post("/item/:itemId/relabel", requirePerm("item.edit"), asyncHandler(asyn
 
   // Suggested, never imposed: the office may have its own marking convention,
   // and a code somebody types is the one that ends up written on the carton.
-  const code = b.code?.trim() || ownCodeFor(item.designNo, item.sku, await getCodePrefix());
+  const code = b.code?.trim() || ownCodeFor(item.designNo, item.sku, await getCodePrefix(), item.name);
   const clash = await prisma.itemCode.findUnique({ where: { code } });
   if (clash) throw badRequest(clash.itemId === item.id ? `This item already carries "${code}"` : `Code "${code}" belongs to another item`);
 

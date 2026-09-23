@@ -37,6 +37,12 @@ s,r=call("POST","/api/auth/login",{"username":USER,"password":PASS}); T=r["acces
 s,cfg=call("GET","/api/settings",tok=T)
 orig=cfg["company"]
 ck("company settings readable", s==200 and "name" in orig, orig)
+
+import atexit
+@atexit.register
+def _restore():
+    st,back = call("PUT", "/api/settings", {"company": orig}, tok=T)
+    print(f"(company restored to {orig['name']})" if st == 200 else f"(WARNING: could not restore the company settings: {back})")
 # Set a different firm entirely, the way handing the system to another shop would.
 s,saved=call("PUT","/api/settings",{"company":{**orig,"name":"Jain Card Gallery","mark":"JCG","codePrefix":"JCG"}},tok=T)
 ck("name, mark and prefix save", s==200 and saved["company"]["mark"]=="JCG", saved.get("company"))
@@ -77,9 +83,5 @@ if invs:
     i=invs[0]
     s,full=call("GET",f"/api/orders/{i['orderId']}/invoice/{urllib.parse.quote(i['no'],safe='')}",tok=T)
     ck("the bill prints the firm that is set", full["company"]["name"]=="Jain Card Gallery", full["company"])
-# Put it back.
-call("PUT","/api/settings",{"company":orig},tok=T)
-s,back=call("GET","/api/settings",tok=T)
-ck("restored", back["company"]["name"]==orig["name"], back["company"]["name"])
 print(); print("ALL PASS" if not fails else f"{len(fails)} FAILED: "+", ".join(fails))
 sys.exit(1 if fails else 0)
