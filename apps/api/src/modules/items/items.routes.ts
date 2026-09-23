@@ -55,6 +55,9 @@ const itemSchema = z.object({
   lineId: z.string(), name: z.string().min(1), nameHi: z.string().default(""), designNo: z.string().optional(), attrs: z.record(z.string()).default({}),
   uom: z.string().min(1), packUom: z.string().default(""), perPack: z.number().int().min(1).default(1), moq: z.number().int().min(1).default(1),
   landedCost: z.number().min(0), hsn: z.string().min(1), gstPct: z.number().int(), vendorId: z.string().nullable().optional(), season: z.string().optional(),
+  // The item's own markup, replacing the buying firm's group multiplier. Null
+  // or absent means the group decides, which is the normal case.
+  multiplier: z.number().min(0.1, "A multiplier below 0.1 would price the item at a tenth of its slab").max(20, "That is not a multiplier").nullable().optional(),
   batchTracked: z.boolean().default(false), wastagePct: z.number().optional(), setupCharge: z.number().optional(), slabs: z.array(slab).min(1), status: z.enum(["ACTIVE", "DISCONTINUED"]).default("ACTIVE"),
 });
 
@@ -74,7 +77,7 @@ router.post("/", requirePerm("item.edit"), asyncHandler(async (req, res) => {
   for (let n = 1000 + count * 3; !sku; n++) if (!taken.has(`${prefix}-${n}`)) sku = `${prefix}-${n}`;
   const id = `ITM-${Date.now().toString(36).toUpperCase()}`;
   const item = await prisma.item.create({
-    data: { id, sku, designNo: b.designNo || null, name: b.name, nameHi: b.nameHi, lineId: b.lineId, attrs: b.attrs, uom: b.uom, packUom: b.packUom, perPack: b.perPack, moq: b.moq, landedCost: b.landedCost, hsn: b.hsn, gstPct: b.gstPct, vendorId: b.vendorId ?? null, season: b.season ?? null, batchTracked: b.batchTracked, wastagePct: b.wastagePct ?? null, setupCharge: b.setupCharge ?? null, artSeed: count, status: b.status, slabs: { create: b.slabs } },
+    data: { id, sku, designNo: b.designNo || null, name: b.name, nameHi: b.nameHi, lineId: b.lineId, attrs: b.attrs, uom: b.uom, packUom: b.packUom, perPack: b.perPack, moq: b.moq, landedCost: b.landedCost, multiplier: b.multiplier ?? null, hsn: b.hsn, gstPct: b.gstPct, vendorId: b.vendorId ?? null, season: b.season ?? null, batchTracked: b.batchTracked, wastagePct: b.wastagePct ?? null, setupCharge: b.setupCharge ?? null, artSeed: count, status: b.status, slabs: { create: b.slabs } },
   });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Item created", entityType: "Item", entityId: item.sku, newValue: b.name });
   res.status(201).json(await loadItemView(item.id));

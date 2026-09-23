@@ -286,8 +286,31 @@ model Rack {
   name      String  @default("") // "Near the door", "Top shelf"
   sortOrder Int     @default(0)
   isActive  Boolean @default(true)
+  subRacks  SubRack[]
 
   @@unique([godownId, code])
+}
+
+// A shelf, bay or tier inside a rack. One rack holds several.
+//
+// It is a master rather than a column because the numbering is the firm's own —
+// A/B/C on one rack, 1/2/3 on the next — and typing it free-hand at every
+// receipt is how the same shelf ends up written four ways.
+//
+// Stock itself is not keyed by this. StockBalance.rack holds the whole location
+// as one code — "R-1" for a rack with no shelves, "R-1/A" for one with — so the
+// engine that holds, reserves and ships stock did not have to learn a third
+// level of geography to say where a bundle is.
+model SubRack {
+  id        String  @id @default(cuid())
+  rackId    String
+  rack      Rack    @relation(fields: [rackId], references: [id], onDelete: Cascade)
+  code      String  // "A", "2", "Top"
+  name      String  @default("")
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  @@unique([rackId, code])
 }
 
 model Vendor {
@@ -327,6 +350,12 @@ model Item {
   perPack      Int          @default(1)
   moq          Int          @default(1)
   landedCost   Decimal      @db.Decimal(12, 2)
+  // This item's own markup, replacing the buying firm's group multiplier.
+  // Null is the normal case: the firm's group decides. Set it when a design
+  // sells at a fixed markup whoever is buying — an exclusive block, a licensed
+  // motif — which otherwise meant a per-item override on every firm, one at a
+  // time, and a new one every time a customer was added.
+  multiplier   Decimal?     @db.Decimal(6, 3)
   hsn          String
   gstPct       Int
   vendorId     String?

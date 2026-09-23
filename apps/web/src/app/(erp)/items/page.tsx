@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { money, num, slabRate } from "@vivaha/shared";
+import { num, slabRate, rate } from "@vivaha/shared";
 import { useApi, useLines } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
@@ -37,7 +37,7 @@ export default function ItemsPage() {
           <td onClick={(e) => { e.stopPropagation(); setSel((s) => { const n = new Set(s); if (n.has(i.id)) n.delete(i.id); else n.add(i.id); return n; }); }}><input className="ck" type="checkbox" checked={sel.has(i.id)} readOnly /></td>
           <td className="w"><div style={{ display: "flex", gap: 8, alignItems: "center" }}><Thumb it={i} w={36} h={46} style={{ width: 26 }} /><div><span className="rid">{i.sku}</span> <span style={{ color: "var(--t9)" }}>{i.name}</span><div className="sm">{i.designNo ? i.designNo + " · " : ""}{i.nameHi}</div></div></div></td>
           <td><LineChip id={i.lineId} /></td><td className="w"><div className="sm" style={{ fontFamily: "inherit" }}>{Object.values(i.attrs).slice(0, 3).join(" · ")}</div></td>
-          <td className="n tab">{money(i.landedCost)}</td><td className="n tab">{i.slabs.map((s) => s.rate).slice(0, 3).join(" / ")}</td>
+          <td className="n tab">{rate(i.landedCost)}</td><td className="n tab">{i.slabs.map((s) => s.rate).slice(0, 3).join(" / ")}</td>
           <td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{svc ? "—" : num(i.available)}</td><td>{svc ? <span className="sm">service</span> : <BandPill b={i.band} />}</td>
           <td className="sm">{i.hsn} · {i.gstPct}%</td><td><Pill s={i.status} /></td></tr>; }) : <tr><td colSpan={10}><Empty t="No items match" d="Try clearing the search or filters." action={<button className="b b-o" onClick={() => { setQ(""); setFilters([]); }}>Clear all</button>} /></td></tr>}
       </tbody></table></div>

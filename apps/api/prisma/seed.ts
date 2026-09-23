@@ -95,6 +95,11 @@ async function main() {
   // Shelves inside each building. The office used to make a "godown" per rack
   // because a rack had nowhere to live; these are what it meant all along.
   await prisma.rack.createMany({ data: GODOWNS.flatMap((g) => RACKS.map((r, n) => ({ godownId: g.id, code: r[0], name: r[1], sortOrder: n }))) });
+  // One rack divided into shelves, because a long rack is not a precise enough
+  // answer to "where is it" — the rest are left whole, which is also real.
+  for (const r of await prisma.rack.findMany({ where: { code: "R-1" } })) {
+    await prisma.subRack.createMany({ data: ["A", "B", "C"].map((code, n) => ({ rackId: r.id, code, name: ["Top", "Middle", "Bottom"][n], sortOrder: n })) });
+  }
   await prisma.vendor.createMany({ data: VENDORS.map(([id, name, gstin, terms, city, phone]) => ({ id, name, gstin, terms, city, phone })) });
   await prisma.pricingGroup.createMany({ data: Object.entries(MULT).map(([name, multiplier]) => ({ name, multiplier })) });
   await prisma.attributeDef.createMany({ data: [

@@ -21,7 +21,8 @@ export const refresh = (prefix: string) => globalMutate((key) => typeof key === 
 export const refreshAll = () => globalMutate(() => true, undefined, { revalidate: true });
 
 export interface Line extends BusinessLineConfig { itemCount?: number; isActive: boolean; invoicePrefix: string; invoiceStart: number; priceListAnnual?: boolean }
-export interface Rack { id: string; code: string; name: string }
+export interface SubRack { id: string; code: string; name: string }
+export interface Rack { id: string; code: string; name: string; subRacks: SubRack[] }
 export interface Godown { id: string; name: string; short: string; manager: string; address: string; racks: Rack[] }
 export const useLines = () => useApi<Line[]>("/api/masters/lines");
 export const useGodowns = () => useApi<Godown[]>("/api/masters/godowns");

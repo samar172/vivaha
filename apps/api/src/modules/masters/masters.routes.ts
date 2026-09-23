@@ -1,4 +1,4 @@
-import { M } from "@vivaha/shared";
+import { M, RACK_SUB_SEP, locationCode } from "@vivaha/shared";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma, D } from "../../db";
@@ -61,7 +61,10 @@ router.post("/lines", requirePerm("settings.manage"), asyncHandler(async (req, r
 router.get("/godowns", asyncHandler(async (_req, res) => res.json(await prisma.godown.findMany({
   where: { isActive: true },
   orderBy: { id: "asc" },
-  include: { racks: { where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }], select: { id: true, code: true, name: true } } },
+  include: { racks: {
+    where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
+    select: { id: true, code: true, name: true, subRacks: { where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }], select: { id: true, code: true, name: true } } },
+  } },
 }))));
 
 // ── Racks inside a godown ───────────────────────────────────────────────────
@@ -105,10 +108,59 @@ router.patch("/racks/:id", requirePerm("settings.manage"), asyncHandler(async (r
 router.delete("/racks/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
   const before = await prisma.rack.findUnique({ where: { id: req.params.id } });
   if (!before) throw notFound("Rack not found");
-  const held = await prisma.stockBalance.aggregate({ where: { godownId: before.godownId, rack: before.code }, _sum: { onHand: true } });
-  if ((held._sum.onHand ?? 0) > 0) throw badRequest(`Rack ${before.code} still holds ${held._sum.onHand} units — move them off it first`);
+  // The rack itself and every shelf on it: stock sits under "R-1" or "R-1/A".
+  const held = await prisma.stockBalance.aggregate({
+    where: { godownId: before.godownId, OR: [{ rack: before.code }, { rack: { startsWith: before.code + RACK_SUB_SEP } }] },
+    _sum: { onHand: true },
+  });
+  if ((held._sum.onHand ?? 0) > 0) throw badRequest(`Rack ${before.code} still holds ${held._sum.onHand} units across itself and its shelves — move them off it first`);
   await prisma.rack.update({ where: { id: before.id }, data: { isActive: false } });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Rack retired", entityType: "Godown", entityId: before.godownId, oldValue: before.code });
+  res.json({ ok: true });
+}));
+
+// ── Shelves inside a rack ───────────────────────────────────────────────────
+// One rack holds several, and the numbering is the firm's own — A/B/C on one
+// rack, 1/2/3 on the next. It is a master rather than a free-typed box because
+// typing it by hand at every receipt is how one shelf ends up written four ways.
+router.post("/racks/:id/subracks", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = rackSchema.parse(req.body);
+  if (b.code.includes(RACK_SUB_SEP)) throw badRequest(`A shelf code cannot contain "${RACK_SUB_SEP}" — that is what separates it from the rack`);
+  const rack = await prisma.rack.findUnique({ where: { id: req.params.id } });
+  if (!rack) throw notFound("Rack not found");
+  const clash = await prisma.subRack.findUnique({ where: { rackId_code: { rackId: rack.id, code: b.code } } });
+  if (clash) throw badRequest(`Rack ${rack.code} already has a shelf ${b.code}`);
+  const sub = await prisma.subRack.create({ data: { rackId: rack.id, code: b.code, name: b.name, sortOrder: b.sortOrder ?? 0 } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Shelf added to a rack", entityType: "Godown", entityId: rack.godownId, newValue: `${locationCode(rack.code, b.code)}${b.name ? " · " + b.name : ""}` });
+  res.status(201).json(sub);
+}));
+
+router.patch("/subracks/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const b = rackSchema.partial().parse(req.body);
+  if (b.code?.includes(RACK_SUB_SEP)) throw badRequest(`A shelf code cannot contain "${RACK_SUB_SEP}"`);
+  const before = await prisma.subRack.findUnique({ where: { id: req.params.id }, include: { rack: true } });
+  if (!before) throw notFound("Shelf not found");
+  if (b.code && b.code !== before.code) {
+    const clash = await prisma.subRack.findUnique({ where: { rackId_code: { rackId: before.rackId, code: b.code } } });
+    if (clash) throw badRequest(`Rack ${before.rack.code} already has a shelf ${b.code}`);
+    // Renumbering a shelf that holds goods would leave the stock pointing at a
+    // location nobody can walk to. Move the goods, then renumber it.
+    const held = await prisma.stockBalance.aggregate({ where: { godownId: before.rack.godownId, rack: locationCode(before.rack.code, before.code) }, _sum: { onHand: true } });
+    if ((held._sum.onHand ?? 0) > 0) throw badRequest(`Shelf ${locationCode(before.rack.code, before.code)} holds ${held._sum.onHand} units — move them off before renumbering it`);
+  }
+  const sub = await prisma.subRack.update({ where: { id: before.id }, data: b });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Shelf changed", entityType: "Godown", entityId: before.rack.godownId, oldValue: `${locationCode(before.rack.code, before.code)}${before.name ? " · " + before.name : ""}`, newValue: `${locationCode(before.rack.code, sub.code)}${sub.name ? " · " + sub.name : ""}` });
+  res.json(sub);
+}));
+
+router.delete("/subracks/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const before = await prisma.subRack.findUnique({ where: { id: req.params.id }, include: { rack: true } });
+  if (!before) throw notFound("Shelf not found");
+  const code = locationCode(before.rack.code, before.code);
+  const held = await prisma.stockBalance.aggregate({ where: { godownId: before.rack.godownId, rack: code }, _sum: { onHand: true } });
+  if ((held._sum.onHand ?? 0) > 0) throw badRequest(`Shelf ${code} still holds ${held._sum.onHand} units — move them off it first`);
+  await prisma.subRack.update({ where: { id: before.id }, data: { isActive: false } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Shelf retired", entityType: "Godown", entityId: before.rack.godownId, oldValue: code });
   res.json({ ok: true });
 }));
 
@@ -159,7 +211,36 @@ router.put("/pricing-groups/:name", requirePerm("settings.manage"), asyncHandler
   res.json({ name: g.name, multiplier: D(g.multiplier) });
 }));
 
-router.get("/attributes", asyncHandler(async (_req, res) => res.json(await prisma.attributeDef.findMany({ orderBy: [{ lineId: "asc" }, { sortOrder: "asc" }] }))));
+// How many records actually carry a value under this attribute.
+//
+// It is the question every edit here turns on: a key can be renamed while
+// nothing uses it and not after, a value can be dropped from the list while no
+// item is sitting on it and not after, and an attribute can be deleted while it
+// is empty and not after. Counted rather than guessed, because "are you sure?"
+// is not an answer when the machine can simply look.
+async function attrUsage(a: { lineId: string | null; key: string }) {
+  const items = await prisma.item.findMany({
+    where: { ...(a.lineId ? { lineId: a.lineId } : {}) },
+    select: { id: true, sku: true, attrs: true },
+  });
+  const used = items.filter((i) => {
+    const v = (i.attrs as Record<string, unknown>)?.[a.key];
+    return v !== undefined && v !== null && v !== "";
+  });
+  const byValue: Record<string, number> = {};
+  for (const i of used) {
+    const raw = (i.attrs as Record<string, unknown>)[a.key];
+    for (const v of Array.isArray(raw) ? raw : [raw]) byValue[String(v)] = (byValue[String(v)] ?? 0) + 1;
+  }
+  return { count: used.length, byValue, examples: used.slice(0, 5).map((i) => i.sku) };
+}
+
+router.get("/attributes", asyncHandler(async (_req, res) => {
+  const rows = await prisma.attributeDef.findMany({ orderBy: [{ lineId: "asc" }, { sortOrder: "asc" }] });
+  // The screen needs the usage to know what it may offer; it is a handful of
+  // rows against the item table, on a settings screen nobody opens in a loop.
+  res.json(await Promise.all(rows.map(async (a) => ({ ...a, usage: await attrUsage(a) }))));
+}));
 const attrSchema = z.object({ lineId: z.string().nullable().optional(), key: z.string().min(1), label: z.string().min(1), values: z.array(z.string()).default([]), multiSelect: z.boolean().default(false), portalFacet: z.boolean().default(false) });
 router.post("/attributes", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
   const b = attrSchema.parse(req.body);
@@ -167,12 +248,65 @@ router.post("/attributes", requirePerm("settings.manage"), asyncHandler(async (r
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Attribute added", entityType: "Attribute", entityId: a.label, newValue: b.values.join(", ") });
   res.status(201).json(a);
 }));
+// The whole attribute, not just its values.
+//
+// The label, the list, whether it takes more than one and whether the shop
+// filters on it are all free to change — they are presentation, and nothing
+// stored depends on them. The key and the line are different: every item that
+// carries a value is filed under that key, on that line. They can be corrected
+// while nothing uses the attribute, and are refused once something does, with
+// the count and a few SKUs so the answer is checkable rather than a flat no.
 router.patch("/attributes/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
   const b = attrSchema.partial().parse(req.body);
-  const before = await prisma.attributeDef.findUniqueOrThrow({ where: { id: req.params.id } });
-  const a = await prisma.attributeDef.update({ where: { id: req.params.id }, data: { ...b, lineId: b.lineId === undefined ? undefined : b.lineId } });
-  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Attribute values changed", entityType: "Attribute", entityId: a.label, oldValue: (before.values as string[]).join(", "), newValue: (a.values as string[]).join(", ") });
-  res.json(a);
+  const before = await prisma.attributeDef.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Attribute not found");
+  const usage = await attrUsage(before);
+
+  const movingKey = b.key !== undefined && b.key !== before.key;
+  const movingLine = b.lineId !== undefined && (b.lineId ?? null) !== before.lineId;
+  if ((movingKey || movingLine) && usage.count > 0) {
+    throw badRequest(`${usage.count} item${usage.count === 1 ? " is" : "s are"} already filed under "${before.key}"${usage.examples.length ? ` (${usage.examples.join(", ")}${usage.count > usage.examples.length ? "…" : ""})` : ""}. The ${movingKey ? "key" : "line"} is what they are filed by, so it cannot move while they are. Clear those values, or add a new attribute alongside this one.`);
+  }
+  if (movingKey || movingLine) {
+    const clash = await prisma.attributeDef.findFirst({
+      where: { lineId: movingLine ? (b.lineId ?? null) : before.lineId, key: b.key ?? before.key, NOT: { id: before.id } },
+    });
+    if (clash) throw badRequest(`"${clash.label}" already uses the key ${b.key ?? before.key} on that line`);
+  }
+
+  // A value cannot be taken off the list while an item is sitting on it — the
+  // item would keep a value the master no longer offers, which is how a
+  // catalogue filter quietly stops matching its own stock.
+  if (b.values) {
+    const dropped = (before.values as string[]).filter((v) => !b.values!.includes(v));
+    const stillUsed = dropped.filter((v) => (usage.byValue[v] ?? 0) > 0);
+    if (stillUsed.length) {
+      throw badRequest(`${stillUsed.map((v) => `${v} (${usage.byValue[v]})`).join(", ")} ${stillUsed.length === 1 ? "is" : "are"} still set on items. Change those items first, then remove the value.`);
+    }
+  }
+
+  const a = await prisma.attributeDef.update({
+    where: { id: before.id },
+    data: { ...b, lineId: b.lineId === undefined ? undefined : (b.lineId || null) },
+  });
+  const show = (x: { key: string; label: string; values: unknown; multiSelect: boolean; portalFacet: boolean }) =>
+    `${x.label} (${x.key}) · ${(x.values as string[]).join(", ")}${x.multiSelect ? " · multi" : ""}${x.portalFacet ? " · facet" : ""}`;
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Attribute changed", entityType: "Attribute", entityId: a.label, oldValue: show(before), newValue: show(a) });
+  res.json({ ...a, usage: await attrUsage(a) });
+}));
+
+// Deleted only while nothing is filed under it. An attribute that items carry
+// values for is not a spare row — removing it would leave those values
+// unreadable on every screen that renders the master's label.
+router.delete("/attributes/:id", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
+  const before = await prisma.attributeDef.findUnique({ where: { id: req.params.id } });
+  if (!before) throw notFound("Attribute not found");
+  if (before.key === "tehsil" && !before.lineId) throw badRequest("Tehsil is the list every customer's address is picked from — it cannot be removed, only edited");
+  const usage = await attrUsage(before);
+  if (usage.count > 0) throw badRequest(`${usage.count} item${usage.count === 1 ? " carries" : "s carry"} a value under "${before.key}"${usage.examples.length ? ` (${usage.examples.join(", ")}${usage.count > usage.examples.length ? "…" : ""})` : ""} — clear those first.`);
+  await prisma.attributeDef.delete({ where: { id: before.id } });
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Attribute removed", entityType: "Attribute", entityId: before.label, oldValue: `${before.label} (${before.key})` });
+  res.json({ ok: true });
 }));
 
 router.get("/tehsils", asyncHandler(async (_req, res) => {

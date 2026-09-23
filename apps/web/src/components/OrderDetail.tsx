@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { money, money2, num, fDate, fDT, dueLbl, daysTo, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
+import { money, money2, num, fDate, fDT, dueLbl, daysTo, rate, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
@@ -89,7 +89,7 @@ export function OrderDetail({ id }: { id: string }) {
                 {groups[lid].map((l) => <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/items/${l.itemId}`)}>
                   <td className="w"><span className="rid">{l.item.sku}</span><div className="sm">{l.item.name}</div></td>
                   <td className="n tab">{num(l.qty)}{l.shipped > 0 && l.shipped < l.qty && <div className="sm" style={{ color: "var(--wa)" }}>{num(l.shipped)} shipped</div>}</td>
-                  <td className="n tab">{money(l.rate)}<div className="sm">{l.priceSrc === "override" ? "override" : `slab ${money(l.slabRate)} ×${l.mult}`}</div></td>
+                  <td className="n tab">{rate(l.rate)}<div className="sm">{l.priceSrc === "override" ? "override" : `slab ${rate(l.slabRate)} ×${l.mult}`}</div></td>
                   <td className="n tab">{money(l.amount)}</td>
                   <td className="sm">{Object.keys(l.alloc).length ? Object.keys(l.alloc).map((gd) => gd.replace("GD-", "") + ":" + num(l.alloc[gd])).join(" ") : "—"}</td>
                 </tr>)}

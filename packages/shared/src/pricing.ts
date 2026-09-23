@@ -1,7 +1,20 @@
 // F-02: quantity slab × customer-group multiplier, with a per-customer override
 // that outranks both, and a margin floor that stops silent under-pricing.
 export interface PriceSlab { fromQty: number; toQty: number; rate: number }
-export interface PriceableItem { id: string; landedCost: number; moq: number; slabs: PriceSlab[] }
+export interface PriceableItem {
+  id: string; landedCost: number; moq: number; slabs: PriceSlab[];
+  /** Set on the item to fix its markup whoever is buying; null follows the
+   *  firm's pricing group, which is the normal case. */
+  multiplier?: number | null;
+}
+
+// Money is kept to the paisa, everywhere except the one place a bill is
+// actually rounded — the invoice total. A rate of ₹13.20 that the engine
+// rounded to ₹13 is not a display quirk: it is a different price, and on a
+// carton of ten thousand cards it is two thousand rupees. Every intermediate
+// figure here — the list rate, a percentage off it, the margin floor, the
+// landed cost — is held to two places for that reason.
+export const paise = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 export const DEFAULT_MIN_MARGIN = 0.18;
 export const DEFAULT_GROUP_MULTIPLIERS: Record<string, number> = {
@@ -18,7 +31,7 @@ export function nextSlab(slabs: PriceSlab[], qty: number): PriceSlab | null {
 }
 
 export function marginFloor(landedCost: number, minMargin = DEFAULT_MIN_MARGIN): number {
-  return Math.round(landedCost * (1 + minMargin));
+  return paise(landedCost * (1 + minMargin));
 }
 
 // A per-item arrangement with one firm. FLAT freezes the rupee figure; PERCENT
@@ -37,6 +50,8 @@ export interface PriceResult {
   /** The band the quantity fell in, so a screen can say which slab applied. */
   slabFrom: number;
   slabTo: number;
+  /** True when the multiplier came from the item rather than the firm's group. */
+  multFromItem: boolean;
   /** The published rate before any firm-specific arrangement. */
   listRate: number;
   /** Firm-wide percentage adjustment that was applied, if any. */
@@ -46,7 +61,7 @@ export interface PriceResult {
   margin: number;
 }
 
-const pctOff = (base: number, pct: number) => Math.round(base * (1 - pct / 100));
+const pctOff = (base: number, pct: number) => paise(base * (1 - pct / 100));
 
 export function priceFor(
   item: PriceableItem,
@@ -59,10 +74,14 @@ export function priceFor(
   const q = qty || item.moq;
   const band = item.slabs.find((x) => q >= x.fromQty && q <= x.toQty) ?? item.slabs[0];
   const slab = band ? band.rate : 0;
-  const mult = groupMultiplier ?? 1.25;
+  // An item may carry its own multiplier, which replaces the firm's group one.
+  // Some designs sell at a fixed markup whoever is buying — an exclusive block,
+  // a licensed motif — and before this the only way to say so was to give every
+  // firm a per-item override one at a time.
+  const mult = item.multiplier != null && item.multiplier > 0 ? item.multiplier : (groupMultiplier ?? 1.25);
 
-  // The published rate: quantity slab times the firm's group multiplier.
-  const listRate = Math.round(slab * mult);
+  // The published rate: quantity slab times the multiplier, to the paisa.
+  const listRate = paise(slab * mult);
   // A firm-wide arrangement applies to everything they buy...
   const adjPct = customerAdjPct || 0;
   const afterAdj = adjPct ? pctOff(listRate, adjPct) : listRate;
@@ -78,15 +97,19 @@ export function priceFor(
 
   const floor = marginFloor(item.landedCost, minMargin);
   return {
-    rate, src, slab, mult,
+    rate: paise(rate), src, slab, mult,
     slabFrom: band?.fromQty ?? 0, slabTo: band?.toQty ?? 0,
+    multFromItem: item.multiplier != null && item.multiplier > 0,
     listRate, adjPct,
-    floor, belowFloor: rate < floor, margin: rate > 0 ? (rate - item.landedCost) / rate : 0,
+    floor, belowFloor: paise(rate) < floor, margin: rate > 0 ? (rate - item.landedCost) / rate : 0,
   };
 }
 
 // Weighted-average landed cost after a goods receipt (freight apportioned).
 export function recomputeLandedCost(oldCost: number, onHandBefore: number, qty: number, rate: number, freight: number): number {
   const total = Math.max(1, onHandBefore + qty);
-  return Math.round((oldCost * Math.max(0, onHandBefore) + (qty * rate + freight)) / total);
+  // To the paisa. Rounding a landed cost to the rupee moved the margin floor
+  // under every item it touched, and a floor is the one number that must not
+  // drift on its own.
+  return paise((oldCost * Math.max(0, onHandBefore) + (qty * rate + freight)) / total);
 }

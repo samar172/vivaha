@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { money, money2, num, fDate, fDT } from "@vivaha/shared";
+import { money, money2, num, fDate, fDT, rate as showRate } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
@@ -186,7 +186,7 @@ function OverrideModal({ c }: { c: Full }) {
     try {
       const body = mode === "FLAT" ? { mode, rate: Number(rate), reason } : { mode, pct: Number(pct), reason };
       const r = await put<{ belowFloor: boolean; floor: number; effective: number; listRate: number }>(`/api/customers/${c.id}/overrides/${iid || its[0]?.id}`, body);
-      toast(r.belowFloor ? `Set at ${money(r.effective)} — below floor ${money(r.floor)}, logged in audit` : `Set at ${money(r.effective)} against a list rate of ${money(r.listRate)}`, r.belowFloor ? "w" : "s");
+      toast(r.belowFloor ? `Set at ${showRate(r.effective)} — below floor ${showRate(r.floor)}, logged in audit` : `Set at ${showRate(r.effective)} against a list rate of ${showRate(r.listRate)}`, r.belowFloor ? "w" : "s");
       mutate(); refresh("/api/customers");
     } catch (e) { toast(errMsg(e), "e"); }
   };
@@ -206,7 +206,7 @@ function OverrideModal({ c }: { c: Full }) {
 
     <div className="st">Per item</div>
     <Note style={{ marginBottom: 13 }}>A per-item price outranks the quantity slab, the group multiplier and the firm-wide discount. It still cannot go below the margin floor without an authorised override. On cards the published list is the manufacturer&apos;s and stands for the financial year — a firm&apos;s own rate here sits against that list and does not change it.</Note>
-    {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Agreed</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{o.sku} {o.name}</td><td className="n tab">{money(o.slabRate)}</td><td className="n tab">{money(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{money(o.rate)}{o.mode === "PERCENT" && o.pct != null ? <div className="sm">{o.pct}% off list</div> : null}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No per-item pricing set for this firm.</div>}
+    {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Agreed</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{o.sku} {o.name}</td><td className="n tab">{showRate(o.slabRate)}</td><td className="n tab">{showRate(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{showRate(o.rate)}{o.mode === "PERCENT" && o.pct != null ? <div className="sm">{o.pct}% off list</div> : null}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No per-item pricing set for this firm.</div>}
     {its.length ? <>
       <div className="fg">
         <Field label="Item" full><select value={iid || its[0]?.id || ""} onChange={(e) => setIid(e.target.value)}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
@@ -216,7 +216,7 @@ function OverrideModal({ c }: { c: Full }) {
           : <Field label="Discount (%)" hint="Follows the price list, so it stays right when rates move"><input type="number" value={pct} onChange={(e) => setPct(Number(e.target.value))} /></Field>}
         <Field label="Reason" full><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Volume commitment for the season" /></Field>
       </div>
-      {sel && <div className="sm" style={{ marginTop: 7 }}>{sel.sku} landed cost {money(sel.landedCost)} · MOQ {sel.moq} {sel.uom}</div>}
+      {sel && <div className="sm" style={{ marginTop: 7 }}>{sel.sku} landed cost {showRate(sel.landedCost)} · MOQ {sel.moq} {sel.uom}</div>}
     </> : <div className="sm">This firm deals only in lines that use the fixed price list.</div>}
   </ModalFrame>;
 }

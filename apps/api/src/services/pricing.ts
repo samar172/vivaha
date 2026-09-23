@@ -8,7 +8,7 @@ export async function groupMultiplier(group: string): Promise<number> {
   return g ? D(g.multiplier) : DEFAULT_GROUP_MULTIPLIERS[group] ?? 1.25;
 }
 
-type Priceable = Pick<ItemView, "id" | "landedCost" | "moq" | "slabs">;
+type Priceable = Pick<ItemView, "id" | "landedCost" | "moq" | "slabs" | "multiplier">;
 type PricedCustomer = { id: string; group: string; priceAdjPct?: unknown };
 
 // Rows come out of the database as Decimals; the engine wants numbers.

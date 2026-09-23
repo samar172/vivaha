@@ -17,6 +17,8 @@ export interface GodownSplit {
 export interface ItemView {
   id: string; sku: string; designNo: string | null; name: string; nameHi: string; lineId: string; attrs: Record<string, string>;
   uom: string; packUom: string; perPack: number; moq: number; landedCost: number; hsn: string; gstPct: number; vendorId: string | null;
+  /** The item's own markup, replacing the buying firm's group multiplier. */
+  multiplier: number | null;
   status: string; season: string | null; batchTracked: boolean; wastagePct: number | null; setupCharge: number | null; artSeed: number; imageUrl: string | null;
   slabs: { fromQty: number; toQty: number; rate: number }[];
   onHand: number; reserved: number; hold: number; damaged: number; quarantined: number; available: number;
@@ -59,6 +61,7 @@ export async function loadItemViews(where: Prisma.ItemWhereInput = {}, godownId?
     return {
       id: it.id, sku: it.sku, designNo: it.designNo, name: it.name, nameHi: it.nameHi, lineId: it.lineId, attrs: (it.attrs as Record<string, string>) || {},
       uom: it.uom, packUom: it.packUom, perPack: it.perPack, moq: it.moq, landedCost: D(it.landedCost), hsn: it.hsn, gstPct: it.gstPct, vendorId: it.vendorId,
+      multiplier: it.multiplier == null ? null : D(it.multiplier),
       status: it.status, season: it.season, batchTracked: it.batchTracked, wastagePct: it.wastagePct == null ? null : D(it.wastagePct), setupCharge: it.setupCharge == null ? null : D(it.setupCharge),
       artSeed: it.artSeed, imageUrl: it.imageUrl, images: it.images,
       // The code the office prints today, plus the manufacturer label it replaced.

@@ -66,3 +66,16 @@ export function band(
   if (D >= M) return { k: "ltd", label: "Limited — " + num(D) + " " + uom.toLowerCase(), hi: "सीमित — " + num(D) + " बाकी", cls: "warn", dot: "#B45309", qty: D, canBook: true };
   return { k: "low", label: "Only " + num(D) + " left — below full set", hi: "सिर्फ़ " + num(D) + " — पूरा सेट नहीं", cls: "warn", dot: "#D07A2E", qty: D, canBook: true, belowSet: true };
 }
+
+// A location inside a godown is one code: "R-1" for a rack with no shelves,
+// "R-1/A" for a shelf on it. Kept as one string rather than as a third column
+// so the stock engine — which holds, reserves and ships against a location —
+// did not have to learn another level of geography to say where a bundle is.
+export const RACK_SUB_SEP = "/";
+export const locationCode = (rack: string, sub?: string | null) =>
+  (sub ?? "").trim() ? `${rack}${RACK_SUB_SEP}${(sub as string).trim()}` : rack;
+/** Splits a stored location back into the rack and the shelf on it. */
+export const splitLocation = (loc: string): { rack: string; sub: string } => {
+  const i = loc.indexOf(RACK_SUB_SEP);
+  return i < 0 ? { rack: loc, sub: "" } : { rack: loc.slice(0, i), sub: loc.slice(i + 1) };
+};

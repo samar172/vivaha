@@ -1,7 +1,7 @@
 "use client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { money, num, fDate } from "@vivaha/shared";
+import { money, num, fDate, locationCode } from "@vivaha/shared";
 import { useApi, useGodowns, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
@@ -78,7 +78,12 @@ function ReceiveTransfer({ t }: { t: { id: string; toId: string } }) {
   return <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
     {racks.length > 0 && <select value={rack} onChange={(e) => setRack(e.target.value)} style={{ height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 6px" }}>
       <option value="">Rack…</option>
-      {racks.map((r) => <option key={r.id} value={r.code}>{r.code}</option>)}
+      {racks.map((r) => (r.subRacks?.length
+        ? <optgroup key={r.id} label={r.code}>
+          <option value={r.code}>{r.code} — anywhere</option>
+          {r.subRacks.map((sr) => <option key={sr.id} value={locationCode(r.code, sr.code)}>{locationCode(r.code, sr.code)}</option>)}
+        </optgroup>
+        : <option key={r.id} value={r.code}>{r.code}</option>))}
     </select>}
     <button className="b b-o b-s" disabled={busy} onClick={go}>Receive at {t.toId}</button>
   </div>;

@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { money, num, fDate } from "@vivaha/shared";
+import { money, num, fDate, rate } from "@vivaha/shared";
 import { useApi } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
@@ -143,7 +143,7 @@ function BasketModal({ cart, onChanged }: { cart: AbandonedCart; onChanged: () =
           {l.gone ? "no longer sold" : num(l.available)}
           {l.short && !l.gone ? <div className="sm" style={{ color: "var(--wa)" }}>short by {num(l.qty - l.available)}</div> : null}
         </td>
-        <td className="n tab">{money(l.rate)}</td>
+        <td className="n tab">{rate(l.rate)}</td>
         <td className="n tab" style={{ fontWeight: 600 }}>{money(l.amount)}</td>
       </tr>)}
     </tbody></table></div>

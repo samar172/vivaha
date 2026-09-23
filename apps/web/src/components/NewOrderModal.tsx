@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { money, num, type Band } from "@vivaha/shared";
+import { money, num, type Band, rate } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, get } from "@/lib/api";
@@ -171,7 +171,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
             return <tr key={id} style={{ cursor: "default" }}>
               <td className="w">{l?.name ?? it?.name ?? id}<div className="sm"><span className="rid">{l?.sku ?? it?.sku}</span>{l?.short ? <span style={{ color: "var(--er)" }}> · only {num(l.available)} available</span> : l?.belowMoq ? <span style={{ color: "var(--er)" }}> · below MOQ {num(l.moq)}</span> : null}</div></td>
               <td className="n"><input type="number" style={{ width: 88, textAlign: "right" }} value={qty} onChange={(e) => setQty(id, Number(e.target.value))} /></td>
-              <td className="n tab">{l ? <>{money(l.rate)}<div className="sm">{l.priceSrc}</div></> : "…"}</td>
+              <td className="n tab">{l ? <>{rate(l.rate)}<div className="sm">{l.priceSrc}</div></> : "…"}</td>
               <td className="n tab" style={{ fontWeight: 600 }}>{l ? money(l.amount) : "…"}</td>
               <td><button className="b b-g b-s" onClick={() => drop(id)}><Icon n="x" s={11} /></button></td>
             </tr>;

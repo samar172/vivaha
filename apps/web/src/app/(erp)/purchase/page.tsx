@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { money, money2, num, fDate } from "@vivaha/shared";
+import { money, money2, num, fDate, locationCode, rate } from "@vivaha/shared";
 import { useApi, useGodowns, useLines, refresh, type Godown } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
@@ -90,7 +90,7 @@ export function PurchaseDetail({ id }: { id: string }) {
                 {p.lines.map((l) => <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/items/${l.itemId}`)}>
                   <td className="w">{l.item.name}<div className="sm"><span className="rid">{l.item.sku}</span>{l.batchNo ? ` · batch ${l.batchNo}` : ""}</div></td>
                   <td className="n tab">{num(l.qty)}</td>
-                  <td className="n tab">{money(l.rate)}</td>
+                  <td className="n tab">{rate(l.rate)}</td>
                   <td className="n tab">{money(l.qty * l.rate)}</td>
                   <td className="sm">{placeLabel(l, godowns)}</td>
                 </tr>)}
@@ -155,9 +155,16 @@ export function PlaceRows({ godowns, places, setPlaces, qty }: { godowns: Godown
       <select value={p.godownId} onChange={(e) => set(i, { godownId: e.target.value, rack: "" })} style={{ height: 30 }}>
         {godowns.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
       </select>
-      <select value={p.rack} onChange={(e) => set(i, { rack: e.target.value })} style={{ height: 30 }} title="Which rack inside that godown">
+      {/* One list, grouped by rack: the rack itself, then each shelf on it. A
+          rack with no shelves is a single line, the way it always was. */}
+      <select value={p.rack} onChange={(e) => set(i, { rack: e.target.value })} style={{ height: 30 }} title="Where inside that godown">
         <option value="">Rack not recorded</option>
-        {racksOf(p.godownId).map((r) => <option key={r.id} value={r.code}>{r.code}{r.name ? ` — ${r.name}` : ""}</option>)}
+        {racksOf(p.godownId).map((r) => (r.subRacks?.length
+          ? <optgroup key={r.id} label={r.code + (r.name ? ` — ${r.name}` : "")}>
+            <option value={r.code}>{r.code} — anywhere on this rack</option>
+            {r.subRacks.map((sr) => <option key={sr.id} value={locationCode(r.code, sr.code)}>{locationCode(r.code, sr.code)}{sr.name ? ` — ${sr.name}` : ""}</option>)}
+          </optgroup>
+          : <option key={r.id} value={r.code}>{r.code}{r.name ? ` — ${r.name}` : ""}</option>))}
       </select>
       <input type="number" value={p.qty} onChange={(e) => set(i, { qty: Number(e.target.value) || 0 })} style={{ height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} />
       {places.length > 1

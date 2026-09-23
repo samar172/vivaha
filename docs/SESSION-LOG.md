@@ -6,6 +6,81 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-23 — Shelves, editable attributes, and money to the paisa
+
+Four things in one round. The pricing one is the serious one.
+
+### Rates were being rounded to the rupee
+
+Reported as "initial pricing for this was 13.2 but it's showing only 13 — there
+is no round off for any pricing except final bill amount". Correct, and it was
+wrong in two places at once.
+
+*Display*: `money()` rounds to the rupee, and it was being used for rates as
+well as amounts. There is now a `rate()` formatter that always shows paise, used
+everywhere a per-unit figure appears — the slab table, order lines, invoice
+lines, per-firm prices, landed cost. ₹13.20 shown as ₹13 is not a display quirk;
+on a carton of ten thousand cards it is two thousand rupees.
+
+*Arithmetic*: four `Math.round` calls in the pricing engine were throwing away
+paise — the list rate, a percentage off it, the margin floor, and the
+weighted-average landed cost after a receipt. All four now hold two places. The
+invoice total is still the only figure that rounds, which is what the client
+said and what a bill should do.
+
+And the item form derived its deeper slabs with `Math.round(base × .89)` and so
+on, which is exactly how a base of 13.20 became a list of 13.20 / 12 / 11 / 10 —
+three of the four slabs silently off the percentages they are meant to be.
+
+**This re-prices things.** A slab of 13.20 at ×1.25 quoted ₹17 yesterday and
+quotes ₹16.50 today, because ₹16.50 is the answer. Slabs already saved keep the
+rounded figures they were stored with; re-saving the item recomputes them.
+
+### A rack can be divided into shelves
+
+`SubRack` hangs off `Rack`. Stock is not keyed by it: `StockBalance.rack` holds
+the whole location as one code — `R-1` for a rack with no shelves, `R-1/A` for
+one with — so the engine that holds, reserves and ships never had to learn a
+third level of geography to say where a bundle is. The receipt screen offers one
+grouped list: the rack itself, then each shelf on it.
+
+A shelf holding stock refuses both retirement and renumbering, and a rack is now
+held by stock on its shelves as well as on itself — the old guard only looked at
+the rack's own code.
+
+### An attribute is editable, not just its values
+
+"Manage" was a browser `prompt()` that could reach the values and nothing else,
+so a label typed wrong at creation stayed wrong forever — and on a phone a
+`prompt()` is close to unusable. There is a real form now: name, key, line,
+multi-select, portal facet, and values as rows rather than a comma-separated
+line, because a comma inside a value is a real thing and splitting on it cut the
+value in half.
+
+What may change depends on what is stored, counted rather than guessed. The key
+and the line are what items are filed under, so they are editable while nothing
+uses the attribute and held once something does — with the count and a few SKUs,
+so the refusal is checkable. A value an item is sitting on cannot be dropped.
+An attribute nothing uses can be deleted; `tehsil` never can.
+
+### An item can carry its own multiplier
+
+Some designs sell at a fixed markup whoever is buying. Before this the only way
+to say so was a per-item override on every firm, one at a time, and a new one
+every time a customer was added. `Item.multiplier` replaces the group multiplier
+when set, and is blank in the normal case.
+
+### Verified
+
+32 targeted checks, all passing, plus a new repo-resident harness:
+`scripts/check_money.py` books an order at a rate that carries paise, dispatches
+it, and checks the quote, the invoice, the CGST/SGST split and the ledger debit
+against the rule recomputed in Python — including JavaScript's round-half-up,
+which Python's `round()` does not do. Written into the repo because the previous
+harness lived in a scratchpad and was cleared overnight.
+
+---
+
 ## 2026-09-23 — Why the install prompt never appeared on a phone
 
 Reported as "works on desktop, not on mobile". Three separate faults, every one

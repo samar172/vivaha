@@ -1,6 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
-import { money, num, fDT, marginFloor } from "@vivaha/shared";
+import { money, num, fDT, marginFloor, paise, rate } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
@@ -27,6 +27,9 @@ export function ItemDetail({ id }: { id: string }) {
   // has no record count of its own, so clear it rather than inherit one.
   useFooter(null);
   if (!i) return <div className="wa"><div className="sm">Loading…</div></div>;
+  // The item's own multiplier if it has one, otherwise the Regular group's,
+  // which is what this table has always illustrated with.
+  const mult = i.multiplier ?? 1.25;
   const L = lines?.find((l) => l.id === i.lineId); const svc = L?.workflow === "JOBWORK";
   return <>
     <PageHead
@@ -55,10 +58,15 @@ export function ItemDetail({ id }: { id: string }) {
           <ItemPhoto item={i} />
         </div></div>
         <div className="pn"><div className="pnb">
-          <Section t={<>Quantity slabs · rate before customer multiplier</>}>
+          <Section t={<>Quantity slabs · rate before {i.multiplier ? "this item's own" : "customer"} multiplier</>}>
             <div className="sm" style={{ marginBottom: 7 }}>The highlighted row is the slab an order of the minimum quantity ({num(i.moq)} {i.uom}) falls in.</div>
-            <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Margin at Regular ×1.25</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = Math.round(s.rate * 1.25); const m = ((r - i.landedCost) / r) * 100; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--wa-bg)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "∞" : num(s.toQty)}</td><td className="n tab">{money(s.rate)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table>
-            <div className="sm" style={{ marginTop: 7 }}>Landed cost {money(i.landedCost)} · floor {money(marginFloor(i.landedCost, i.minMargin))}</div>
+            {/* Rates carry paise. ₹13.20 shown as ₹13 is not a rounding — on a
+                carton of ten thousand cards it is two thousand rupees. */}
+            <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Sells at ×{mult}</th><th className="n">Margin</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = paise(s.rate * mult); const m = r > 0 ? ((r - i.landedCost) / r) * 100 : 0; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--wa-bg)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "∞" : num(s.toQty)}</td><td className="n tab">{rate(s.rate)}</td><td className="n tab">{rate(r)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table>
+            <div className="sm" style={{ marginTop: 7 }}>Landed cost {rate(i.landedCost)} · floor {rate(marginFloor(i.landedCost, i.minMargin))}</div>
+            <div className="sm" style={{ marginTop: 4 }}>{i.multiplier
+              ? <>This item carries its own multiplier of <b>×{i.multiplier}</b>, so it sells at that markup whoever is buying — the firm&apos;s pricing group does not apply.</>
+              : <>Shown at the <b>Regular</b> group&apos;s ×{mult}. Each firm&apos;s own group decides what it actually pays; set a multiplier on this item to fix the markup for everybody.</>}</div>
           </Section>
           <PriceHistorySection itemId={i.id} />
         </div></div>
@@ -214,7 +222,7 @@ export function TransferModal({ itemId }: { itemId?: string }) {
 
 export function ItemForm({ item }: { item?: ItemView }) {
   const { data: lines } = useLines(); const { data: vendors } = useApi<{ id: string; name: string }[]>("/api/masters/vendors"); const { closeModal, toast } = useUI();
-  const [f, setF] = useState({ lineId: item?.lineId ?? "", name: item?.name ?? "", nameHi: item?.nameHi ?? "", designNo: item?.designNo ?? "", attrs: item?.attrs ?? {}, uom: item?.uom ?? "PCS", packUom: item?.packUom ?? "Box", perPack: item?.perPack ?? 50, moq: item?.moq ?? 250, landedCost: item?.landedCost ?? 30, hsn: item?.hsn ?? "4817", gstPct: item?.gstPct ?? 12, vendorId: item?.vendorId ?? "", batchTracked: item?.batchTracked ?? false, status: item?.status ?? "ACTIVE", base: item?.slabs[0]?.rate ?? 50 });
+  const [f, setF] = useState({ lineId: item?.lineId ?? "", name: item?.name ?? "", nameHi: item?.nameHi ?? "", designNo: item?.designNo ?? "", attrs: item?.attrs ?? {}, uom: item?.uom ?? "PCS", packUom: item?.packUom ?? "Box", perPack: item?.perPack ?? 50, moq: item?.moq ?? 250, landedCost: item?.landedCost ?? 30, multiplier: item?.multiplier ?? null as number | null, hsn: item?.hsn ?? "4817", gstPct: item?.gstPct ?? 12, vendorId: item?.vendorId ?? "", batchTracked: item?.batchTracked ?? false, status: item?.status ?? "ACTIVE", base: item?.slabs[0]?.rate ?? 50 });
   const { data: attrs } = useApi<{ lineId: string | null; key: string; label: string; values: string[] }[]>("/api/masters/attributes");
   const L = lines?.find((l) => l.id === (f.lineId || lines?.[0]?.id));
   // The Hindi name writes itself from the English one while the operator has
@@ -228,8 +236,11 @@ export function ItemForm({ item }: { item?: ItemView }) {
   const rateChanged = !!item && Number(f.base) !== Number(item.slabs?.[0]?.rate ?? 0);
   const setName = (name: string) => setF((x) => ({ ...x, name, ...(hiTouched ? {} : { nameHi: toHindi(name) }) }));
   const submit = async () => {
-    const slabs = [{ fromQty: 1, toQty: 499, rate: f.base }, { fromQty: 500, toQty: 1999, rate: Math.round(f.base * .89) }, { fromQty: 2000, toQty: 4999, rate: Math.round(f.base * .8) }, { fromQty: 5000, toQty: 1e9, rate: Math.round(f.base * .74) }];
-    const body = { ...f, lineId: f.lineId || lines?.[0]?.id, reason: reason.trim() || undefined, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
+    // Derived to the paisa. These were rounded to the rupee, which is how a
+    // base of 13.20 turned into a list of 13.20 / 12 / 11 / 10 — three of the
+    // four slabs quietly moved off the percentages they are supposed to be.
+    const slabs = [{ fromQty: 1, toQty: 499, rate: paise(f.base) }, { fromQty: 500, toQty: 1999, rate: paise(f.base * .89) }, { fromQty: 2000, toQty: 4999, rate: paise(f.base * .8) }, { fromQty: 5000, toQty: 1e9, rate: paise(f.base * .74) }];
+    const body = { ...f, lineId: f.lineId || lines?.[0]?.id, reason: reason.trim() || undefined, base: undefined, vendorId: f.vendorId || null, slabs, landedCost: Number(f.landedCost), multiplier: f.multiplier == null || String(f.multiplier) === "" ? null : Number(f.multiplier), perPack: Number(f.perPack), moq: Number(f.moq), gstPct: Number(f.gstPct) };
     try { if (item) await (await import("@/lib/api")).patch(`/api/items/${item.id}`, body); else await post("/api/items", body); toast(item ? "Item updated" : "Item created", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); }
   };
   return <ModalFrame title={item ? "Edit item — " + item.sku : "New item"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Save item</button></>}>
@@ -249,8 +260,11 @@ export function ItemForm({ item }: { item?: ItemView }) {
       <Field label="Pack unit"><select value={f.packUom} onChange={(e) => setF({ ...f, packUom: e.target.value })}><option value="">—</option>{L?.packUoms.map((p) => <option key={p}>{p}</option>)}</select></Field>
       <Field label="Per pack"><input type="number" value={f.perPack} onChange={(e) => setF({ ...f, perPack: Number(e.target.value) })} /></Field>
       <Field label="MOQ"><input type="number" value={f.moq} onChange={(e) => setF({ ...f, moq: Number(e.target.value) })} /></Field>
-      <Field label="Landed cost (₹)"><input type="number" value={f.landedCost} onChange={(e) => setF({ ...f, landedCost: Number(e.target.value) })} /></Field>
-      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %" hint={annual ? "This line runs on a yearly published list" : undefined}><input type="number" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
+      <Field label="Landed cost (₹)"><input type="number" step="0.01" value={f.landedCost} onChange={(e) => setF({ ...f, landedCost: Number(e.target.value) })} /></Field>
+      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %" hint={annual ? "This line runs on a yearly published list" : "Paise are kept — 13.20 stays 13.20"}><input type="number" step="0.01" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
+      <Field label="Multiplier for this item" hint="Leave blank to follow each firm's pricing group — the normal case. Set it to fix the markup whoever is buying.">
+        <input type="number" step="0.01" placeholder="follows the firm's group" value={f.multiplier ?? ""} onChange={(e) => setF({ ...f, multiplier: e.target.value === "" ? null : Number(e.target.value) })} />
+      </Field>
       {annual && rateChanged && <Field label="Why the list is being revised mid-year *" full hint="Recorded against the item — retailers have been quoting this list since April"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Manufacturer revised the paper rate in October" /></Field>}
       <Field label="HSN"><input value={f.hsn} onChange={(e) => setF({ ...f, hsn: e.target.value })} /></Field>
       <Field label="GST %"><input type="number" value={f.gstPct} onChange={(e) => setF({ ...f, gstPct: Number(e.target.value) })} /></Field>
