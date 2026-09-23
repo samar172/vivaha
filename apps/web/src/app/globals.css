@@ -553,6 +553,13 @@ input[type=number]{-moz-appearance:textfield}
 .lg-demo{margin-top:13px;padding-top:12px;border-top:1px dashed var(--bd)}
 .lg-demo .lb{margin-bottom:5px}
 
+/* Tabs that sit inside a toolbar, beside the search box. */
+.ptab{display:inline-flex;gap:2px;background:var(--panel-2);border:1px solid var(--bd);border-radius:7px;padding:2px}
+.ptab button{font-size:12.5px;padding:3px 9px;border:0;background:none;border-radius:5px;color:var(--t6);cursor:pointer;white-space:nowrap}
+.ptab button b{font-weight:700;opacity:.65;margin-left:3px}
+.ptab button:hover{color:var(--t9)}
+.ptab button.on{background:#fff;color:var(--t9);font-weight:600;box-shadow:0 1px 2px rgba(16,24,40,.08)}
+
 /* ============ TYPE-TO-FIND PICKER ============ */
 /* A list of matches under the box being typed in. Scrolls rather than growing,
    so a line near the bottom of a long form does not push the buttons off. */

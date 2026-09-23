@@ -79,12 +79,14 @@ router.get("/price-list", requirePerm("item.view"), asyncHandler(async (req, res
         lineId: i.lineId, lineName: i.line.name, uom: i.uom, moq: i.moq,
         vendor: i.vendor, purchasePrice: i.purchasePrice == null ? null : D(i.purchasePrice),
         landedCost: D(i.landedCost),
+        priceBasis: i.priceBasis, manualBase: i.manualBase == null ? null : D(i.manualBase),
         multiplier: i.multiplier == null ? null : D(i.multiplier),
         slabs, sellingPrice: slabs[0]?.rate ?? 0,
         pending: pend ? {
           id: pend.id, effectiveFrom: pend.effectiveFrom, reason: pend.reason, by: pend.by,
           purchasePrice: pend.purchasePrice == null ? null : D(pend.purchasePrice),
           multiplier: pend.multiplier == null ? null : D(pend.multiplier),
+          priceBasis: pend.priceBasis, manualBase: pend.manualBase == null ? null : D(pend.manualBase),
           sellingPrice: ((pend.slabs as unknown as { rate: number }[]) ?? [])[0]?.rate ?? null,
         } : null,
       };
@@ -99,6 +101,10 @@ const priceRow = z.object({
   itemId: z.string(),
   purchasePrice: z.number().min(0).nullable().optional(),
   multiplier: z.number().min(0.1).max(20).nullable().optional(),
+  // What the multiplier was applied to, kept so next season starts where this
+  // one left off instead of asking again.
+  priceBasis: z.enum(["PURCHASE", "LANDED", "CURRENT", "MANUAL"]).optional(),
+  manualBase: z.number().min(0).nullable().optional(),
   sellingPrice: z.number().min(0, "A selling price cannot be negative"),
 });
 router.post("/price-list", requirePerm("item.edit"), asyncHandler(async (req, res) => {
@@ -156,6 +162,8 @@ router.post("/price-list", requirePerm("item.edit"), asyncHandler(async (req, re
         itemId: r.itemId, effectiveFrom: from,
         purchasePrice: r.purchasePrice ?? null,
         multiplier: r.multiplier ?? null,
+        priceBasis: r.priceBasis ?? null,
+        manualBase: r.manualBase ?? null,
         slabs: slabs as unknown as Prisma.InputJsonValue,
         reason: b.reason, by: req.user!.name,
       } });

@@ -43,6 +43,8 @@ export async function applyDuePriceChanges(now = new Date()): Promise<number> {
           // A change may deliberately clear the item's own multiplier and hand
           // it back to the firm's pricing group, so undefined and null differ.
           ...(ch.multiplier !== null ? { multiplier: ch.multiplier } : { multiplier: null }),
+          ...(ch.priceBasis ? { priceBasis: ch.priceBasis } : {}),
+          ...(ch.manualBase != null ? { manualBase: ch.manualBase } : {}),
         },
       });
       await tx.priceChange.update({ where: { id: ch.id }, data: { status: "APPLIED", appliedAt: new Date() } });

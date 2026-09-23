@@ -6,6 +6,55 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (later) — What the multiplier is measured from, and a job that knows its order
+
+### The basis is a choice, and it is remembered
+
+The price list applied its multiplier to the supplier's last rate and only that.
+But there is no single right answer: a card is priced off what the supplier
+charges, a consumable off what it actually cost to get here, and a line being
+put up five percent off what it sells for today. So **Price off** is now a
+column — *Last purchase, Landed cost, Selling now, Typed* — kept per item, since
+a card and a tin of ink are not priced the same way, and carried on a scheduled
+change so a list keyed in advance lands with the working that produced it rather
+than only the answer.
+
+The three numbers stay one relation: change the basis and the price recuts;
+type a price and the multiplier that implies comes back, measured against
+whatever that row is priced off. A bulk apply measures each row from its own
+basis, so a mixed selection still comes out right.
+
+### Tabs and filters where the search box is
+
+Line tabs beside the search, and chips for the questions the office actually
+asks — *no purchase price*, *price queued*, *own multiplier*, *thin margin*,
+each carrying its count. The screen fetches the catalogue once and filters in
+the browser, so switching tabs is instant and a half-typed price list is never
+thrown away by a refetch. The topbar's global line switcher no longer also
+scopes this screen: two controls for one thing is worse than either.
+
+### A job that knows which order it came with
+
+A wedding order is rarely only cards: the same customer, on the same visit,
+hands over the names to be printed on them. The two lived on separate screens
+with nothing joining them, so "which job was this, and has it been billed" was a
+question only the person who took the order could answer.
+
+`JobWork.orderId` and `JobWork.invoiceNo`, both optional because plenty of job
+work walks in on its own. The list shows the card order and whether it has been
+billed; the job shows both with the order's value and the bill's, and says
+plainly that the job's own quote is billed in its own right. An order or bill
+belonging to a different firm is refused — one customer's printing filed against
+another's invoice is worse than no link at all.
+
+### Verified
+
+18 checks in `scripts/check_price_basis.py`: each basis priced and read back,
+the typed figure kept, a queued change carrying its basis, and the job link
+including the two refusals. The other three harnesses still pass.
+
+---
+
 ## 2026-09-24 — A price list, and a supplier's account
 
 ### Pricing a list, not an item at a time

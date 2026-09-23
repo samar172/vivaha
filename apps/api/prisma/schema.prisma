@@ -365,6 +365,15 @@ model Item {
   // cost is what the margin floor is measured against and moves on its own with
   // every receipt. Kept in step automatically at goods receipt.
   purchasePrice Decimal?    @db.Decimal(12, 2)
+  // What the multiplier on the price list is applied to for this item, and the
+  // figure itself when the office would rather type one.
+  //
+  // There is no single right answer: a card is priced off what the supplier
+  // charges, a consumable off what it actually cost to get here, a line being
+  // put up five percent off what it sells for today. So the basis is the
+  // office's choice and it is remembered, rather than asked again every season.
+  priceBasis    String      @default("PURCHASE") // PURCHASE | LANDED | CURRENT | MANUAL
+  manualBase    Decimal?    @db.Decimal(12, 2)
   // This item's own markup, replacing the buying firm's group multiplier.
   // Null is the normal case: the firm's group decides. Set it when a design
   // sells at a fixed markup whoever is buying — an exclusive block, a licensed
@@ -447,6 +456,10 @@ model PriceChange {
   effectiveFrom DateTime
   purchasePrice Decimal?  @db.Decimal(12, 2)
   multiplier    Decimal?  @db.Decimal(6, 3)
+  // Carried with the change so a list keyed in advance lands with the working
+  // that produced it, not just the answer.
+  priceBasis    String?
+  manualBase    Decimal?  @db.Decimal(12, 2)
   slabs         Json      @default("[]") // [{ fromQty, toQty, rate }]
   status        String    @default("PENDING") // PENDING | APPLIED | CANCELLED
   reason        String    @default("")
@@ -808,6 +821,7 @@ model Order {
 
   lines      OrderLine[]
   events     OrderEvent[]
+  jobs       JobWork[]
   dispatches Dispatch[]
   invoices   Invoice[]
   returns    ReturnRequest[]
@@ -924,6 +938,7 @@ model Invoice {
   lines      InvoiceLine[]
   shares     InvoiceShare[]
   amendments InvoiceAmendment[]
+  jobs       JobWork[]
 
   @@index([customerId, date])
   @@index([lineId, date])
@@ -1118,6 +1133,18 @@ model JobWork {
   processItemId String
   processItem   Item      @relation("JobProcess", fields: [processItemId], references: [id])
   qty           Int
+  // The card order this printing was taken alongside, and the bill it was
+  // raised against.
+  //
+  // A wedding order is rarely only cards: the same customer, on the same visit,
+  // hands over the names to be printed on them. Until now the two lived on
+  // separate screens with nothing joining them, so "which job was this, and has
+  // it been billed" was a question only the person who took the order could
+  // answer. Both are optional — plenty of job work walks in on its own.
+  orderId       String?
+  order         Order?    @relation(fields: [orderId], references: [id])
+  invoiceNo     String?
+  invoice       Invoice?  @relation(fields: [invoiceNo], references: [no])
   status        JobStatus @default(QUOTED)
   requiredBy    DateTime
   text          String
