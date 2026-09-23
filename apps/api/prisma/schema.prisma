@@ -315,15 +315,24 @@ model SubRack {
 
 model Vendor {
   id     String @id // VND-01
+  // The supplier's number in the office's own books — the same idea as a
+  // customer's. VND-01 is the system's key; this is the word the counter uses,
+  // and both are searchable by it.
+  code   String? @unique
   name   String
   gstin  String?
   terms  String
   city   String
   phone  String
-  items     Item[]
-  purchases Purchase[]
-  payments  VendorPayment[]
-  itemCodes ItemCode[]
+  // Where a customer can be pointed to pay this supplier directly. Held on the
+  // supplier because it is theirs, and shown only to the person at the counter
+  // who is taking the payment.
+  upiId  String?
+  items       Item[]
+  purchases   Purchase[]
+  payments    VendorPayment[]
+  itemCodes   ItemCode[]
+  settlements Settlement[]
 }
 
 model PricingGroup {
@@ -449,6 +458,11 @@ enum GateMode {
 
 model Customer {
   id           String   @id // CUST-101
+  // The number the firm has always been known by in the office's own books —
+  // a khata number, a ledger folio, whatever was written on the bahi. CUST-101
+  // is the system's key and nobody at the counter thinks in it; this is what
+  // they say out loud, so it is searchable and shown beside the name.
+  code         String?  @unique
   name         String
   contactName  String
   group        String   // PricingGroup.name
@@ -491,6 +505,7 @@ model Customer {
   orders     Order[]
   ledger     LedgerEntry[]
   payments   Payment[]
+  settlements Settlement[]
   invoices   Invoice[]
   returns    ReturnRequest[]
   jobs       JobWork[]
@@ -693,6 +708,10 @@ model VendorPayment {
   date     DateTime
   amount   Decimal  @db.Decimal(14, 2)
   ref      String   @default("")
+  // Set when this leg was settled by a customer paying the supplier directly.
+  // The supplier is never told whose money it was.
+  settlementId String?     @unique
+  settlement   Settlement? @relation(fields: [settlementId], references: [id])
 }
 
 enum TransferStatus {
@@ -961,12 +980,55 @@ model Payment {
   id         String   @id // RCPT-3300
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
+  // Carries the time as well as the day. Two UPI transfers of the same amount
+  // from the same firm on one afternoon are told apart by the clock and by
+  // nothing else, and "which of these two is the one he is asking about" is a
+  // question the counter gets.
   date       DateTime
   amount     Decimal  @db.Decimal(14, 2)
   method     String
   ref        String   @default("")
+  // The screenshot the customer sent. A UPI reference typed off a phone screen
+  // is wrong often enough that the picture is the evidence, not the note.
+  proofUrl   String?
+  // Set when this money never passed through our account — see Settlement.
+  settlementId String?    @unique
+  settlement   Settlement? @relation(fields: [settlementId], references: [id])
   by         String
   createdAt  DateTime @default(now())
+}
+
+// Money that went straight from a customer to one of our suppliers.
+//
+// The firm owes us, we owe a supplier, and rather than the money making two
+// journeys it makes one: the customer is given a QR and pays the supplier
+// directly, against his own bill with us. Both ledgers have to move — his
+// outstanding falls and our payable falls — off a single act.
+//
+// Neither side is told about the other. The customer's statement says a payment
+// was received and nothing more; the supplier's payment carries this reference
+// and no customer. `id` is ours, and the only thing both legs have in common,
+// so a year from now the two entries can still be put back together.
+//
+// One caveat the software cannot fix: a UPI QR carries the payee's name, so the
+// customer will see who he is paying inside his own UPI app. What is controlled
+// here is what this system discloses and what the paperwork says.
+model Settlement {
+  id             String   @id // STL-0001
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id])
+  vendorId       String
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  amount         Decimal  @db.Decimal(14, 2)
+  at             DateTime @default(now())
+  note           String   @default("")
+  by             String
+
+  payment        Payment?
+  vendorPayment  VendorPayment?
+
+  @@index([customerId, at])
+  @@index([vendorId, at])
 }
 
 // ───────────────────────── Returns, Job work ─────────────────────────

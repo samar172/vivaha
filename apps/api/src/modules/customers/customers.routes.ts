@@ -36,7 +36,7 @@ router.get("/", requirePerm("cust.view"), asyncHandler(async (req, res) => {
   const q = z.object({ line: z.string().optional(), q: z.string().optional(), filter: z.string().optional() }).parse(req.query);
   let rows = await prisma.customer.findMany({ include: custInclude, orderBy: { id: "asc" } });
   if (q.line && q.line !== "ALL") rows = rows.filter((c) => (c.linesEnabled as string[]).includes(q.line!));
-  if (q.q) { const s = q.q.toLowerCase(); rows = rows.filter((c) => (c.name + c.contactName + c.tehsil + (c.gstin || "")).toLowerCase().includes(s)); }
+  if (q.q) { const s = q.q.toLowerCase(); rows = rows.filter((c) => (c.name + c.contactName + c.tehsil + (c.gstin || "") + (c.code || "") + c.id + c.phone).toLowerCase().includes(s)); }
   const gates = await gatesForAll(rows);
   const filters = (q.filter || "").split(",").filter(Boolean);
   let out = rows.map((c) => ({ ...serialize(c), gate: gates[c.id].gate, ageing: gates[c.id].ageing, hasLogin: c.users.some((u) => u.isActive) }));
@@ -76,7 +76,10 @@ const contactSchema = z.object({
 });
 const custSchema = z.object({
   name: z.string().min(1), contactName: z.string().min(1), phone: z.string().min(5), tehsil: z.string().min(1), gstin: z.string().optional(), firmType: z.string().default("Registered"),
-  address: z.string().default(""), linesEnabled: z.array(z.string()).min(1), group: z.string().default("Regular"), salesExecId: z.string().nullable().optional(),
+  address: z.string().default(""), linesEnabled: z.array(z.string()).min(1),
+  // The office's own number for this firm. Theirs to choose, so it is trimmed
+  // and uppercased and otherwise left exactly as typed.
+  code: z.string().trim().max(24).optional().nullable(), group: z.string().default("Regular"), salesExecId: z.string().nullable().optional(),
   creditLimit: z.number().min(0).default(0), creditDays: z.number().int().min(0).default(0), gateMode: z.enum(["WARN", "BLOCK"]).default("WARN"),
   priceAdjPct: z.number().min(0, "A discount cannot be negative").max(90, "That is not a discount, that is a giveaway").default(0),
   machines: z.array(z.object({ type: z.string(), spec: z.record(z.string()).default({}) })).default([]),
@@ -110,7 +113,7 @@ router.post("/", requirePerm("cust.edit"), asyncHandler(async (req, res) => {
     if (!contacts.some((ct) => ct.authority === "Owner")) contacts.unshift({ name: b.contactName, role: "Owner", phone: b.phone, authority: "Owner", billsTo: true });
     // Bills have to reach somebody. An owner who was not marked takes it.
     if (!contacts.some((ct) => ct.billsTo)) { const o = contacts.find((ct) => ct.authority === "Owner") ?? contacts[0]; if (o) o.billsTo = true; }
-    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, lat: b.lat ?? null, lng: b.lng ?? null, geoAccuracy: b.geoAccuracy ?? null, geoAt: b.lat != null && b.lng != null ? new Date() : null, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
+    const c = await tx.customer.create({ data: { id, name: b.name, contactName: b.contactName, phone: b.phone, tehsil: b.tehsil, gstin: b.gstin || null, firmType: b.firmType, address: b.address, code: b.code?.trim() || null, linesEnabled: b.linesEnabled, group: b.group, salesExecId: b.salesExecId ?? null, creditLimit: b.creditLimit, creditDays: b.creditDays, gateMode: b.gateMode, priceAdjPct: b.priceAdjPct, lat: b.lat ?? null, lng: b.lng ?? null, geoAccuracy: b.geoAccuracy ?? null, geoAt: b.lat != null && b.lng != null ? new Date() : null, referCode: `VIVAHA-RJ${4100 + seq * 37}`, contacts: { create: contacts }, machines: { create: b.machines } } });
     if (validFix({ lat: b.lat ?? undefined, lng: b.lng ?? undefined, accuracy: b.geoAccuracy ?? undefined })) {
       await recordFix(tx, c.id, { lat: b.lat!, lng: b.lng!, accuracy: b.geoAccuracy ?? null }, "ONBOARDING", req.user!.name);
     }
@@ -144,6 +147,14 @@ router.patch("/:id", requirePerm("cust.edit"), asyncHandler(async (req, res) => 
   const b = custSchema.partial().parse(req.body);
   const before = await prisma.customer.findUnique({ where: { id: req.params.id } });
   if (!before) throw notFound("Customer not found");
+  if (b.code !== undefined) {
+    const code = b.code?.trim() || null;
+    if (code && code !== before.code) {
+      const clash = await prisma.customer.findFirst({ where: { code, id: { not: before.id } }, select: { name: true } });
+      if (clash) throw badRequest(`${clash.name} already has the number ${code}`);
+    }
+    b.code = code;
+  }
   const { machines, contacts, ...rest } = b;
   const c = await prisma.$transaction(async (tx) => {
     if (machines) { await tx.customerMachine.deleteMany({ where: { customerId: before.id } }); await tx.customerMachine.createMany({ data: machines.map((m) => ({ ...m, customerId: before.id })) }); }

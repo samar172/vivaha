@@ -8,10 +8,11 @@ import { requirePerm } from "../../middleware/auth";
 import { gatesForAll, customerFinance } from "../../services/credit";
 import { audit } from "../../services/audit";
 import { notify } from "../../services/notify";
-import { nextReceiptNo } from "../../services/sequence";
+import { nextReceiptNo, nextSettlementNo } from "../../services/sequence";
 import { outstanding, invoiceTotals, marginFloor } from "@vivaha/shared";
 import { ledgerLines } from "../../services/credit";
 import { getHomeState, getMinMargin } from "../../services/settings";
+import { storeImage } from "../../services/uploads";
 import { badRequest, forbidden, notFound } from "../../utils/httpError";
 
 const router = Router();
@@ -226,16 +227,67 @@ router.get("/payments", requirePerm("ledger.view"), asyncHandler(async (_req, re
 }));
 
 router.post("/payments", requirePerm("payment.create"), asyncHandler(async (req, res) => {
-  const b = z.object({ customerId: z.string(), amount: z.number().positive("Enter a valid amount"), method: z.string().min(1), ref: z.string().default(""), date: z.string().optional() }).parse(req.body);
+  const b = z.object({
+    customerId: z.string(), amount: z.number().positive("Enter a valid amount"),
+    method: z.string().min(1), ref: z.string().default(""),
+    // A full timestamp, not a day. Two transfers of the same amount from the
+    // same firm on one afternoon are told apart by the clock and nothing else.
+    date: z.string().optional(),
+    // The screenshot the customer sent, as a data URL — the same road an item
+    // photograph takes.
+    proof: z.string().optional(),
+    // When the money never passed through our account: the firm was given a
+    // supplier's QR and paid them directly, against his own bill with us.
+    toVendorId: z.string().optional(),
+    settlementNote: z.string().max(200).default(""),
+  }).parse(req.body);
   const c = await prisma.customer.findUnique({ where: { id: b.customerId } });
   if (!c) throw notFound("Customer not found");
+  const vendor = b.toVendorId
+    ? await prisma.vendor.findUnique({ where: { id: b.toVendorId }, include: { purchases: { select: { total: true, freight: true } }, payments: { select: { amount: true } } } })
+    : null;
+  if (b.toVendorId && !vendor) throw notFound("Supplier not found");
+  if (vendor) {
+    // A settlement can only discharge a debt that exists. Paying a supplier we
+    // owe nothing would leave them holding our money with no invoice behind it,
+    // which is a loan and not a settlement — and nobody meant to make one.
+    const invoiced = vendor.purchases.reduce((t, p) => t + D(p.total) + D(p.freight), 0);
+    const paid = vendor.payments.reduce((t, p) => t + D(p.amount), 0);
+    const owed = Math.round((invoiced - paid) * 100) / 100;
+    if (owed <= 0) throw badRequest(`We do not owe ${vendor.name} anything, so there is nothing for this payment to settle against`);
+    if (b.amount > owed) throw badRequest(`We owe ${vendor.name} ₹${owed.toFixed(2)} — a settlement cannot be larger than the debt it discharges. Take ₹${owed.toFixed(2)} this way and the rest another.`);
+  }
+
+  // Stored before the transaction: an upload is a network call and has no
+  // business inside the transaction that moves two ledgers.
+  const proofUrl = b.proof?.startsWith("data:")
+    ? (await storeImage("payments", `${c.id}-${Date.now()}`, b.proof)).url
+    : b.proof || null;
+
   const out = await prisma.$transaction(async (tx) => {
     const id = await nextReceiptNo(tx);
     const date = b.date ? new Date(b.date) : new Date();
-    await tx.payment.create({ data: { id, customerId: c.id, date, amount: b.amount, method: b.method, ref: b.ref, by: req.user!.name } });
-    await tx.ledgerEntry.create({ data: { customerId: c.id, date, type: "PAYMENT", ref: id, particular: `Payment received · ${b.method} ${b.ref}`.trim(), debit: 0, credit: b.amount } });
-    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Payment recorded", entityType: "Customer", entityId: c.name, newValue: `₹${b.amount} via ${b.method}` });
-    await notify(tx, { text: `Payment ₹${b.amount.toLocaleString("en-IN")} received from ${c.name}`, kind: "OK", role: "SALES_EXECUTIVE" });
+
+    // The direct-settlement leg, when there is one. Our reference is the only
+    // thing the two halves have in common, and it names neither party — so the
+    // firm's statement and the supplier's payment can be put back together a
+    // year from now without either of them ever appearing on the other's paper.
+    let settlementId: string | null = null;
+    if (vendor) {
+      settlementId = await nextSettlementNo(tx);
+      await tx.settlement.create({ data: { id: settlementId, customerId: c.id, vendorId: vendor.id, amount: b.amount, at: date, note: b.settlementNote, by: req.user!.name } });
+      await tx.vendorPayment.create({ data: { vendorId: vendor.id, date, amount: b.amount, ref: settlementId, settlementId } });
+    }
+
+    await tx.payment.create({ data: { id, customerId: c.id, date, amount: b.amount, method: b.method, ref: b.ref, proofUrl, settlementId, by: req.user!.name } });
+    // What the firm sees on its own statement. Deliberately says nothing about
+    // where the money went — that is our arrangement, not theirs.
+    const particular = settlementId
+      ? `Payment received · ${b.method} ${b.ref} · Ref ${settlementId}`.replace(/\s+/g, " ").trim()
+      : `Payment received · ${b.method} ${b.ref}`.trim();
+    await tx.ledgerEntry.create({ data: { customerId: c.id, date, type: "PAYMENT", ref: id, particular, debit: 0, credit: b.amount } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: settlementId ? "Payment settled direct to a supplier" : "Payment recorded", entityType: "Customer", entityId: c.name, newValue: `₹${b.amount} via ${b.method}`, reason: settlementId ? `${settlementId} — paid straight to ${vendor!.name}${b.settlementNote ? " · " + b.settlementNote : ""}` : "" });
+    await notify(tx, { text: settlementId ? `₹${b.amount.toLocaleString("en-IN")} from ${c.name} settled direct to a supplier — ${settlementId}` : `Payment ₹${b.amount.toLocaleString("en-IN")} received from ${c.name}`, kind: "OK", role: "ACCOUNTS_MANAGER" });
     const out = outstanding(await ledgerLines(c.id));
     let autoLifted = false;
     if (c.blockReason && out <= D(c.creditLimit)) {
@@ -243,9 +295,24 @@ router.post("/payments", requirePerm("payment.create"), asyncHandler(async (req,
       await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Temporary block lifted", entityType: "Customer", entityId: c.name, oldValue: "Blocked", newValue: "Active", reason: "Outstanding cleared below limit — auto-lifted on receipt" });
       autoLifted = true;
     }
-    return { receiptNo: id, outstanding: out, autoLifted };
+    return { receiptNo: id, outstanding: out, autoLifted, settlementId, proofUrl };
   });
   res.status(201).json(out);
+}));
+
+// The reconciliation view, and the only place in the system where both halves
+// of a settlement appear together. It is behind ledger.view because that is
+// what it is: our books, not either party's.
+router.get("/settlements", requirePerm("ledger.view"), asyncHandler(async (_req, res) => {
+  const rows = await prisma.settlement.findMany({
+    include: {
+      customer: { select: { id: true, name: true, code: true } },
+      vendor: { select: { id: true, name: true } },
+      payment: { select: { id: true, method: true, ref: true, proofUrl: true } },
+    },
+    orderBy: { at: "desc" },
+  });
+  res.json(rows.map((r) => ({ ...r, amount: D(r.amount) })));
 }));
 
 router.get("/gst-summary", requirePerm("ledger.view"), asyncHandler(async (_req, res) => {

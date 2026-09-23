@@ -10,6 +10,7 @@ import { DF, Section, ModalFrame, Field, Note, Bar, Timeline, Num } from "./ui";
 import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
 import { Icon } from "./icons";
+import { Qr } from "./Qr";
 import type { Customer, ItemView } from "./types";
 
 const SPEC: Record<string, string> = { colours: "Colours", ink: "Ink brand", company: "Machine company", roller: "Roller cloth", chem: "Chemicals brand", industry: "Industry", model: "Model" };
@@ -33,7 +34,7 @@ export function CustomerDetail({ id }: { id: string }) {
     <PageHead
       crumb={["Sales", "Customers", c.name]}
       title={c.name}
-      sub={<>{c.contactName} · {c.tehsil}, Rajasthan · {c.group} · <span className="tab">{c.referCode}</span></>}
+      sub={<>{c.code ? <><span className="tab">{c.code}</span> · </> : null}{c.contactName} · {c.tehsil}, Rajasthan · {c.group} · <span className="tab">{c.referCode}</span></>}
       actions={<>
         <button className="b b-o" onClick={() => router.push("/customers")}><Icon n="chevronL" s={13} /> Back to customers</button>
         {can("cust.edit") && <button className="b b-p" onClick={() => openModal(<CustomerForm customer={c} />, "w")}>Edit firm</button>}
@@ -50,6 +51,7 @@ export function CustomerDetail({ id }: { id: string }) {
         <div>
           <div className="pn"><div className="pnb">
             <Section t="Firm">
+              <DF k="Our number" v={c.code ?? "—"} mono />
               <DF k="Contact" v={c.contactName} /><DF k="Phone" v={c.phone} /><DF k="Tehsil / district" v={c.tehsil + ", Rajasthan"} /><DF k="Address" v={`${c.address}, ${c.tehsil}`} />
               <DF k="GSTIN" v={c.gstin ?? "—"} mono /><DF k="Firm type" v={c.firmType} /><DF k="Pricing group" v={`${c.group} · ×${c.multiplier}`} />
               {!!c.priceAdjPct && <DF k="Firm discount" v={`${c.priceAdjPct}% off the group rate`} />}
@@ -221,12 +223,143 @@ function OverrideModal({ c }: { c: Full }) {
   </ModalFrame>;
 }
 
-export function PaymentModal({ customerId }: { customerId?: string }) { const { closeModal, toast } = useUI(); const { data: custs } = useApi<Customer[]>("/api/customers");
-  const [f, setF] = useState(() => ({ customerId: customerId ?? "", amount: 25000, method: "UPI", ref: "REF" + (880900 + Math.floor(Math.random() * 900)), date: new Date().toISOString().slice(0, 10) }));
-  const go = async () => { try { const r = await post<{ receiptNo: string; outstanding: number; autoLifted: boolean }>("/api/ledger/payments", { ...f, customerId: f.customerId || custs?.[0]?.id, amount: Number(f.amount) }); toast(`Receipt ${r.receiptNo} posted · outstanding now ${money(r.outstanding)}${r.autoLifted ? " · block auto-lifted" : ""}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
-  return <ModalFrame title="Record payment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Post receipt</button></>}>
-    <div className="fg"><Field label="Firm" full><select value={f.customerId || custs?.[0]?.id || ""} onChange={(e) => setF({ ...f, customerId: e.target.value })}>{custs?.map((c) => <option key={c.id} value={c.id}>{c.name} — outstanding {money(c.gate.out)}</option>)}</select></Field><Field label="Amount (₹)"><Num value={f.amount} onChange={(val) => setF({ ...f, amount: val })} /></Field><Field label="Method"><select value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}><option>UPI</option><option>NEFT</option><option>Cheque</option><option>Cash</option></select></Field><Field label="Reference"><input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} /></Field><Field label="Date"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field></div>
-    <Note style={{ marginTop: 11 }}>Receipts allocate oldest-invoice-first by default. Any unallocated amount sits as on-account credit.</Note>
+// Local time as an <input type="datetime-local"> wants it.
+const localNow = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+
+// A phone screenshot is several megabytes of four-thousand-pixel image and what
+// is wanted is a readable receipt. Redrawn before it leaves the browser, the
+// same as an item photograph.
+function shrinkShot(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("Could not read that file"));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That file is not an image we can read"));
+      img.onload = () => {
+        const scale = Math.min(1, 1400 / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const c = document.createElement("canvas"); c.width = w; c.height = h;
+        const ctx = c.getContext("2d");
+        if (!ctx) return reject(new Error("Could not process that image"));
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", 0.82));
+      };
+      img.src = String(fr.result);
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+interface PayVendor { id: string; code?: string | null; name: string; upiId?: string | null; outstanding: number }
+
+export function PaymentModal({ customerId }: { customerId?: string }) {
+  const { closeModal, toast } = useUI();
+  const { data: custs } = useApi<Customer[]>("/api/customers");
+  const { data: vendors } = useApi<PayVendor[]>("/api/masters/vendors");
+  const [f, setF] = useState(() => ({ customerId: customerId ?? "", amount: 25000, method: "UPI", ref: "", at: localNow() }));
+  const [proof, setProof] = useState<string | null>(null);
+  const [direct, setDirect] = useState(false);
+  const [vendorId, setVendorId] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Only suppliers we still owe money to can absorb a settlement — paying one
+  // we owe nothing would just create a debit balance nobody asked for.
+  const owed = (vendors ?? []).filter((v) => v.outstanding > 0);
+  const vendor = owed.find((v) => v.id === vendorId) ?? owed[0] ?? null;
+
+  const addProof = async (file: File | undefined) => {
+    if (!file) return;
+    try { setProof(await shrinkShot(file)); } catch (e) { toast(errMsg(e), "e"); }
+  };
+
+  // What the customer's UPI app is pointed at. The payee name rides inside the
+  // QR — UPI has no way to hide it — so this is the one thing about the
+  // arrangement the customer can see, and saying so is better than pretending.
+  const upiLink = vendor?.upiId
+    ? `upi://pay?pa=${encodeURIComponent(vendor.upiId)}&pn=${encodeURIComponent(vendor.name)}&am=${Number(f.amount) || 0}&cu=INR&tn=${encodeURIComponent(note.trim() || "Payment")}`
+    : null;
+
+  const go = async () => {
+    if (!Number(f.amount)) return toast("Enter the amount received", "e");
+    if (direct && !vendor) return toast("Choose the supplier the money went to", "e");
+    if (direct && Number(f.amount) > (vendor?.outstanding ?? 0)) {
+      return toast(`We only owe ${vendor!.name} ${money(vendor!.outstanding)} — settle the rest another way`, "e");
+    }
+    setBusy(true);
+    try {
+      const r = await post<{ receiptNo: string; outstanding: number; autoLifted: boolean; settlementId: string | null }>("/api/ledger/payments", {
+        customerId: f.customerId || custs?.[0]?.id,
+        amount: Number(f.amount), method: f.method, ref: f.ref,
+        date: new Date(f.at).toISOString(),
+        proof: proof ?? undefined,
+        toVendorId: direct && vendor ? vendor.id : undefined,
+        settlementNote: note.trim(),
+      });
+      toast(r.settlementId
+        ? `Receipt ${r.receiptNo} posted and settled direct — our reference ${r.settlementId}. Outstanding now ${money(r.outstanding)}`
+        : `Receipt ${r.receiptNo} posted · outstanding now ${money(r.outstanding)}${r.autoLifted ? " · block auto-lifted" : ""}`, "s");
+      closeModal(); refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  return <ModalFrame title="Record payment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={go}>Post receipt</button></>}>
+    <div className="fg">
+      <Field label="Firm" full><select value={f.customerId || custs?.[0]?.id || ""} onChange={(e) => setF({ ...f, customerId: e.target.value })}>{custs?.map((c) => <option key={c.id} value={c.id}>{c.code ? `${c.code} · ` : ""}{c.name} — outstanding {money(c.gate.out)}</option>)}</select></Field>
+      <Field label="Amount (₹)"><Num value={f.amount} onChange={(val) => setF({ ...f, amount: val })} /></Field>
+      <Field label="Method"><select value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}><option>UPI</option><option>NEFT</option><option>Cheque</option><option>Cash</option></select></Field>
+      <Field label="Reference" hint="UTR or cheque number, if there is one"><input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} placeholder="e.g. 431902847115" /></Field>
+      {/* Date and time. Two transfers of the same amount from one firm on one
+          afternoon are told apart by the clock and by nothing else. */}
+      <Field label="Received at" hint="Date and time"><input type="datetime-local" value={f.at} onChange={(e) => setF({ ...f, at: e.target.value })} /></Field>
+    </div>
+
+    <div className="st" style={{ marginTop: 14 }}>Proof</div>
+    <div className="sm" style={{ marginBottom: 8 }}>The screenshot the customer sent. A UTR typed off a phone screen is wrong often enough that the picture is the evidence, not the note.</div>
+    <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
+      {proof && <div style={{ position: "relative" }}>
+        <img src={proof} alt="Payment proof" style={{ width: 96, height: 120, objectFit: "cover", borderRadius: 6, border: "1px solid var(--bd)" }} />
+        <button className="b b-g b-s" style={{ position: "absolute", top: 3, right: 3 }} onClick={() => setProof(null)} title="Remove"><Icon n="x" s={10} /></button>
+      </div>}
+      {!proof && <label className="b b-o b-s" style={{ cursor: "pointer" }}>
+        + Attach screenshot
+        <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { addProof(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>}
+    </div>
+
+    <div className="st" style={{ marginTop: 16 }}>Where the money went</div>
+    <label className="sm" style={{ display: "flex", alignItems: "center", gap: 7, margin: "7px 0 4px" }}>
+      <input className="ck" type="checkbox" checked={direct} onChange={(e) => setDirect(e.target.checked)} />
+      The firm paid one of our suppliers directly, against this bill
+    </label>
+    {!direct
+      ? <div className="sm">Into our own account. Receipts allocate oldest-invoice-first; any unallocated amount sits as on-account credit.</div>
+      : <>
+        {owed.length === 0
+          ? <Note k="w" style={{ marginTop: 8 }}>We do not owe any supplier at the moment, so there is nothing for this payment to settle against.</Note>
+          : <>
+            <div className="fg" style={{ marginTop: 8 }}>
+              <Field label="Supplier the money reached" full>
+                <select value={vendor?.id ?? ""} onChange={(e) => setVendorId(e.target.value)}>
+                  {owed.map((v) => <option key={v.id} value={v.id}>{v.code ? `${v.code} · ` : ""}{v.name} — we owe {money(v.outstanding)}</option>)}
+                </select>
+              </Field>
+              <Field label="Note for our own records" full hint="Kept on the settlement. Neither side sees it."><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. against their October consignment" /></Field>
+            </div>
+            {upiLink
+              ? <div style={{ display: "flex", gap: 14, alignItems: "flex-start", marginTop: 10 }}>
+                <Qr value={upiLink} size={132} />
+                <div className="sm" style={{ flex: 1 }}>
+                  <b>Show this to the customer.</b> It is set to {money(Number(f.amount) || 0)} and pays {vendor!.name} directly.
+                  <div style={{ marginTop: 7 }}>Posting this credits the firm&apos;s account and reduces what we owe that supplier, in one act. The firm&apos;s statement shows a payment received and our reference — never the supplier. The supplier&apos;s payment carries the same reference and never names the firm.</div>
+                  <div style={{ marginTop: 7, color: "var(--wa)" }}>One thing this cannot hide: a UPI QR carries the payee&apos;s name, so the customer will see who they are paying inside their own app. What is controlled here is what this system discloses and what the paperwork says.</div>
+                </div>
+              </div>
+              : <Note k="w" style={{ marginTop: 10 }}>{vendor?.name} has no UPI ID on file, so there is no QR to show. Add it under Purchase → Vendors, or take the payment the usual way.</Note>}
+          </>}
+      </>}
   </ModalFrame>;
 }
 
@@ -289,7 +422,7 @@ type FormMachine = { type: string; spec: Record<string, string> };
 export function CustomerForm({ customer }: { customer?: Customer } = {}) { const { closeModal, toast } = useUI(); const { data: lines } = useLines(); const { data: tehsils } = useApi<string[]>("/api/masters/tehsils"); const { data: execs } = useApi<{ id: string; name: string }[]>("/api/masters/sales-execs"); const { data: groups } = useApi<{ name: string; multiplier: number }[]>("/api/masters/pricing-groups");
   const edit = !!customer;
   const [f, setF] = useState({
-    name: customer?.name ?? "", contactName: customer?.contactName ?? "", phone: customer?.phone ?? "",
+    name: customer?.name ?? "", code: customer?.code ?? "", contactName: customer?.contactName ?? "", phone: customer?.phone ?? "",
     tehsil: customer?.tehsil ?? "Bikaner", gstin: customer?.gstin ?? "", firmType: customer?.firmType ?? "Registered",
     address: customer?.address ?? "", linesEnabled: customer?.linesEnabled ?? [], group: customer?.group ?? "Regular",
     salesExecId: customer?.salesExecId ?? "", creditLimit: customer?.creditLimit ?? 150000, creditDays: customer?.creditDays ?? 30,
@@ -322,6 +455,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
     // touched should not be able to fail the save.
     const body = {
       ...f, linesEnabled: enabled, salesExecId: f.salesExecId || null, gstin: f.gstin || undefined,
+      code: f.code.trim() || null,
       creditLimit: Number(f.creditLimit) || 0, creditDays: Number(f.creditDays) || 0,
       priceAdjPct: Number(f.priceAdjPct) || 0,
       contacts: clean, machines: machines.filter((m) => m.type),
@@ -335,7 +469,7 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
   };
 
   return <ModalFrame title={edit ? `Edit — ${customer!.name}` : "New customer"} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>{edit ? "Save changes" : "Save customer"}</button></>}>
-    <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *" hint="The firm's primary number — more can be added below"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field>{!edit && <Field label="Referred by — refer code" hint="The code on the referring firm's account. Leave blank if they walked in."><input value={f.referredByCode} onChange={(e) => setF({ ...f, referredByCode: e.target.value.toUpperCase() })} placeholder="VIVAHA-RJ4137" style={{ fontFamily: "var(--mono)" }} /></Field>}<Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
+    <div className="fg"><Field label="Firm name *"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Marwar Card Bhandar" /></Field><Field label="Your number for them" hint="The number this firm has always been known by in your own books — searchable, and shown beside the name"><input value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} placeholder="e.g. A-12" /></Field><Field label="Owner name *"><input value={f.contactName} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field><Field label="Phone *" hint="The firm's primary number — more can be added below"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91 94141 00000" /></Field><Field label="Tehsil / gram panchayat *"><select value={f.tehsil} onChange={(e) => setF({ ...f, tehsil: e.target.value })}>{tehsils?.map((t) => <option key={t}>{t}</option>)}</select></Field><Field label="GSTIN"><input value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value })} placeholder="08ABCDE1234F1Z5" /></Field>{!edit && <Field label="Referred by — refer code" hint="The code on the referring firm's account. Leave blank if they walked in."><input value={f.referredByCode} onChange={(e) => setF({ ...f, referredByCode: e.target.value.toUpperCase() })} placeholder="VIVAHA-RJ4137" style={{ fontFamily: "var(--mono)" }} /></Field>}<Field label="Firm type"><select value={f.firmType} onChange={(e) => setF({ ...f, firmType: e.target.value })}><option>Registered</option><option>Composition</option><option>Unregistered</option></select></Field>
       <Field label="Address" full><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="Shop / street / landmark" /></Field>
       <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div>
         <LineProducts enabled={f.linesEnabled} /></Field>

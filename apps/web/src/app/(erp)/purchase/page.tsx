@@ -32,7 +32,7 @@ export const allocToPlaces = (alloc: Record<string, number> | undefined, places:
   places?.length ? places.map((p) => ({ godownId: p.godownId, rack: p.rack ?? "", qty: p.qty }))
     : Object.entries(alloc ?? {}).filter(([, q]) => q > 0).map(([godownId, qty]) => ({ godownId, rack: "", qty }));
 
-interface Vendor { id: string; name: string; gstin: string | null; terms: string; city: string; phone: string; documents: number; purchased: number; invoiced: number; paid: number; outstanding: number; oldestDays: number }
+interface Vendor { id: string; code?: string | null; upiId?: string | null; name: string; gstin: string | null; terms: string; city: string; phone: string; documents: number; purchased: number; invoiced: number; paid: number; outstanding: number; oldestDays: number }
 
 export default function PurchasePage() {
   const { line } = useAppState(); const { can } = useAuth(); const { openModal } = useUI(); const router = useRouter();
@@ -49,7 +49,7 @@ export default function PurchasePage() {
         <div className="gw"><table className="dg"><thead><tr><th>Document</th><th>Vendor</th><th>Date</th><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Freight</th><th className="n">Value</th><th>Godown split</th><th>Status</th></tr></thead><tbody>
           {pg.rows.map((p) => { const l = p.lines[0]; return <tr key={p.id} onClick={() => router.push(`/purchase/${p.id}`)}><td><span className="rid">{p.invNo}</span><div className="sm">{p.id}</div></td><td className="w">{p.vendor.name}<div className="sm">{p.vendor.gstin}</div></td><td className="tab">{fDate(p.date)}</td><td className="w">{l?.item.name}<div className="sm">{l ? itemRef(l.item) : ""}{p.lines.length > 1 ? ` +${p.lines.length - 1}` : ""}</div></td><td className="n tab">{num(l?.qty)}</td><td className="n tab">{money(l?.rate)}</td><td className="n tab">{money(p.freight)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(p.total + p.freight)}</td><td className="sm">{l && Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => g.replace("GD-", "") + ":" + num(l.alloc[g])).join(" · ") : "—"}</td><td><Pill s={p.status} /></td></tr>; })}
         </tbody></table></div></>}
-      {tab === "vend" && <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>GSTIN</th><th>City</th><th>Terms</th><th>Phone</th><th className="n">Documents</th><th className="n">Purchased</th><th></th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} onClick={() => can("purchase.create") && openModal(<VendorForm vendor={v} />)} style={{ cursor: can("purchase.create") ? "pointer" : "default" }}><td>{v.name}</td><td className="sm">{v.gstin}</td><td>{v.city}</td><td>{v.terms}</td><td className="sm">{v.phone}</td><td className="n tab">{v.documents}</td><td className="n tab">{money(v.purchased)}</td><td>{can("purchase.create") && <button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); openModal(<VendorForm vendor={v} />); }}>Edit</button>}</td></tr>)}</tbody></table></div>}
+      {tab === "vend" && <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>Code</th><th>GSTIN</th><th>City</th><th>Terms</th><th>Phone</th><th className="n">Documents</th><th className="n">Purchased</th><th></th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} onClick={() => can("purchase.create") && openModal(<VendorForm vendor={v} />)} style={{ cursor: can("purchase.create") ? "pointer" : "default" }}><td>{v.name}</td><td className="tab">{v.code ?? <span className="sm">—</span>}</td><td className="sm">{v.gstin}</td><td>{v.city}</td><td>{v.terms}</td><td className="sm">{v.phone}</td><td className="n tab">{v.documents}</td><td className="n tab">{money(v.purchased)}</td><td>{can("purchase.create") && <button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); openModal(<VendorForm vendor={v} />); }}>Edit</button>}</td></tr>)}</tbody></table></div>}
       {tab === "pay" && <><Note style={{ marginBottom: 11 }}>Vendor payables mirror the customer ledger: an invoice posts a credit, a payment posts a debit, ageing runs from the invoice date.</Note>
         <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>Terms</th><th className="n">Invoiced</th><th className="n">Paid</th><th className="n">Outstanding</th><th className="n">Oldest</th><th></th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} style={{ cursor: "default" }}><td>{v.name}</td><td>{v.terms}</td><td className="n tab">{money(v.invoiced)}</td><td className="n tab" style={{ color: "var(--ok)" }}>{money(v.paid)}</td><td className="n tab" style={{ fontWeight: 700, color: "var(--t9)" }}>{money(v.outstanding)}</td><td className="n tab" style={{ color: v.oldestDays > 60 ? "var(--er)" : "var(--t6)" }}>{v.oldestDays} d</td><td>{can("purchase.create") && <button className="b b-o b-s" onClick={() => openModal(<VendorPayModal v={v} />)}>Pay</button>}</td></tr>)}</tbody></table></div></>}
     </div>
@@ -440,12 +440,12 @@ function VendorInline({ onDone, onCancel }: { onDone: (v: Vendor) => void; onCan
 export function VendorForm({ vendor }: { vendor?: Vendor } = {}) {
   const { closeModal, toast } = useUI();
   const [busy, setBusy] = useState(false);
-  const [v, setV] = useState({ name: vendor?.name ?? "", gstin: vendor?.gstin ?? "", terms: vendor?.terms ?? "Net 30", city: vendor?.city ?? "", phone: vendor?.phone ?? "" });
+  const [v, setV] = useState({ name: vendor?.name ?? "", code: vendor?.code ?? "", gstin: vendor?.gstin ?? "", terms: vendor?.terms ?? "Net 30", city: vendor?.city ?? "", phone: vendor?.phone ?? "", upiId: vendor?.upiId ?? "" });
   const save = async () => {
     if (!v.name.trim()) return toast("The vendor needs a name", "e");
     setBusy(true);
     try {
-      const body = { ...v, name: v.name.trim(), gstin: v.gstin || undefined };
+      const body = { ...v, name: v.name.trim(), gstin: v.gstin || undefined, code: v.code.trim() || null, upiId: v.upiId.trim() || null };
       if (vendor) { await patch(`/api/masters/vendors/${vendor.id}`, body); toast(`${v.name} updated`, "s"); }
       else { await post("/api/masters/vendors", body); toast(`${v.name} added`, "s"); }
       closeModal(); refresh("/api/masters/vendors");
@@ -455,10 +455,12 @@ export function VendorForm({ vendor }: { vendor?: Vendor } = {}) {
     actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={save}>{vendor ? "Save changes" : "Add vendor"}</button></>}>
     <div className="fg">
       <Field label="Vendor name *"><input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></Field>
+      <Field label="Your number for them" hint="The code the office says out loud — searchable"><input value={v.code} onChange={(e) => setV({ ...v, code: e.target.value })} placeholder="e.g. S-14" /></Field>
       <Field label="GSTIN"><input value={v.gstin} onChange={(e) => setV({ ...v, gstin: e.target.value })} placeholder="33AABCS1429K1Z2" /></Field>
       <Field label="City"><input value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} /></Field>
       <Field label="Payment terms"><select value={v.terms} onChange={(e) => setV({ ...v, terms: e.target.value })}>{["Advance", "Net 15", "Net 30", "Net 45", "Net 60"].map((t) => <option key={t}>{t}</option>)}</select></Field>
-      <Field label="Phone" full><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} /></Field>
+      <Field label="Phone"><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} /></Field>
+      <Field label="UPI ID" full hint="Only used when a customer is asked to settle their bill by paying this supplier directly. Never shown to the customer by this system."><input value={v.upiId} onChange={(e) => setV({ ...v, upiId: e.target.value })} placeholder="name@bank" /></Field>
     </div>
     {vendor
       ? <Note style={{ marginTop: 11 }}>{vendor.documents} document{vendor.documents === 1 ? "" : "s"} name this vendor. They keep the figures they were billed at — only the vendor record changes.</Note>

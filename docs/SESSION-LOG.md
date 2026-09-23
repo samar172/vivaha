@@ -6,6 +6,61 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-23 (evening) — Receipts with evidence, and money that takes one journey
+
+### A receipt now carries a time and a photograph
+
+`Payment.date` held a day. Two UPI transfers of the same amount from the same
+firm on one afternoon were told apart by nothing, and "which of these two is he
+asking about" is a question the counter gets. It carries the clock now.
+
+And the screenshot. A UTR typed off a phone screen is wrong often enough that
+the picture is the evidence and the typed reference is the note — so the
+screenshot is attached to the receipt, downscaled in the browser first, stored
+the way an item photograph is.
+
+### Money that takes one journey instead of two
+
+The firm owes us; we owe a supplier. Rather than the money coming to us and
+going out again, the customer is shown a QR and pays the supplier directly,
+against his own bill with us.
+
+`Settlement` is that single act with two legs. Posting one credits the firm's
+ledger and reduces our payable to that supplier, in one transaction. Neither
+side is told about the other: the firm's statement says a payment was received
+and carries **our** reference, never the supplier; the supplier's payment
+carries the same reference and never names the firm. `STL-0007` is ours, and the
+only thing the two halves have in common, so a year from now they can still be
+put back together — `/api/ledger/settlements` is the only place both appear.
+
+Two guards the office would otherwise discover the hard way: a settlement
+cannot exceed what we actually owe that supplier, and cannot be made against a
+supplier we owe nothing — that would be a loan, not a settlement, and nobody
+meant to make one. Enforced on the server, not only in the form.
+
+**One thing the software cannot fix, stated on the screen rather than glossed
+over:** a UPI QR carries the payee's name, so the customer will see who he is
+paying inside his own app. What is controlled here is what this system
+discloses and what the paperwork says.
+
+### A number the office actually says out loud
+
+`CUST-101` is the system's key and nobody at the counter thinks in it. Customers
+and suppliers both take the firm's own number now — a khata number, a ledger
+folio, whatever is written on the bahi — unique, shown beside the name, and
+searchable, which is the point of having one.
+
+### Verified
+
+19 checks in `scripts/check_settlement.py`, now in the repo and idempotent
+across runs: both ledgers moving by the same amount off one act, the firm's
+statement carrying our reference and not the supplier's name, the supplier's
+payment carrying it back, the reconciliation view tying the halves, both
+refusals, the proof stored and the clock kept. `scripts/check_money.py` still
+passes, so the invoice path is unchanged.
+
+---
+
 ## 2026-09-23 (later) — Five things the office could not do
 
 ### A number field you could not empty

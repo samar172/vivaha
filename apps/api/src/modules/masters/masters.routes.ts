@@ -170,14 +170,29 @@ router.get("/vendors", asyncHandler(async (_req, res) => {
     const invoiced = v.purchases.reduce((s, p) => s + D(p.total) + D(p.freight), 0);
     const paid = v.payments.reduce((s, p) => s + D(p.amount), 0);
     const oldest = v.purchases.length ? Math.max(...v.purchases.map((p) => Math.floor((Date.now() - p.date.getTime()) / 864e5))) : 0;
-    return { id: v.id, name: v.name, gstin: v.gstin, terms: v.terms, city: v.city, phone: v.phone, documents: v.purchases.length, purchased: v.purchases.reduce((s, p) => s + D(p.total), 0), invoiced, paid, outstanding: invoiced - paid, oldestDays: oldest };
+    return { id: v.id, code: v.code, upiId: v.upiId, name: v.name, gstin: v.gstin, terms: v.terms, city: v.city, phone: v.phone, documents: v.purchases.length, purchased: v.purchases.reduce((s, p) => s + D(p.total), 0), invoiced, paid, outstanding: invoiced - paid, oldestDays: oldest };
   }));
 }));
-const vendorSchema = z.object({ name: z.string().min(1), gstin: z.string().optional(), terms: z.string().default("Net 30"), city: z.string().default(""), phone: z.string().default("") });
+const vendorSchema = z.object({
+  name: z.string().min(1), gstin: z.string().optional(), terms: z.string().default("Net 30"),
+  city: z.string().default(""), phone: z.string().default(""),
+  // The office's own number for this supplier, and where a customer can be
+  // pointed to pay them directly.
+  code: z.string().trim().max(24).optional().nullable(),
+  upiId: z.string().trim().max(120).optional().nullable(),
+});
+
+/** A number that is already on another supplier's account is a real mix-up. */
+async function guardVendorCode(code: string | null, exceptId?: string) {
+  if (!code) return;
+  const clash = await prisma.vendor.findFirst({ where: { code, ...(exceptId ? { id: { not: exceptId } } : {}) }, select: { name: true } });
+  if (clash) throw badRequest(`${clash.name} already has the number ${code}`);
+}
 router.post("/vendors", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
   const b = vendorSchema.parse(req.body);
+  await guardVendorCode(b.code?.trim() || null);
   const n = await prisma.vendor.count();
-  const v = await prisma.vendor.create({ data: { id: `VND-${String(n + 1).padStart(2, "0")}`, ...b } });
+  const v = await prisma.vendor.create({ data: { id: `VND-${String(n + 1).padStart(2, "0")}`, ...b, code: b.code?.trim() || null, upiId: b.upiId?.trim() || null } });
   res.status(201).json(v);
 }));
 
@@ -192,7 +207,8 @@ router.patch("/vendors/:id", requirePerm("purchase.create"), asyncHandler(async 
     const clash = await prisma.vendor.findFirst({ where: { name: { equals: b.name.trim(), mode: "insensitive" }, id: { not: before.id } } });
     if (clash) throw badRequest(`${clash.name} is already on file`);
   }
-  const v = await prisma.vendor.update({ where: { id: before.id }, data: { ...b, ...(b.name ? { name: b.name.trim() } : {}) } });
+  if (b.code !== undefined) await guardVendorCode(b.code?.trim() || null, before.id);
+  const v = await prisma.vendor.update({ where: { id: before.id }, data: { ...b, ...(b.name ? { name: b.name.trim() } : {}), ...(b.code !== undefined ? { code: b.code?.trim() || null } : {}), ...(b.upiId !== undefined ? { upiId: b.upiId?.trim() || null } : {}) } });
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Vendor updated", entityType: "Vendor", entityId: v.id,
                         oldValue: `${before.name} · ${before.terms} · ${before.gstin ?? "no GSTIN"}`,
                         newValue: `${v.name} · ${v.terms} · ${v.gstin ?? "no GSTIN"}` });

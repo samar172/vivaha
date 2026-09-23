@@ -38,6 +38,7 @@ export const nextPurchaseNo = async (db: Db) => `PO-${await nextSeq(db, "PO")}`;
 export const nextTransferNo = async (db: Db) => `TRF-${await nextSeq(db, "TRF")}`;
 export const nextReturnNo = async (db: Db) => `RET-${await nextSeq(db, "RET")}`;
 export const nextReceiptNo = async (db: Db) => `RCPT-${await nextSeq(db, "RCPT")}`;
+export const nextSettlementNo = async (db: Db) => `STL-${String(await nextSeq(db, "STL")).padStart(4, "0")}`;
 export const nextJobNo = async (db: Db) => `JOB-${await nextSeq(db, "JOB")}`;
 export const nextCustomerNo = async (db: Db) => `CUST-${await nextSeq(db, "CUST")}`;
 export const nextItemNo = async (db: Db, prefix: string) => `${prefix}-${await nextSeq(db, "ITM-" + prefix)}`;
