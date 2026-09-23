@@ -7,6 +7,7 @@ import { useLang } from "@/lib/i18n";
 import { useUI } from "@/lib/ui";
 import { Sect } from "@/components/portal/Bits";
 import { Bar } from "@/components/ui";
+import { InstallButton } from "@/components/InstallApp";
 const SPEC: Record<string, string> = { colours: "रंग", ink: "स्याही", company: "कंपनी", roller: "रोलर क्लॉथ", chem: "केमिकल", industry: "इंडस्ट्री", model: "मॉडल" };
 export default function AccountPage() {
   const { data } = useApi<{ firm: { name: string; contactName: string; phone: string; tehsil: string; gstin: string | null; group: string; creditLimit: number; creditDays: number; salesExec: { name: string } | null; machines: { id: string; type: string; spec: Record<string, string> }[] }; gate: CreditGate; ageing: { buckets: number[]; labels: string[] }; statement: { id: string; date: string; particular: string; debit: number; credit: number; bal: number }[] }>("/api/portal/account"); const { toast } = useUI(); const { user } = useAuth(); const { lang, t } = useLang();
@@ -21,5 +22,16 @@ export default function AccountPage() {
         <div className={"sm" + (lang === "hi" ? " hi" : "")}>{t("billsNote")}</div>
       </div>
       <span style={{ fontSize: 18, opacity: .5 }}>›</span>
-    </Link>}</>;
+    </Link>}
+    {/* A retailer who waved the card away a fortnight ago still wants the app;
+        this is the door that is always there. */}
+    <div className="blk">
+      <div className={"lb" + (lang === "hi" ? " hi" : "")}>{lang === "hi" ? "ऐप इंस्टॉल करें" : "Install the app"}</div>
+      <div className={"sm" + (lang === "hi" ? " hi" : "")} style={{ margin: "4px 0 9px" }}>
+        {lang === "hi"
+          ? "दुकान को फ़ोन की होम स्क्रीन पर लगाएँ — पूरी स्क्रीन पर खुलेगी, बिना एड्रेस बार।"
+          : "Put the shop on your phone's home screen — it opens full screen, without the address bar."}
+      </div>
+      <InstallButton hindi={lang === "hi"} className="b b-p b-f" />
+    </div></>;
 }

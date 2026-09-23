@@ -544,6 +544,11 @@ input[type=number]{-moz-appearance:textfield}
   .insa .b-s{min-height:34px}
 }
 
+/* Instructions shown beside a manual Install button, for the browsers that
+   have no install event and only their own menu. */
+.inss{margin-top:8px;border:1px solid var(--bd);background:var(--panel-2);border-radius:7px;padding:9px 11px}
+.inss p{font-size:12.8px;line-height:1.55;color:var(--t6);margin:0}
+
 /* ============ ONE-TIME PASSWORD CARD (portal) ============ */
 /* Shown once, read off a phone at arm's length, then gone. It sits above the
    bottom nav and the cart sheet, because nothing else matters while it is up. */

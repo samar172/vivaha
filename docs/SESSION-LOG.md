@@ -6,6 +6,60 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-23 — Why the install prompt never appeared on a phone
+
+Reported as "works on desktop, not on mobile". Three separate faults, every one
+of them invisible on a desktop, and a fourth found while fixing them.
+
+**The event was arriving before React did.** Chrome fires `beforeinstallprompt`
+once, early. On a handset it routinely fires while the page is still hydrating,
+so the listener React attached afterwards got nothing — and the old code called
+`preventDefault()` on that event, which also suppresses Chrome's own mini-
+infobar. A missed event therefore left the user with no door at all: no card,
+and no infobar either. It is now captured in a boot script that runs while the
+document is still parsing, parked on the window, and read by whatever mounts
+later through `useSyncExternalStore` — because the offer is the browser's state,
+not React's.
+
+**No service worker on the first page anybody sees.** Registration lived inside
+the signed-in shell. A first visit lands on `/login`, which is outside it, so
+Chrome on Android — which will not offer to install a page with no service
+worker — was being asked to install a page that had none. Registered from the
+boot script now, on every page, signed in or not.
+
+**The shop was being offered as the office.** `/portal` was served with the ERP
+manifest in its HTML and only swapped after hydration, so a retailer could be
+offered `start_url: /dashboard`. The boot script sets it from the path before
+Chrome reads it, and `ManifestForRoute` keeps it in step afterwards — a visitor
+bounced from `/portal` to `/login` was otherwise left holding the shop's.
+
+**Silence on the browsers with no event.** iOS Safari was handled; Chrome, Edge
+and Firefox *on iOS* were not — they were treated as prompt-capable, so nothing
+ever showed. They cannot install at all: Apple allows it only from Safari, and
+saying "tap Share" in Chrome on an iPhone sends somebody looking for a button
+that will never work. They are now told to open the page in Safari. Firefox and
+Samsung Internet on Android are told where their own menu item is. Every
+browser gets an answer; none gets silence.
+
+**And a permanent door.** Any timed card can be missed or waved away, and the
+dismissal lasts a fortnight. `InstallButton` is always reachable — *Install app*
+in the office profile drawer, and on the shop's account screen — and it ignores
+the dismissal, because somebody pressing it has asked.
+
+### Verified
+
+In Chrome against the production build: the event captured on `/login` before
+any shell mounted; the service worker registered and controlling from that same
+first page; the manifest following the route through a signed-out bounce; the
+card rendering with a working Install; and — the actual reported failure —
+clearing the event mid-session leaves the card up with the browser-menu route
+rather than disappearing. The permanent button is in the drawer.
+
+Also fixed in passing: the profile drawer said "N of 26 permissions", a number
+that went stale the moment a capability was added. It counts.
+
+---
+
 ## 2026-09-18 — Correcting a bill, and capabilities given to a person
 
 Two asks, one behind the other: an edit-bill option for the Super Admin, and

@@ -1,22 +1,28 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
-// "Install this as an app" — the card that appears once, shortly after a person
-// signs in on a browser.
+// "Install this as an app."
 //
-// Two things had to be got right, because both are how these prompts usually go
-// wrong in the field:
+// The hard part of this is not the card — it is that every platform offers a
+// different door, and two of them offer none at all:
 //
-//  * Chrome and Edge fire `beforeinstallprompt` and hand over an event that can
-//    only be used from inside a user gesture. So the event is captured and held,
-//    and `prompt()` is called from the button's own click — not on a timer.
-//  * iOS Safari fires nothing at all and has no programmatic install. There the
-//    card explains the Share → "Add to Home Screen" route instead, with the
-//    steps spelled out, because the retailers on the portal are on iPhones as
-//    often as on Android.
+//   Chrome / Edge, Android and desktop  fire `beforeinstallprompt` and hand
+//     over an event that can only be used from inside a user gesture. The event
+//     is captured in the boot script in the root layout, because on a handset
+//     it routinely fires before React has hydrated; here we only read it.
+//   Safari on iOS                        fires nothing and has no programmatic
+//     install. The only route is Share → Add to Home Screen, so the card says so.
+//   Chrome / Edge / Firefox on iOS       cannot install at all. Apple allows it
+//     only from Safari. Telling somebody to "tap Share" in Chrome on an iPhone
+//     sends them looking for a button that will never work, so this says plainly
+//     that the page has to be opened in Safari.
+//   Firefox / Samsung Internet on Android  do not fire the event either, but do
+//     have "Add to Home screen" in their own menu. Named, rather than left as
+//     silence.
 //
-// A dismissal is remembered: "later" quietens it for a fortnight, "no thanks"
-// for good. Nothing shows at all once the app is actually installed.
+// And because any timed card can be missed or dismissed, the same thing is
+// always reachable by hand — Install app in the office profile drawer, and on
+// the shop's account screen. `InstallButton` is that door.
 
 const KEY = "vivaha.install.dismissed";
 const LATER_DAYS = 14;
@@ -24,6 +30,7 @@ const LATER_DAYS = 14;
 type Choice = { until: number | "never" };
 
 interface BipEvent extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
+interface InstallWindow extends Window { __vivInstall?: { evt: BipEvent | null; installed: boolean } }
 
 const readChoice = (): Choice | null => {
   try {
@@ -35,106 +42,119 @@ const readChoice = (): Choice | null => {
 };
 const writeChoice = (c: Choice) => { try { localStorage.setItem(KEY, JSON.stringify(c)); } catch { /* private window */ } };
 
-const installed = () =>
+export const alreadyInstalled = () =>
   typeof window !== "undefined" &&
-  (window.matchMedia?.("(display-mode: standalone)").matches ||
+  (!!(window as InstallWindow).__vivInstall?.installed ||
+    window.matchMedia?.("(display-mode: standalone)").matches ||
     window.matchMedia?.("(display-mode: minimal-ui)").matches ||
     (navigator as unknown as { standalone?: boolean }).standalone === true);
 
-// Safari on an iPhone or iPad, where the only route is the Share sheet. iPadOS
-// reports itself as a Mac, so touch points are the tell.
-const iosSafari = () => {
-  if (typeof navigator === "undefined") return false;
+/** Which door this browser actually has. iPadOS reports itself as a Mac, so
+ *  touch points are the tell. */
+type Door = "prompt" | "ios-safari" | "ios-other" | "menu";
+function doorFor(hasEvent: boolean): Door {
+  if (hasEvent) return "prompt";
+  if (typeof navigator === "undefined") return "menu";
   const ua = navigator.userAgent;
   const apple = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  const safari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
-  return apple && safari;
+  if (apple) return /CriOS|FxiOS|EdgiOS|OPiOS/.test(ua) ? "ios-other" : "ios-safari";
+  return "menu";
+}
+
+// Whether this browser is offering to install is not React state — it is the
+// browser's own, parked on the window by the boot script and moved by events.
+// Subscribed to rather than copied into state, so a card that mounted before
+// Chrome was ready lights up the moment it is.
+const subscribe = (fn: () => void) => {
+  const mq = window.matchMedia?.("(display-mode: standalone)");
+  window.addEventListener("viv:installable", fn);
+  window.addEventListener("viv:installed", fn);
+  mq?.addEventListener?.("change", fn);
+  return () => {
+    window.removeEventListener("viv:installable", fn);
+    window.removeEventListener("viv:installed", fn);
+    mq?.removeEventListener?.("change", fn);
+  };
 };
+// The event object's identity is stable while it is live, and both snapshots
+// are values the browser owns, so neither can loop.
+const readEvt = () => (window as InstallWindow).__vivInstall?.evt ?? null;
+const readInstalled = () => alreadyInstalled();
 
-/** Points <link rel="manifest"> at this section's manifest.
- *
- * The ERP and the shop live on one origin under different scopes, and each is
- * its own installable app — the office wants the dashboard, a retailer wants
- * the shop. The root layout links the ERP manifest; the portal swaps it for its
- * own on mount, which is before Chrome decides what is installable. */
-function useManifest(href: string) {
-  useEffect(() => {
-    const el = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-    if (!el || el.getAttribute("href") === href) return;
-    const was = el.getAttribute("href");
-    el.setAttribute("href", href);
-    return () => { if (was) el.setAttribute("href", was); };
-  }, [href]);
-}
+/** The install offer this browser has made, if any. */
+export function useInstallOffer() {
+  const evt = useSyncExternalStore(subscribe, readEvt, () => null);
+  const installed = useSyncExternalStore(subscribe, readInstalled, () => false);
+  const door = doorFor(!!evt);
 
-/** Registers the service worker. Safe to mount more than once. */
-export function useServiceWorker() {
-  useEffect(() => {
-    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-    if (location.protocol !== "https:" && location.hostname !== "localhost") return;
-    // A failed registration is not worth a toast — it only costs installability.
-    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
-  }, []);
-}
-
-export function InstallApp({ hindi = false, delayMs = 2500, manifest = "/manifest.webmanifest" }: { hindi?: boolean; delayMs?: number; manifest?: string }) {
-  useServiceWorker();
-  useManifest(manifest);
-  const [show, setShow] = useState(false);
-  // Settled at mount rather than in the effect: iOS never fires the install
-  // event, so its mode is a property of the browser, not of anything that happens.
-  const [mode] = useState<"prompt" | "ios">(() => (iosSafari() ? "ios" : "prompt"));
-  const bip = useRef<BipEvent | null>(null);
-  const t = useCallback((en: string, hi: string) => (hindi ? hi : en), [hindi]);
-
-  useEffect(() => {
-    if (installed()) return;
-    const c = readChoice();
-    if (c && (c.until === "never" || Date.now() < c.until)) return;
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const onBip = (e: Event) => {
-      // Keep the browser's own mini-infobar out of the way; the card replaces it.
-      e.preventDefault();
-      bip.current = e as BipEvent;
-      timer = setTimeout(() => setShow(true), delayMs);
-    };
-    const onInstalled = () => { setShow(false); writeChoice({ until: "never" }); };
-
-    window.addEventListener("beforeinstallprompt", onBip);
-    window.addEventListener("appinstalled", onInstalled);
-
-    // iOS has no event to wait for, so the card is offered on a timer instead.
-    if (mode === "ios") timer = setTimeout(() => setShow(true), delayMs);
-
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBip);
-      window.removeEventListener("appinstalled", onInstalled);
-      if (timer) clearTimeout(timer);
-    };
-  }, [delayMs, mode]);
-
-  if (!show) return null;
-
-  const later = () => { writeChoice({ until: Date.now() + LATER_DAYS * 864e5 }); setShow(false); };
-  const never = () => { writeChoice({ until: "never" }); setShow(false); };
-
-  const install = async () => {
-    const e = bip.current;
-    if (!e) return later();
-    setShow(false);
+  /** Returns true when the browser's own install dialog was opened, false when
+   *  there is nothing to open and the caller should show instructions instead. */
+  const prompt = useCallback(async () => {
+    const w = window as InstallWindow;
+    const e = w.__vivInstall?.evt;
+    if (!e) return false;
     try {
       await e.prompt();
       const { outcome } = await e.userChoice;
-      // A refusal in the browser's own dialog is a refusal — do not ask again
-      // for a fortnight. An acceptance is handled by `appinstalled`.
+      // The event is single-use whatever the answer; tell the store it has gone.
+      w.__vivInstall!.evt = null;
+      window.dispatchEvent(new Event("viv:installable"));
       if (outcome !== "accepted") writeChoice({ until: Date.now() + LATER_DAYS * 864e5 });
+      return true;
     } catch {
-      later();
-    } finally {
-      bip.current = null;
+      return false;
     }
+  }, []);
+
+  return { door, installed, canPrompt: !!evt, prompt };
+}
+
+/** Kept for callers that only want the service worker; registration itself now
+ *  happens in the root layout's boot script, on every page including /login. */
+export function useServiceWorker() { /* registered before hydration — see app/layout.tsx */ }
+
+function Steps({ door, hindi }: { door: Door; hindi: boolean }) {
+  const t = (en: string, hi: string) => (hindi ? hi : en);
+  if (door === "ios-safari") return <p className={hindi ? "hi" : ""}>{t(
+    "Tap Share at the bottom of Safari, then “Add to Home Screen”. It opens full screen, without the address bar.",
+    "नीचे Safari में Share (⇧) दबाएँ, फिर “Add to Home Screen” चुनें। ऐप पूरी स्क्रीन पर खुलेगा।",
+  )}</p>;
+  if (door === "ios-other") return <p className={hindi ? "hi" : ""}>{t(
+    "On an iPhone only Safari can add an app to the home screen. Open this same page in Safari, tap Share, then “Add to Home Screen”.",
+    "iPhone पर ऐप सिर्फ़ Safari से जुड़ सकता है। यही पेज Safari में खोलें, Share (⇧) दबाएँ, फिर “Add to Home Screen” चुनें।",
+  )}</p>;
+  return <p className={hindi ? "hi" : ""}>{t(
+    "Open your browser’s menu (⋮ at the top right) and choose “Install app”, or “Add to Home screen”. It then opens full screen, without the address bar.",
+    "ब्राउज़र का मेन्यू (ऊपर दाईं ओर ⋮) खोलें और “Install app” या “Add to Home screen” चुनें। ऐप पूरी स्क्रीन पर खुलेगा।",
+  )}</p>;
+}
+
+/** The card that appears on its own, shortly after somebody signs in. */
+export function InstallApp({ hindi = false, delayMs = 2500 }: { hindi?: boolean; delayMs?: number; manifest?: string }) {
+  const { door, installed, canPrompt, prompt } = useInstallOffer();
+  const [show, setShow] = useState(false);
+  const [steps, setSteps] = useState(false);
+  const t = useCallback((en: string, hi: string) => (hindi ? hi : en), [hindi]);
+
+  useEffect(() => {
+    // Already an app on this device — the render guard below handles it.
+    if (installed) return;
+    const c = readChoice();
+    if (c && (c.until === "never" || Date.now() < c.until)) return;
+    // Every browser now gets the card: the ones that can prompt, and the ones
+    // that can only be told where their own menu is. Silence was the bug.
+    const timer = setTimeout(() => setShow(true), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, installed, canPrompt]);
+
+  if (!show || installed) return null;
+
+  const later = () => { writeChoice({ until: Date.now() + LATER_DAYS * 864e5 }); setShow(false); };
+  const never = () => { writeChoice({ until: "never" }); setShow(false); };
+  const install = async () => {
+    if (await prompt()) { setShow(false); return; }
+    // Nothing to open — show this browser's own route instead of doing nothing.
+    setSteps(true);
   };
 
   return (
@@ -143,25 +163,14 @@ export function InstallApp({ hindi = false, delayMs = 2500, manifest = "/manifes
         <div className="insi" aria-hidden="true">VC</div>
         <div className="inst">
           <h4 className={hindi ? "hi" : ""}>{t("Install Vivaha on this device", "इस डिवाइस पर Vivaha इंस्टॉल करें")}</h4>
-          {mode === "ios" ? (
-            <p className={hindi ? "hi" : ""}>
-              {t(
-                "Tap Share at the bottom of Safari, then “Add to Home Screen”. It opens full screen, without the address bar.",
-                "नीचे Safari में Share (⇧) दबाएँ, फिर “Add to Home Screen” चुनें। ऐप पूरी स्क्रीन पर खुलेगा।",
-              )}
-            </p>
-          ) : (
-            <p className={hindi ? "hi" : ""}>
-              {t(
-                "Opens from your home screen or desktop, full screen and without the address bar. Works the same as here.",
-                "होम स्क्रीन से सीधा खुलेगा — पूरी स्क्रीन, बिना एड्रेस बार। काम वैसा ही रहेगा।",
-              )}
-            </p>
-          )}
+          {canPrompt && !steps
+            ? <p className={hindi ? "hi" : ""}>{t(
+              "Opens from your home screen or desktop, full screen and without the address bar. Works the same as here.",
+              "होम स्क्रीन से सीधा खुलेगा — पूरी स्क्रीन, बिना एड्रेस बार। काम वैसा ही रहेगा।",
+            )}</p>
+            : <Steps door={door} hindi={hindi} />}
           <div className="insa">
-            {mode === "prompt" && (
-              <button className="b b-p b-s" onClick={install}>{t("Install", "इंस्टॉल करें")}</button>
-            )}
+            {canPrompt && !steps && <button className="b b-p b-s" onClick={install}>{t("Install", "इंस्टॉल करें")}</button>}
             <button className="b b-o b-s" onClick={later}>{t("Later", "बाद में")}</button>
             <button className="b b-g b-s" onClick={never}>{t("Don’t ask again", "दोबारा न पूछें")}</button>
           </div>
@@ -170,4 +179,23 @@ export function InstallApp({ hindi = false, delayMs = 2500, manifest = "/manifes
       </div>
     </div>
   );
+}
+
+/** The permanent door. A timed card can be missed or waved away; this is how
+ *  somebody installs the app a fortnight later, when they finally want it. */
+export function InstallButton({ hindi = false, className = "b b-o", label }: { hindi?: boolean; className?: string; label?: string }) {
+  const { door, installed, canPrompt, prompt } = useInstallOffer();
+  const [steps, setSteps] = useState(false);
+  const t = (en: string, hi: string) => (hindi ? hi : en);
+
+  if (installed) return <div className={"sm" + (hindi ? " hi" : "")}>{t("Installed on this device.", "इस डिवाइस पर इंस्टॉल है।")}</div>;
+
+  const go = async () => { if (!(await prompt())) setSteps(true); };
+
+  return <>
+    <button className={className + (hindi ? " hi" : "")} onClick={go}>
+      {label ?? t("Install app", "ऐप इंस्टॉल करें")}
+    </button>
+    {(steps || !canPrompt) && <div className="inss"><Steps door={door} hindi={hindi} /></div>}
+  </>;
 }

@@ -9,7 +9,7 @@ import { post } from "@/lib/api";
 import { useUI, errMsg, setPanelLang } from "@/lib/ui";
 import { Section, Field, Note } from "./ui";
 import { FirstLoginGate } from "./FirstLogin";
-import { InstallApp } from "./InstallApp";
+import { InstallApp, InstallButton } from "./InstallApp";
 import { money, num, fDT, type Perm } from "@vivaha/shared";
 import { ROLE_LABELS } from "@vivaha/shared";
 import { Icon, KIND_ICON, type IconName } from "./icons";
@@ -128,7 +128,7 @@ function ProfileDrawer({ onClose, onSignOut }: { onClose: () => void; onSignOut:
         {row("Name", user.name)}
         {row("Username", <span className="m">{user.username}</span>)}
         {row("Role", ROLE_LABELS[user.role])}
-        {row("Capabilities", `${user.perms.length} of 26 permissions`)}
+        {row("Capabilities", `${user.perms.length} permissions`)}
       </Section>
       <Section t="Change password">
         <Note k="w" style={{ marginBottom: 11 }}>Your account was handed over with a shared default password. Change it to something only you know — the office cannot see it, and it is recorded in the audit log.</Note>
@@ -138,6 +138,12 @@ function ProfileDrawer({ onClose, onSignOut }: { onClose: () => void; onSignOut:
           <Field label="Repeat new password" full><input type="password" autoComplete="new-password" value={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.value })} /></Field>
         </div>
         <button className="b b-p" style={{ marginTop: 12 }} disabled={busy || !f.currentPassword || !f.newPassword} onClick={save}>{busy ? "Saving…" : "Change password"}</button>
+      </Section>
+      <Section t="This device">
+        {/* The timed card can be missed or waved away; this is the door that is
+            always there. */}
+        <div className="sm" style={{ marginBottom: 9 }}>Install the ERP as an app on this phone, tablet or desktop — it opens full screen, from the home screen, without the address bar.</div>
+        <InstallButton />
       </Section>
       <Section t="Session">
         <button className="b b-d" onClick={onSignOut}>Sign out</button>
