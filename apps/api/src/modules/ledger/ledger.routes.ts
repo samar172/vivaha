@@ -102,13 +102,15 @@ router.post("/invoices/:no/amend", requirePerm("invoice.amend"), asyncHandler(as
   // Never bill more than the godown shipped — counted across every posted bill
   // on this order, with this one's new figures standing in for its old ones.
   const others = await prisma.invoiceLine.findMany({
-    where: { invoice: { orderId: inv.orderId, status: "Posted", no: { not: inv.no } } },
+    where: { invoice: { orderId: inv.orderId, status: "Posted", no: { not: inv.no } }, jobId: null },
     select: { itemId: true, qty: true },
   });
   const billedElsewhere = new Map<string, number>();
   for (const o of others) billedElsewhere.set(o.itemId, (billedElsewhere.get(o.itemId) ?? 0) + o.qty);
   const wantByItem = new Map<string, number>();
-  for (const n of next) wantByItem.set(n.line.itemId, (wantByItem.get(n.line.itemId) ?? 0) + n.qty);
+  // Printing is work done, not goods drawn — there is no godown behind it, so
+  // the shipped-quantity rule does not apply to it and must not be made to.
+  for (const n of next) if (!n.line.jobId) wantByItem.set(n.line.itemId, (wantByItem.get(n.line.itemId) ?? 0) + n.qty);
   for (const [itemId, want] of wantByItem) {
     const ol = inv.order.lines.find((x) => x.itemId === itemId);
     const shipped = ol?.shipped ?? 0;
@@ -122,6 +124,7 @@ router.post("/invoices/:no/amend", requirePerm("invoice.amend"), asyncHandler(as
   // decision to make, not a side effect of a correction.
   const minMargin = await getMinMargin();
   const under = next
+    .filter((n) => !n.line.jobId)
     .map((n) => ({ n, floor: marginFloor(D(inv.order.lines.find((x) => x.itemId === n.line.itemId)?.item.landedCost ?? 0), minMargin) }))
     .filter((x) => x.n.rate < x.floor);
   if (under.length && !req.user!.perms.includes("margin.override")) {

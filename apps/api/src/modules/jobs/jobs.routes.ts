@@ -9,7 +9,8 @@ import { notify } from "../../services/notify";
 import { nextJobNo } from "../../services/sequence";
 import * as stock from "../../services/stock";
 import { badRequest, notFound } from "../../utils/httpError";
-import { JOB_STATUSES } from "@vivaha/shared";
+import { JOB_STATUSES, invoiceTotals } from "@vivaha/shared";
+import { getHomeState } from "../../services/settings";
 
 const router = Router();
 const inc = {
@@ -71,6 +72,77 @@ router.patch("/:id/link", requirePerm("order.view"), asyncHandler(async (req, re
     newValue: [orderId, invoiceNo].filter(Boolean).join(" · ") || "not linked",
   });
   res.json(ser(next as never));
+}));
+
+// Putting printing onto a bill that has already gone out.
+//
+// The ordinary road is the other one: a job linked to an order is billed with
+// the cards when the order is dispatched, on one bill, which is what the
+// customer expects from one visit. This is for when the cards went first and
+// the printing was agreed after — or somebody forgot.
+//
+// A posted tax invoice is not edited for it. The line is added and the bill is
+// **amended**: the number never changes, what it said before is kept with the
+// reason, and the difference is posted to the firm's ledger as its own entry.
+// Exactly what correcting a bill does, because that is what this is.
+router.post("/:id/bill", requirePerm("order.view", "invoice.amend"), asyncHandler(async (req, res) => {
+  const j = await prisma.jobWork.findUnique({
+    where: { id: req.params.id },
+    include: { processItem: { select: { id: true, sku: true, name: true, hsn: true, gstPct: true } }, customer: { select: { id: true, name: true, gstin: true } } },
+  });
+  if (!j) throw notFound("Job not found");
+  if (j.invoiceNo) throw badRequest(`${j.id} is already on bill ${j.invoiceNo}`);
+  if (j.status === "ENQUIRY" || j.status === "QUOTED") throw badRequest("This job has not been accepted yet — a quote nobody has agreed to does not belong on a bill");
+  if (!j.orderId) throw badRequest("Link this job to a card order first, so there is a bill to put it on");
+
+  const inv = await prisma.invoice.findFirst({
+    where: { orderId: j.orderId, status: "Posted" },
+    include: { lines: true },
+    orderBy: { date: "desc" },
+  });
+  if (!inv) throw badRequest("That order has no posted bill yet — dispatch it and the printing goes on the same bill automatically");
+
+  const quote = D(j.quote);
+  const homeState = await getHomeState();
+  const lines = [
+    ...inv.lines.map((l) => ({ amount: D(l.amount), gstPct: l.gstPct })),
+    { amount: quote, gstPct: j.processItem.gstPct },
+  ];
+  const t = invoiceTotals(lines, j.customer.gstin, homeState);
+  const oldTotal = D(inv.total);
+  const delta = Math.round((t.total - oldTotal) * 100) / 100;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.invoiceLine.create({ data: {
+      invoiceNo: inv.no, itemId: j.processItem.id,
+      itemName: `${j.processItem.name} — ${j.id}`,
+      sku: j.id, hsn: j.processItem.hsn, qty: j.qty,
+      rate: j.qty > 0 ? Math.round((quote / j.qty) * 100) / 100 : quote,
+      amount: quote, gstPct: j.processItem.gstPct, jobId: j.id,
+    } });
+    await tx.invoice.update({ where: { no: inv.no }, data: {
+      taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total,
+      blocks: t.blocks as unknown as Prisma.InputJsonValue,
+    } });
+    await tx.jobWork.update({ where: { id: j.id }, data: { invoiceNo: inv.no } });
+    // The original debit stays as posted; the printing is its own entry.
+    if (delta !== 0) {
+      await tx.ledgerEntry.create({ data: {
+        customerId: j.customerId, date: new Date(), type: "INVOICE", ref: inv.no,
+        particular: `Printing ${j.id} added to ${inv.no}`,
+        debit: delta > 0 ? delta : 0, credit: delta < 0 ? -delta : 0,
+      } });
+    }
+    await tx.invoiceAmendment.create({ data: {
+      invoiceNo: inv.no, reason: `Printing ${j.id} billed with the cards`,
+      oldTotal, newTotal: t.total, by: req.user!.name,
+      detail: [{ sku: j.id, was: { qty: 0, rate: 0 }, now: { qty: j.qty, rate: j.qty > 0 ? Math.round((quote / j.qty) * 100) / 100 : quote } }] as unknown as Prisma.InputJsonValue,
+    } });
+    await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Job work added to a bill", entityType: "Invoice", entityId: inv.no,
+                      oldValue: `₹${oldTotal.toFixed(2)}`, newValue: `₹${t.total.toFixed(2)}`, reason: `${j.id} · ₹${quote.toFixed(2)}` });
+  });
+  await notify(prisma, { text: `${j.id} added to bill ${inv.no} for ${j.customer.name} — ₹${quote.toFixed(0)}`, kind: "INFO", role: "ACCOUNTS_MANAGER" });
+  res.json({ ok: true, invoiceNo: inv.no, oldTotal, total: t.total, delta });
 }));
 
 // What this firm has that a job could be tied to — its orders, and the bills

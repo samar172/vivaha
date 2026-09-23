@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { money, num, fDate, dueLbl, daysTo, JOB_STATUSES, JOB_STATUS_LABEL, type JobStatus, itemRef } from "@vivaha/shared";
 import { useApi, useGodowns, refresh, useLines } from "@/lib/hooks";
+import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, patch } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
@@ -34,11 +35,20 @@ export default function JobsPage() {
 // with nothing joining them, so "which job was this, and has it been billed"
 // was a question only the person who took the order could answer.
 function JobLink({ j }: { j: Job }) {
-  const { toast } = useUI();
+  const { toast } = useUI(); const { can } = useAuth();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const { data: orders } = useApi<(LinkedOrder & { invoices: LinkedInvoice[] })[]>(open ? `/api/jobs/linkable/${j.customer.id}` : null);
   const [pick, setPick] = useState<{ orderId: string; invoiceNo: string }>({ orderId: j.order?.id ?? "", invoiceNo: j.invoice?.no ?? "" });
+
+  const bill = async () => {
+    setBusy(true);
+    try {
+      const r = await post<{ invoiceNo: string; oldTotal: number; total: number }>(`/api/jobs/${j.id}/bill`, {});
+      toast(`Added to ${r.invoiceNo} — ${money(r.oldTotal)} → ${money(r.total)}`, "s");
+      refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
 
   const save = async (body: { orderId: string | null; invoiceNo: string | null }) => {
     setBusy(true);
@@ -59,9 +69,13 @@ function JobLink({ j }: { j: Job }) {
       </>
       : <div className="sm">This printing is not tied to a card order. Link it if the names were given with an order, so the two read together afterwards.</div>}
 
-    <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
+    <div style={{ display: "flex", gap: 7, marginTop: 10, flexWrap: "wrap" }}>
       <button className="b b-o b-s" onClick={() => setOpen((v) => !v)}>{open ? "Cancel" : j.order || j.invoice ? "Change the link" : "Link to a card order"}</button>
       {(j.order || j.invoice) && !open && <button className="b b-g b-s" disabled={busy} onClick={() => save({ orderId: null, invoiceNo: null })}>Unlink</button>}
+      {/* The usual road is the other one — a linked job is billed with the
+          cards at dispatch. This is for when the cards went first. */}
+      {j.order && !j.invoice && can("invoice.amend") && j.status !== "QUOTED" && j.status !== "ENQUIRY" &&
+        <button className="b b-p b-s" disabled={busy} onClick={bill}>Add {money(j.quote)} to that order&apos;s bill</button>}
     </div>
 
     {open && <div className="inl" style={{ marginTop: 10 }}>

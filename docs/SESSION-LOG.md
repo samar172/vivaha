@@ -6,6 +6,63 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (evening) — One visit, one bill
+
+### Printing asked for where it is actually given
+
+The names are handed over at the counter with the cards, on the same visit — so
+the booking screen asks there. **Printing as well?** folds open under the items:
+the process, how many, the text, and a quote worked out from the process rate
+and its setup charge, which the office can overwrite.
+
+The job is raised against the order that was just booked, so the two read
+together from the start instead of being joined up afterwards by whoever
+remembers. If the printing fails to save the order is not lost — it is already
+booked, and losing it to a failed second call would be the worse outcome, so it
+is reported rather than thrown.
+
+### And billed with the cards
+
+At dispatch, any printing linked to that order and not yet billed goes on the
+same invoice as the cards, at the process item's **own GST rate** — printing is
+a service and is not always taxed as a card is, and `invoiceTotals` already
+groups rate-wise, so a mixed bill comes out with a block per rate. The job is
+stamped with the invoice number, so it can never be billed twice.
+
+Only from **ACCEPTED** onwards. A quote nobody has agreed to has no business on
+a tax invoice.
+
+### The other road
+
+Cards sometimes go first and the printing is agreed after. **Add to that
+order's bill** does it — and does it as an *amendment*, not an edit: the number
+stands, the trail records it with the reason, and the difference goes to the
+ledger as its own entry. The same machinery correcting a bill already uses,
+because that is what this is.
+
+### Printing is not goods
+
+Two rules on the amendment path had to learn the difference. A goods line can
+never bill more than left the godown; a printing line has no godown behind it at
+all. And the margin floor is measured against landed cost, which printing does
+not have. Both now skip lines carrying a `jobId`, and the correction screen
+shows *printing* where it would otherwise show a shipped quantity.
+
+### Verified
+
+27 checks in `scripts/check_job_billing.py`: the automatic path — booked,
+accepted, dispatched, printing on the bill without anybody adding it, taxed
+rate-wise, the job knowing its invoice and refusing a second billing — and the
+after-the-fact path, with the number unchanged, the trail written, the ledger
+carrying the difference, and a printing line still correctable without a godown
+behind it. A quote left at QUOTED stays off the bill.
+
+Also fixed a flaky harness: `check_price_basis` grabbed whichever job sorted
+first, which another test had since billed, so it was testing the wrong thing.
+It picks an unbilled one now. All five harnesses pass, twice over.
+
+---
+
 ## 2026-09-24 (later) — What the multiplier is measured from, and a job that knows its order
 
 ### The basis is a choice, and it is remembered

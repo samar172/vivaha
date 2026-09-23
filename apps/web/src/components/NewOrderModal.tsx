@@ -27,6 +27,12 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   const [cart, setCart] = useState<Record<string, number>>({});
   const [requiredBy, setRequiredBy] = useState(inDays(14));
   const [note, setNote] = useState("");
+  // The names to print, taken at the counter with the cards. Asked here because
+  // that is when the customer hands them over — booking the cards and then
+  // remembering to raise the printing on another screen is how the two came to
+  // have nothing joining them.
+  const [wantJob, setWantJob] = useState(false);
+  const [job, setJob] = useState({ processItemId: "", qty: 0, text: "", quote: 0 });
   const [reason, setReason] = useState("");
   const [quote, setQuote] = useState<{ key: string; q: Quote | null; err: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,7 +119,24 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
     setBusy(true);
     try {
       const o = await post<Order>("/api/orders", { customerId: cid, lines: picked.map(([itemId, qty]) => ({ itemId, qty })), requiredBy, note: note.trim() || undefined, overrideReason: reason.trim() || undefined });
-      toast(`${o.id} booked for ${firm?.name} — awaiting approval`, "s");
+      // The printing is raised against the order that was just booked, so the
+      // two read together from the start and land on one bill at dispatch.
+      if (wantJob && job.processItemId && job.text.trim()) {
+        const baseItemId = picked[0]?.[0];
+        try {
+          await post("/api/jobs", {
+            customerId: cid, baseItemId, processItemId: job.processItemId,
+            qty: Number(job.qty) || picked.reduce((t, [, q]) => t + q, 0),
+            requiredBy: new Date(requiredBy).toISOString(), text: job.text.trim(),
+            quote: Number(job.quote) || undefined, orderId: o.id,
+          });
+          toast(`${o.id} booked with the printing — both on one bill at dispatch`, "s");
+        } catch (e) {
+          // The order is already booked; losing it because the printing failed
+          // would be the worse outcome, so this is reported and not thrown.
+          toast(`${o.id} booked, but the printing was not saved — ${errMsg(e)}`, "w");
+        }
+      } else toast(`${o.id} booked for ${firm?.name} — awaiting approval`, "s");
       closeModal();
       refresh("/api/");
     } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
@@ -137,6 +160,10 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
       <Field label="Required by"><input type="date" value={requiredBy} onChange={(e) => setRequiredBy(e.target.value)} /></Field>
       <Field label="Note (optional)" hint="Goes on the order's first event — e.g. how it came in"><input placeholder="e.g. Phoned in by Mr Sharma" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
     </div>
+
+    {cid && !blocked && <JobWithOrder
+      on={wantJob} setOn={setWantJob} job={job} setJob={setJob}
+      qty={picked.reduce((t, [, q]) => t + q, 0)} hasItems={picked.length > 0} />}
 
     {blocked && <Note k="w" style={{ marginTop: 11 }}><b>{firm!.name} is blocked</b> — {firm!.blockReason}. Clear the block from Customers before booking.</Note>}
 
@@ -202,4 +229,62 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
       <Note k="i" style={{ marginTop: 12 }}>Booking holds the stock and puts the order in <b>Awaiting approval</b>, exactly like a portal booking — it does not skip the approval step.</Note>
     </>}
   </ModalFrame>;
+}
+
+// "And the names to print on them?"
+//
+// A wedding order is rarely only cards: the customer hands over the names at
+// the same counter, on the same visit. Asking here is the difference between
+// one bill for the visit and two, and between a job that knows which order it
+// belongs to and one that does not.
+//
+// Folded away by default, because plenty of orders are cards alone.
+function JobWithOrder({ on, setOn, job, setJob, qty, hasItems }: {
+  on: boolean; setOn: (v: boolean) => void;
+  job: { processItemId: string; qty: number; text: string; quote: number };
+  setJob: (j: { processItemId: string; qty: number; text: string; quote: number }) => void;
+  qty: number; hasItems: boolean;
+}) {
+  const { data: lines } = useLines();
+  const jobLine = lines?.find((l) => l.workflow === "JOBWORK");
+  // Only the processes — the base card is whatever they are ordering.
+  const { data: procs } = useApi<{ items: { id: string; name: string; sku: string; designNo: string | null; slabs: { rate: number }[]; setupCharge: number | null }[] }>(on && jobLine ? `/api/items?line=${jobLine.id}` : null);
+  const list = (procs?.items ?? []).filter((p) => p.slabs.length);
+  const chosen = list.find((p) => p.id === job.processItemId) ?? null;
+  const runQty = Number(job.qty) || qty;
+  // What it would come to if nobody types a figure — the process rate times the
+  // run, plus its setup. The office can overwrite it; this is only so the
+  // number is not blank.
+  const suggested = chosen ? Math.round(runQty * (chosen.slabs[0]?.rate ?? 0) + (chosen.setupCharge ?? 0)) : 0;
+
+  return <div style={{ marginTop: 14, border: "1px solid var(--bd)", borderRadius: 7, padding: "10px 12px", background: on ? "var(--ac-bg)" : "var(--panel-2)" }}>
+    <label className="sm" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+      <input className="ck" type="checkbox" checked={on} disabled={!hasItems} onChange={(e) => setOn(e.target.checked)} />
+      <b>Printing as well?</b> The names go on these cards — one job, raised against this order and billed with it.
+    </label>
+    {!hasItems && <div className="sm" style={{ marginTop: 5 }}>Add the cards first; the printing goes onto whichever card they choose.</div>}
+    {on && <>
+      {!jobLine
+        ? <Note k="w" style={{ marginTop: 9 }}>No job-work line is set up, so there is nothing to print with. Add one under Settings → Business lines.</Note>
+        : <div className="fg" style={{ marginTop: 9 }}>
+          <Field label="Process">
+            <select value={job.processItemId} onChange={(e) => { const p = list.find((x) => x.id === e.target.value); setJob({ ...job, processItemId: e.target.value, quote: p ? Math.round(runQty * (p.slabs[0]?.rate ?? 0) + (p.setupCharge ?? 0)) : job.quote }); }}>
+              <option value="">Choose the process…</option>
+              {list.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+          <Field label="How many to print" hint={`Leave at ${num(qty)} to print the whole order`}>
+            <Num value={job.qty || qty} onChange={(v) => setJob({ ...job, qty: v })} />
+          </Field>
+          <Field label="Quote (₹)" hint={chosen ? `Worked out at ${money(suggested)} — change it if the rate was agreed differently` : "Choose a process first"}>
+            <Num value={job.quote} step="0.01" onChange={(v) => setJob({ ...job, quote: v })} />
+          </Field>
+          <Field label="Text to print" full hint="Exactly as it should appear on the card">
+            <textarea value={job.text} onChange={(e) => setJob({ ...job, text: e.target.value })} placeholder="e.g. Chi. Aakash weds Sau. Kau. Priya — 14 Feb 2027, Bikaner" />
+          </Field>
+        </div>}
+      {on && jobLine && (!job.processItemId || !job.text.trim()) && <div className="sm" style={{ marginTop: 6, color: "var(--wa)" }}>Choose a process and enter the text, or untick — the order books either way.</div>}
+      <Note style={{ marginTop: 9 }}>The job is quoted, not yet accepted: it appears under Job Work for the proof to go out, and joins this order&apos;s bill once it is accepted and the cards are dispatched. Printing cannot start without a recorded proof approval.</Note>
+    </>}
+  </div>;
 }

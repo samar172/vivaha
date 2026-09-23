@@ -1000,6 +1000,14 @@ model InvoiceLine {
   rate      Decimal @db.Decimal(12, 2)
   amount    Decimal @db.Decimal(14, 2)
   gstPct    Int
+  // Set when this line is printing rather than goods.
+  //
+  // It matters because the two are checked differently: a goods line can never
+  // bill more than left the godown, and a printing line has no godown behind it
+  // at all — it is work done. It also lets the bill say which lines are the job,
+  // which is what the customer asks about when the total is larger than the
+  // cards alone.
+  jobId     String?
 }
 
 // ───────────────────────── Ledger ─────────────────────────

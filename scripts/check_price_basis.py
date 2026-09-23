@@ -66,7 +66,11 @@ call("DELETE",f"/api/items/price-changes/{p4['pending']['id']}",tok=T)
 # ── job work tied to an order ──────────────────────────────────────────────
 s,jobs=call("GET","/api/jobs",tok=T)
 ck("jobs carry the link fields", all("order" in j and "invoice" in j for j in jobs), jobs[0].keys() if jobs else "no jobs")
-j=jobs[0]
+# A job already on a bill cannot be moved to another firm's order, and should
+# not be: pick one that is still free, so this checks linking and not that.
+free=[x for x in jobs if not x.get("invoice")]
+ck("an unbilled job is available to link", bool(free), f"{len(jobs)} jobs, all billed")
+j=free[0] if free else jobs[0]
 s,opts=call("GET",f"/api/jobs/linkable/{j['customer']['id']}",tok=T)
 ck("the firm's orders are offered", s==200 and isinstance(opts,list), opts if s!=200 else len(opts))
 if opts:

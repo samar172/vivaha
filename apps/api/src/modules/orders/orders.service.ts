@@ -166,13 +166,46 @@ export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
       await tx.orderLine.update({ where: { id: l.id }, data: { shipped: l.shipped + q, alloc } });
     }
     const invLines = o.lines.filter((l) => (inp.ship[l.itemId] ?? 0) > 0).map((l) => ({ l, qty: inp.ship[l.itemId], amount: inp.ship[l.itemId] * D(l.rate) }));
-    const t = invoiceTotals(invLines.map((x) => ({ amount: x.amount, gstPct: x.l.gstPct })), o.customer.gstin, homeState);
+
+    // Printing taken with this order goes on the same bill as the cards.
+    //
+    // The customer gave the names at the counter when they booked; one bill for
+    // the whole visit is what they expect, and two would have to be explained.
+    // It is billed at the quote that was agreed, at the process item's own GST
+    // rate — printing is a service and is not always taxed as the card is, and
+    // invoiceTotals already groups rate-wise, so a mixed bill comes out right.
+    //
+    // Only jobs not already billed, and only once the customer has accepted
+    // the quote.
+    const jobs = await tx.jobWork.findMany({
+      // An enquiry or a quote has not been agreed to and has no business on a
+      // bill; everything from ACCEPTED onwards has.
+      where: { orderId: o.id, invoiceNo: null, status: { notIn: ["ENQUIRY", "QUOTED"] } },
+      include: { processItem: { select: { id: true, sku: true, name: true, hsn: true, gstPct: true } } },
+    });
+    const jobLines = jobs.map((j) => ({
+      jobId: j.id, itemId: j.processItem.id,
+      itemName: `${j.processItem.name} — ${j.id}`,
+      sku: j.id, hsn: j.processItem.hsn, qty: j.qty,
+      rate: j.qty > 0 ? Math.round((D(j.quote) / j.qty) * 100) / 100 : D(j.quote),
+      amount: D(j.quote), gstPct: j.processItem.gstPct,
+    }));
+
+    const t = invoiceTotals(
+      [...invLines.map((x) => ({ amount: x.amount, gstPct: x.l.gstPct })), ...jobLines.map((x) => ({ amount: x.amount, gstPct: x.gstPct }))],
+      o.customer.gstin, homeState,
+    );
     // An order is confined to one business line, so the invoice bills on that
     // line's own series and carries the line for the register to filter on.
     const lineId = o.lines[0]?.lineId;
     const series = await tx.businessLine.findUniqueOrThrow({ where: { id: lineId } });
     const no = await nextInvoiceNo(tx, series);
-    await tx.invoice.create({ data: { no, lineId, orderId: o.id, customerId: o.customerId, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: invLines.map((x) => ({ itemId: x.l.itemId, itemName: x.l.item.name, sku: x.l.item.sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })) } } });
+    await tx.invoice.create({ data: { no, lineId, orderId: o.id, customerId: o.customerId, taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: t.igst, total: t.total, blocks: t.blocks as unknown as Prisma.InputJsonValue, lines: { create: [
+      ...invLines.map((x) => ({ itemId: x.l.itemId, itemName: x.l.item.name, sku: x.l.item.sku, hsn: x.l.hsn, qty: x.qty, rate: x.l.rate, amount: x.amount, gstPct: x.l.gstPct })),
+      ...jobLines,
+    ] } } });
+    // The job now knows which bill it went on, so it can never be billed twice.
+    if (jobs.length) await tx.jobWork.updateMany({ where: { id: { in: jobs.map((j) => j.id) } }, data: { invoiceNo: no } });
     await tx.ledgerEntry.create({ data: { customerId: o.customerId, date: new Date(), type: "INVOICE", ref: no, particular: `Tax Invoice ${no} · ${o.id}`, debit: t.total, credit: 0 } });
     const d = await tx.dispatch.create({ data: {
       orderId: o.id, mode, transporter: inp.transporter, lr: inp.lr?.trim() ?? "", tracking: inp.tracking ?? "",
