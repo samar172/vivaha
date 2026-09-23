@@ -25,7 +25,7 @@ const waDigits = (phone: string) => {
   return d.length === 10 ? "91" + d : d.replace(/^0+/, "");
 };
 
-function ShareBillModal({ inv, contacts: all, whatsappFrom }: { inv: Invoice & { customer: { name: string; phone?: string }; sentCount?: number; lastSent?: { at: string; by: string; toName: string; toPhone: string } | null }; contacts: BillContact[]; whatsappFrom?: string }) {
+function ShareBillModal({ inv, contacts: all, whatsappFrom, firm }: { inv: Invoice & { customer: { name: string; phone?: string }; sentCount?: number; lastSent?: { at: string; by: string; toName: string; toPhone: string } | null }; contacts: BillContact[]; whatsappFrom?: string; firm: string }) {
   const { closeModal, toast } = useUI();
   // The firm says which of its numbers takes the bills. Those come first and
   // one of them is selected, so the common case is press-and-send; the rest are
@@ -44,7 +44,7 @@ function ShareBillModal({ inv, contacts: all, whatsappFrom }: { inv: Invoice & {
     `Amount: Rs ${money2(inv.total)}`,
     `Date: ${fDate(inv.date)}`,
     note.trim(),
-    "— Vivaha Cards",
+    `— ${firm}`,
   ].filter(Boolean).join("\n");
 
   const send = () => {
@@ -166,7 +166,7 @@ export function InvoiceModal({ no, orderId }: { no: string; orderId: string }) {
   const { data: inv } = useApi<Invoice & { customer: { name: string; address: string; tehsil: string; gstin: string | null; phone: string; contacts: BillContact[] }; company: { name: string; address: string; gstin: string; state: string }; whatsappFrom?: string }>(`/api/orders/${orderId}/invoice/${encodeURIComponent(no)}`);
   if (!inv) return <ModalFrame title={"Tax Invoice " + no} onClose={closeModal} actions={null}><div className="sm">Loading…</div></ModalFrame>;
   const c = inv.customer, intra = !c.gstin || c.gstin.slice(0, 2) === inv.company.state;
-  return <ModalFrame title={"Tax Invoice " + inv.no} onClose={closeModal} actions={<><button className="b b-o" onClick={() => openModal(<ShareBillModal inv={inv} contacts={c.contacts ?? []} whatsappFrom={inv.whatsappFrom} />, "n")}><Icon n="swap" s={13} /> Share on WhatsApp</button>{can("invoice.amend") && inv.status === "Posted" && <button className="b b-o" onClick={() => openModal(<AmendBillModal inv={inv} orderId={orderId} />, "w")}><Icon n="sliders" s={13} /> Edit bill</button>}<button className="b b-o" onClick={() => window.print()}>Print</button><button className="b b-p" onClick={closeModal}>Done</button></>}>
+  return <ModalFrame title={"Tax Invoice " + inv.no} onClose={closeModal} actions={<><button className="b b-o" onClick={() => openModal(<ShareBillModal inv={inv} contacts={c.contacts ?? []} whatsappFrom={inv.whatsappFrom} firm={inv.company.name} />, "n")}><Icon n="swap" s={13} /> Share on WhatsApp</button>{can("invoice.amend") && inv.status === "Posted" && <button className="b b-o" onClick={() => openModal(<AmendBillModal inv={inv} orderId={orderId} />, "w")}><Icon n="sliders" s={13} /> Edit bill</button>}<button className="b b-o" onClick={() => window.print()}>Print</button><button className="b b-p" onClick={closeModal}>Done</button></>}>
     <div style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 15 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 20, borderBottom: "1px solid var(--bd)", paddingBottom: 11, marginBottom: 11 }}><div><div style={{ fontSize: 15.5, fontWeight: 700 }}>{inv.company.name}</div><div className="sm" style={{ fontFamily: "inherit" }}>{inv.company.address}</div><div className="sm">GSTIN {inv.company.gstin} · State code {inv.company.state}</div></div><div style={{ textAlign: "right" }}><div className="sm">TAX INVOICE</div><div style={{ fontSize: 14.5, fontWeight: 700 }} className="tab">{inv.no}</div><div className="sm">{fDate(inv.date)}</div></div></div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginBottom: 12 }}><div><div className="sm">BILL TO</div><div style={{ fontWeight: 700, fontSize: 14 }}>{c.name}</div><div className="sm" style={{ fontFamily: "inherit" }}>{c.address}, {c.tehsil}, Rajasthan</div><div className="sm">GSTIN {c.gstin ?? "Unregistered"}</div></div><div style={{ textAlign: "right" }}><div className="sm">PLACE OF SUPPLY</div><div style={{ fontSize: 14, fontWeight: 600 }}>{intra ? "08 — Rajasthan (intra-state)" : "Inter-state"}</div><div className="sm">Order {orderId}</div></div></div>

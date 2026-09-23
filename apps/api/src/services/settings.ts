@@ -3,10 +3,30 @@ import { prisma } from "../db";
 
 export interface CompanySettings {
   name: string; address: string; gstin: string; state: string; phone: string;
+  /** What goes on a carton label. A printed label is read across a godown, so
+   *  it carries the mark and not the whole name — "VC", not "VIVAHA CARDS". */
+  mark?: string;
+  /** The front of every own code the office issues: VC-AAKASH-1201. */
+  codePrefix?: string;
 }
 const DEFAULT_COMPANY: CompanySettings = {
   name: "Vivaha Cards", address: "Plot 14, Junagarh Road Industrial Area, Bikaner 334001", gstin: "08AAQCV7781K1ZR", state: HOME_STATE, phone: "+91 151 220 0000",
+  mark: "VC", codePrefix: "VC",
 };
+
+/** The initials of a firm's name, for when nobody has set a mark: "Jain Card
+ *  Gallery" becomes JCG. Two or three letters is what fits on a label. */
+export const initialsOfName = (name: string) =>
+  name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 3).toUpperCase() || "VC";
+
+export async function getCompanyMark() {
+  const c = await getCompany();
+  return (c.mark || initialsOfName(c.name)).trim();
+}
+export async function getCodePrefix() {
+  const c = await getCompany();
+  return (c.codePrefix || c.mark || initialsOfName(c.name)).trim().replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
 
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {
   const row = await prisma.setting.findUnique({ where: { key } });

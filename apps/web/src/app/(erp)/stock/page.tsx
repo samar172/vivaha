@@ -20,6 +20,7 @@ type Row = ItemView & { valueAtCost: number };
 
 // Small QR in the row; hover blows it up to something a phone can actually read.
 function QrCell({ code, kind, name }: { code: string; kind: "OWN" | "MANUFACTURER" | null; name: string }) {
+  const { data: cfg } = useApi<{ company: { name: string } }>("/api/settings");
   const { ref, pos, handlers } = useZoomAnchor<HTMLSpanElement>(230, 300);
   return <>
     <span ref={ref} {...handlers} style={{ display: "inline-block", cursor: "zoom-in", lineHeight: 0 }}>
@@ -29,7 +30,7 @@ function QrCell({ code, kind, name }: { code: string; kind: "OWN" | "MANUFACTURE
       <Qr value={code} size={214} style={{ margin: "0 auto" }} />
       <div className="zoomc" style={{ textAlign: "center" }}>
         <b style={{ fontFamily: "var(--mono)", fontSize: 14 }}>{code}</b><br />{name}<br />
-        <span style={{ color: kind === "OWN" ? "var(--ok)" : "var(--wa)" }}>{kind === "OWN" ? "Vivaha Cards label" : "Manufacturer label — not re-labelled yet"}</span>
+        <span style={{ color: kind === "OWN" ? "var(--ok)" : "var(--wa)" }}>{kind === "OWN" ? `${cfg?.company.name ?? "Your own"} label` : "Manufacturer label — not re-labelled yet"}</span>
       </div>
     </div>}
   </>;

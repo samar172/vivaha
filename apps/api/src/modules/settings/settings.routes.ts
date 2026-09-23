@@ -144,9 +144,19 @@ router.post("/restore", requirePerm("settings.manage"), asyncHandler(async (req,
 
 router.get("/", asyncHandler(async (_req, res) => res.json({ minMargin: await getMinMargin(), company: await getCompany(), panelLang: await getPanelLang() })));
 router.put("/", requirePerm("settings.manage"), asyncHandler(async (req, res) => {
-  const b = z.object({ minMargin: z.number().min(0).max(0.9).optional(), company: z.object({ name: z.string(), address: z.string(), gstin: z.string(), state: z.string().length(2), phone: z.string() }).optional(), panelLang: z.enum(["en", "hi"]).optional() }).parse(req.body);
+  const b = z.object({ minMargin: z.number().min(0).max(0.9).optional(), company: z.object({
+      name: z.string().min(1), address: z.string(), gstin: z.string(), state: z.string().length(2), phone: z.string(),
+      // Short enough to read across a godown.
+      mark: z.string().trim().max(6, "A label mark is two or three letters, not a name").optional(),
+      codePrefix: z.string().trim().regex(/^[A-Za-z0-9]{0,6}$/, "A code prefix is letters and numbers only").optional(),
+    }).optional(), panelLang: z.enum(["en", "hi"]).optional() }).parse(req.body);
   if (b.minMargin != null) { const before = await getMinMargin(); await setSetting("MIN_MARGIN", b.minMargin); await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Margin floor changed", entityType: "Settings", entityId: "MIN_MARGIN", oldValue: before * 100 + "%", newValue: b.minMargin * 100 + "%" }); }
-  if (b.company) await setSetting("COMPANY", b.company);
+  if (b.company) {
+    const before = await getCompany();
+    await setSetting("COMPANY", b.company);
+    await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Company details changed", entityType: "Settings", entityId: "COMPANY",
+                          oldValue: `${before.name} · ${before.mark ?? ""} · ${before.gstin}`, newValue: `${b.company.name} · ${b.company.mark ?? ""} · ${b.company.gstin}` });
+  }
   if (b.panelLang) { const before = await getPanelLang(); await setSetting("PANEL_LANG", b.panelLang); await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Panel language changed", entityType: "Settings", entityId: "PANEL_LANG", oldValue: before, newValue: b.panelLang }); }
   res.json({ minMargin: await getMinMargin(), company: await getCompany(), panelLang: await getPanelLang() });
 }));

@@ -170,13 +170,15 @@ function ChaseModal({ cart, onDone }: { cart: AbandonedCart; onDone: () => void 
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const c = contacts.find((x) => x.id === sel) ?? contacts[0];
+  const { data: cfg } = useApi<{ company: { name: string } }>("/api/settings");
+  const firm = cfg?.company.name ?? "";
 
   const text = [
     `${cart.customer.name} — आपकी कार्ट में ${cart.count} आइटम हैं`,
     cart.lines.slice(0, 3).map((l) => `${itemRef(l)} × ${l.qty}`).join(", "),
     `कुल ${money(cart.value)}`,
     note.trim(),
-    "— Vivaha Cards",
+    `— ${firm}`,
   ].filter(Boolean).join("\n");
 
   const go = async (channel: "WHATSAPP" | "CALL") => {

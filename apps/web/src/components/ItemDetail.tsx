@@ -127,16 +127,14 @@ interface Code { id: string; code: string; kind: "OWN" | "MANUFACTURER"; status:
 // prints now, and the trail between them. Old codes are kept read-only.
 function CodesSection({ itemId, name }: { itemId: string; name: string }) {
   const { data, mutate } = useApi<Code[]>(`/api/codes/item/${itemId}`);
-  const { can } = useAuth(); const { toast, openModal } = useUI();
+  const { can } = useAuth(); const { openModal } = useUI();
+  const { data: cfg } = useApi<{ company: { name: string; mark?: string } }>("/api/settings");
+  const firmName = cfg?.company.name ?? "Your own";
   if (!data) return null;
   const active = data.filter((c) => c.status === "ACTIVE");
   const own = active.find((c) => c.kind === "OWN");
   const factory = active.find((c) => c.kind === "MANUFACTURER");
   const replaced = data.filter((c) => c.status === "REPLACED");
-  const relabel = async (replacesCodeId?: string) => {
-    try { await post(`/api/codes/item/${itemId}/relabel`, { replacesCodeId }); toast("Own code issued — print the new label", "s"); mutate(); refresh("/api/"); }
-    catch (e) { toast(errMsg(e), "e"); }
-  };
   return <Section t="Labels & QR">
     {own
       ? <div style={{ display: "flex", gap: 13, alignItems: "flex-start", marginBottom: 11 }}>
@@ -145,14 +143,20 @@ function CodesSection({ itemId, name }: { itemId: string; name: string }) {
             <div className="sm" style={{ marginTop: 5, fontFamily: "var(--mono)", fontWeight: 700, color: "var(--t9)" }}>{own.code}</div>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <span className="bd b-ok">Vivaha Cards label</span>
+            <span className="bd b-ok">{firmName} label</span>
             <div className="sm" style={{ marginTop: 6, lineHeight: 1.6 }}>Issued by {own.by} · {fDT(own.createdAt)}</div>
-            <button className="b b-o b-s" style={{ marginTop: 9 }} onClick={() => openModal(<PrintLabelModal code={own.code} name={name} />)}>Print label</button>
+            <div style={{ display: "flex", gap: 7, marginTop: 9, flexWrap: "wrap" }}>
+              <button className="b b-o b-s" onClick={() => openModal(<PrintLabelModal code={own.code} name={name} />)}>Print label</button>
+              {/* The marking is the office's to choose. Changing it issues a new
+                  code and keeps the old one scannable, because cartons already
+                  on a shelf still carry it. */}
+              {can("item.edit") && <button className="b b-o b-s" onClick={() => openModal(<IssueCodeModal itemId={itemId} replacesCodeId={own.id} current={own.code} onDone={() => { mutate(); refresh("/api/"); }} />)}>Change the code</button>}
+            </div>
           </div>
         </div>
       : <Note k="w" style={{ marginBottom: 11 }}>
           This design is still going out under the manufacturer&apos;s label{factory ? ` (${factory.code})` : ""}. Issue your own code so the carton, the catalogue and a returned box all speak the same language.
-          {can("item.edit") && <div style={{ marginTop: 9 }}><button className="b b-p b-s" onClick={() => relabel(factory?.id)}>Issue Vivaha Cards code</button></div>}
+          {can("item.edit") && <div style={{ marginTop: 9 }}><button className="b b-p b-s" onClick={() => openModal(<IssueCodeModal itemId={itemId} replacesCodeId={factory?.id} onDone={() => { mutate(); refresh("/api/"); }} />)}>Issue your own code</button></div>}
         </Note>}
 
     {factory && <DF k="Manufacturer label" v={<span style={{ fontFamily: "var(--mono)" }}>{factory.code}</span>} />}
@@ -169,18 +173,66 @@ function CodesSection({ itemId, name }: { itemId: string; name: string }) {
   </Section>;
 }
 
+// The carton label.
+//
+// It carries the mark, not the firm's whole name: a label is read across a
+// godown at arm's length, and "VIVAHA CARDS" set small enough to fit beside a
+// QR is not read at all. The mark is a setting, so a shop called Jain Card
+// Gallery prints JCG.
 function PrintLabelModal({ code, name }: { code: string; name: string }) {
   const { closeModal } = useUI();
+  const { data: cfg } = useApi<{ company: { name: string; mark?: string } }>("/api/settings");
+  const mark = (cfg?.company.mark || initials(cfg?.company.name ?? "")) || "VC";
   return <ModalFrame title="Label preview" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Close</button><button className="b b-p" onClick={() => window.print()}>Print</button></>}>
     <div style={{ display: "flex", justifyContent: "center" }}>
       <div style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 18, textAlign: "center", background: "#fff", width: 260 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: ".08em", color: "var(--ac)" }}>VIVAHA CARDS</div>
+        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: ".14em", color: "var(--ac)", lineHeight: 1 }}>{mark}</div>
         <Qr value={code} size={168} style={{ margin: "12px auto" }} />
         <div style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700 }}>{code}</div>
         <div className="sm" style={{ marginTop: 4 }}>{name}</div>
       </div>
     </div>
-    <Note style={{ marginTop: 13 }}>Stick this over the manufacturer&apos;s label. The old code stays on file, so a carton that still carries it will scan correctly.</Note>
+    <Note style={{ marginTop: 13 }}>The mark is set under Settings → Company. Stick this over the manufacturer&apos;s label — the old code stays on file, so a carton that still carries it will scan correctly.</Note>
+  </ModalFrame>;
+}
+
+/** Initials of a firm's name, for when no mark has been set. */
+const initials = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 3).toUpperCase();
+
+// Issuing — or changing — the marking on an item.
+//
+// The suggested code follows the office's convention, but it is only a
+// suggestion: plenty of shops have their own marking and the code that matters
+// is the one actually written on the carton. Changing an existing code issues a
+// new one and keeps the old scannable, because boxes already on a shelf carry it.
+function IssueCodeModal({ itemId, replacesCodeId, current, onDone }: { itemId: string; replacesCodeId?: string; current?: string; onDone: () => void }) {
+  const { closeModal, toast } = useUI();
+  const { data: sug } = useApi<{ suggested: string; free: boolean }>(`/api/codes/item/${itemId}/suggest`);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const value = code || (current ? "" : sug?.suggested ?? "");
+
+  const go = async () => {
+    const c = (code || sug?.suggested || "").trim();
+    if (c.length < 2) return toast("Enter the code to print on the carton", "e");
+    setBusy(true);
+    try {
+      await post(`/api/codes/item/${itemId}/relabel`, { code: c, replacesCodeId });
+      toast(current ? `Now marked ${c} — ${current} stays scannable` : `${c} issued — print the label`, "s");
+      closeModal(); onDone();
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  return <ModalFrame title={current ? "Change this item's marking" : "Issue your own code"} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={go}>{current ? "Issue the new code" : "Issue code"}</button></>}>
+    {current && <Note k="w" style={{ marginBottom: 12 }}>
+      This item is marked <b className="tab">{current}</b>. Issuing a new one does not erase it — cartons already on a shelf carry it, so it stays on file and a scan of it still opens this item.
+    </Note>}
+    <Field label="Code to print" full hint={sug ? (code ? "Yours, exactly as typed" : `Suggested from the design number — type over it if the office marks differently`) : "Loading the suggestion…"}>
+      <input value={value} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder={sug?.suggested ?? "e.g. JCG-AAKASH-1201"} style={{ fontFamily: "var(--mono)" }} />
+    </Field>
+    {sug && !sug.free && !code && <Note k="w" style={{ marginTop: 9 }}>{sug.suggested} is already on another item — type a different one.</Note>}
+    <div className="sm" style={{ marginTop: 9 }}>Letters, numbers and dashes. It gets written on a carton and read back over the phone, so keep it short and speakable. The prefix comes from Settings → Company.</div>
   </ModalFrame>;
 }
 

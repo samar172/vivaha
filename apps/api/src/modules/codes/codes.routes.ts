@@ -5,6 +5,7 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { audit } from "../../services/audit";
 import { badRequest, notFound } from "../../utils/httpError";
+import { getCodePrefix } from "../../services/settings";
 
 const router = Router();
 
@@ -16,8 +17,10 @@ const codeSelect = {
 
 // The office's own code. Human-readable on purpose: it gets written on cartons
 // and read back over the phone, so it carries the design number, not a hash.
-export function ownCodeFor(designNo: string | null, sku: string) {
-  return "VC-" + (designNo || sku).replace(/[^A-Za-z0-9]+/g, "-").toUpperCase();
+// The prefix is the firm's, not ours — a shop called Jain Card Gallery should
+// not be issuing codes that start VC.
+export function ownCodeFor(designNo: string | null, sku: string, prefix = "VC") {
+  return `${prefix}-` + (designNo || sku).replace(/[^A-Za-z0-9]+/g, "-").toUpperCase();
 }
 
 // Resolve ANY code — the office's own or a manufacturer label that was replaced
@@ -39,6 +42,16 @@ router.get("/resolve", requirePerm("item.view"), asyncHandler(async (req, res) =
     item: { id: hit.item.id, sku: hit.item.sku, designNo: hit.item.designNo, name: hit.item.name, nameHi: hit.item.nameHi, lineId: hit.item.lineId, line: hit.item.line, artSeed: hit.item.artSeed, imageUrl: hit.item.imageUrl },
     activeCodes: hit.item.codes,
   });
+}));
+
+// What this item's own code would be if nobody typed one — so the screen can
+// show it in the box rather than making somebody guess the convention.
+router.get("/item/:itemId/suggest", requirePerm("item.view"), asyncHandler(async (req, res) => {
+  const item = await prisma.item.findUnique({ where: { id: req.params.itemId }, select: { designNo: true, sku: true } });
+  if (!item) throw notFound("Item not found");
+  const suggested = ownCodeFor(item.designNo, item.sku, await getCodePrefix());
+  const taken = await prisma.itemCode.findUnique({ where: { code: suggested }, select: { itemId: true } });
+  res.json({ suggested, free: !taken || taken.itemId === req.params.itemId });
 }));
 
 router.get("/item/:itemId", requirePerm("item.view"), asyncHandler(async (req, res) => {
@@ -64,11 +77,16 @@ router.post("/item/:itemId/manufacturer", requirePerm("item.edit"), asyncHandler
 // flipped to REPLACED with a pointer to its successor — never deleted, because
 // a vendor claim or a recall has to be able to walk back to the original label.
 router.post("/item/:itemId/relabel", requirePerm("item.edit"), asyncHandler(async (req, res) => {
-  const b = z.object({ code: z.string().min(2).optional(), replacesCodeId: z.string().optional(), note: z.string().optional() }).parse(req.body);
+  const b = z.object({
+    code: z.string().trim().min(2).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9\-_/]*$/, "A code is letters, numbers and dashes — it gets written on a carton and read back over the phone").optional(),
+    replacesCodeId: z.string().optional(), note: z.string().optional(),
+  }).parse(req.body);
   const item = await prisma.item.findUnique({ where: { id: req.params.itemId } });
   if (!item) throw notFound("Item not found");
 
-  const code = (b.code?.trim() || ownCodeFor(item.designNo, item.sku));
+  // Suggested, never imposed: the office may have its own marking convention,
+  // and a code somebody types is the one that ends up written on the carton.
+  const code = b.code?.trim() || ownCodeFor(item.designNo, item.sku, await getCodePrefix());
   const clash = await prisma.itemCode.findUnique({ where: { code } });
   if (clash) throw badRequest(clash.itemId === item.id ? `This item already carries "${code}"` : `Code "${code}" belongs to another item`);
 

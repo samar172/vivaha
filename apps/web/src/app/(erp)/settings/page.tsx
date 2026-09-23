@@ -12,14 +12,79 @@ import { LineChip, Note, Panel, Field, ModalFrame, Num } from "@/components/ui";
 import { Icon } from "@/components/icons";
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState("lines"); const { data: lines } = useLines(); useFooter(lines?.length ?? 0);
+  const [tab, setTab] = useState("company"); const { data: lines } = useLines(); useFooter(lines?.length ?? 0);
   return <>
-    <PageHead crumb={["System", "Settings"]} title="Settings" sub="Business lines, pricing, permissions and masters — all configuration, no deployment" tabs={[{ k: "lines", l: "Business lines", n: lines?.length }, { k: "users", l: "Users & logins" }, { k: "price", l: "Pricing" }, { k: "rbac", l: "Roles & permissions" }, { k: "attrs", l: "Attribute masters" }, { k: "godowns", l: "Godowns & racks" }, { k: "import", l: "Import" }, { k: "backup", l: "Backup & restore" }, { k: "data", l: "Demo data" }]} tab={tab} onTab={setTab} />
-    <div className="wa">{tab === "lines" && <LinesTab />}{tab === "users" && <UsersTab />}{tab === "price" && <PriceTab />}{tab === "rbac" && <RbacTab />}{tab === "attrs" && <AttrsTab />}{tab === "godowns" && <GodownsTab />}{tab === "import" && <ImportTab />}{tab === "backup" && <BackupTab />}{tab === "data" && <DataTab />}</div>
+    <PageHead crumb={["System", "Settings"]} title="Settings" sub="Business lines, pricing, permissions and masters — all configuration, no deployment" tabs={[{ k: "company", l: "Company" }, { k: "lines", l: "Business lines", n: lines?.length }, { k: "users", l: "Users & logins" }, { k: "price", l: "Pricing" }, { k: "rbac", l: "Roles & permissions" }, { k: "attrs", l: "Attribute masters" }, { k: "godowns", l: "Godowns & racks" }, { k: "import", l: "Import" }, { k: "backup", l: "Backup & restore" }, { k: "data", l: "Demo data" }]} tab={tab} onTab={setTab} />
+    <div className="wa">{tab === "company" && <CompanyTab />}{tab === "lines" && <LinesTab />}{tab === "users" && <UsersTab />}{tab === "price" && <PriceTab />}{tab === "rbac" && <RbacTab />}{tab === "attrs" && <AttrsTab />}{tab === "godowns" && <GodownsTab />}{tab === "import" && <ImportTab />}{tab === "backup" && <BackupTab />}{tab === "data" && <DataTab />}</div>
   </>;
 }
 // Same financial year the server numbers against: April to March.
 const fy = () => { const d = new Date(); const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; return `${String(y).slice(2)}-${String(y + 1).slice(2)}`; };
+
+// Who the firm is, on every document it sends out.
+//
+// This lived only in the database with no way to change it, so a system handed
+// to a different shop still printed the name it was built for. The mark is
+// separate from the name on purpose: a carton label is read across a godown,
+// and a full name set small enough to fit beside a QR is not read at all.
+interface Company { name: string; address: string; gstin: string; state: string; phone: string; mark?: string; codePrefix?: string }
+const initialsOf = (n: string) => n.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 3).toUpperCase();
+
+function CompanyTab() {
+  const { data, mutate } = useApi<{ company: Company; minMargin: number }>("/api/settings");
+  const { toast } = useUI(); const { can } = useAuth();
+  const [f, setF] = useState<Company | null>(null);
+  const [busy, setBusy] = useState(false);
+  const c = f ?? data?.company ?? null;
+  if (!c) return null;
+  const mark = (c.mark || initialsOf(c.name) || "VC").trim();
+  const prefix = (c.codePrefix || mark).replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+
+  const save = async () => {
+    if (!c.name.trim()) return toast("The firm needs a name", "e");
+    if (c.state.length !== 2) return toast("The state code is two digits — 08 for Rajasthan", "e");
+    setBusy(true);
+    try { await put("/api/settings", { company: { ...c, name: c.name.trim(), mark: mark, codePrefix: prefix } }); toast("Company details saved", "s"); setF(null); mutate(); refresh("/api/"); }
+    catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  return <>
+    <Note style={{ marginBottom: 11 }}>This is the name, address and GSTIN printed on every tax invoice, and the state code the whole GST split is worked out from — change it and the next bill carries it. The <b>mark</b> is what goes on a carton label instead of the full name, because a label is read across a godown.</Note>
+    <Panel t="Company" h="on every document that leaves the building">
+      <div className="pnb">
+        <div className="fg">
+          <Field label="Name *" full><input value={c.name} disabled={!can("settings.manage")} onChange={(e) => setF({ ...c, name: e.target.value })} /></Field>
+          <Field label="Address" full><input value={c.address} disabled={!can("settings.manage")} onChange={(e) => setF({ ...c, address: e.target.value })} /></Field>
+          <Field label="GSTIN"><input value={c.gstin} disabled={!can("settings.manage")} onChange={(e) => setF({ ...c, gstin: e.target.value.toUpperCase() })} style={{ fontFamily: "var(--mono)" }} /></Field>
+          <Field label="State code" hint="Two digits — 08 is Rajasthan. Everything inter-state is decided off this."><input value={c.state} disabled={!can("settings.manage")} maxLength={2} onChange={(e) => setF({ ...c, state: e.target.value })} style={{ fontFamily: "var(--mono)" }} /></Field>
+          <Field label="Phone"><input value={c.phone} disabled={!can("settings.manage")} onChange={(e) => setF({ ...c, phone: e.target.value })} /></Field>
+          <Field label="Label mark" hint={`Two or three letters for a carton label. Blank uses the initials — ${initialsOf(c.name) || "VC"}.`}>
+            <input value={c.mark ?? ""} disabled={!can("settings.manage")} maxLength={6} placeholder={initialsOf(c.name)} onChange={(e) => setF({ ...c, mark: e.target.value.toUpperCase() })} style={{ fontFamily: "var(--mono)", fontWeight: 700 }} />
+          </Field>
+          <Field label="Item code prefix" hint={`The front of every code you issue — ${prefix}-AAKASH-1201. Blank uses the mark.`}>
+            <input value={c.codePrefix ?? ""} disabled={!can("settings.manage")} maxLength={6} placeholder={mark} onChange={(e) => setF({ ...c, codePrefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} style={{ fontFamily: "var(--mono)" }} />
+          </Field>
+        </div>
+
+        <div className="st" style={{ marginTop: 14 }}>How the label will read</div>
+        <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginTop: 8 }}>
+          <div style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 14, textAlign: "center", background: "#fff", width: 190 }}>
+            <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: ".14em", color: "var(--ac)", lineHeight: 1 }}>{mark}</div>
+            <div style={{ width: 104, height: 104, margin: "10px auto", border: "1px dashed var(--bd)", borderRadius: 4, display: "grid", placeItems: "center", color: "var(--t4)", fontSize: 11 }}>QR</div>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 13.5, fontWeight: 700 }}>{prefix}-AAKASH-1201</div>
+            <div className="sm" style={{ marginTop: 3 }}>aakash 1201</div>
+          </div>
+          <div className="sm" style={{ flex: 1 }}>The mark is set large because it is read at a distance; the code beneath it is what gets typed and spoken. Codes already issued keep the prefix they were issued with — this only changes what is suggested next time, and every old code stays scannable.</div>
+        </div>
+
+        {can("settings.manage") && <div style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 14 }}>
+          <button className="b b-p" disabled={busy || !f} onClick={save}>{f ? "Save company details" : "Nothing changed"}</button>
+          {f && <button className="b b-o" onClick={() => setF(null)}>Discard</button>}
+        </div>}
+      </div>
+    </Panel>
+  </>;
+}
 
 function LinesTab() {
   const { data: lines } = useLines(); const { toast, openModal } = useUI();
@@ -214,9 +279,11 @@ function NewUserModal({ portal, onDone }: { portal: boolean; onDone: () => void 
 
 function CredentialsModal({ name, username, password, portal, reset }: { name: string; username: string; password: string; portal: boolean; reset?: boolean }) {
   const { closeModal, toast } = useUI();
+  const { data: cfg } = useApi<{ company: { name: string } }>("/api/settings");
+  const firmName = cfg?.company.name ?? "";
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const link = `${origin}/login`;
-  const message = `Vivaha Cards — ${portal ? "customer portal" : "office"} sign-in\n${link}\nUsername: ${username}\nTemporary password: ${password}\n\nYou will be asked to set your own password the first time you sign in.`;
+  const message = `${firmName} — ${portal ? "customer portal" : "office"} sign-in\n${link}\nUsername: ${username}\nTemporary password: ${password}\n\nYou will be asked to set your own password the first time you sign in.`;
   const copy = async (text: string, what: string) => { try { await navigator.clipboard.writeText(text); toast(`${what} copied`, "s"); } catch { toast("Could not reach the clipboard — select and copy by hand", "e"); } };
   return <ModalFrame title={reset ? `New password for ${name}` : `${name} is set up`} onClose={closeModal} actions={<><button className="b b-o" onClick={() => copy(message, "Sign-in details")}>Copy message</button><button className="b b-p" onClick={closeModal}>Done</button></>}>
     <Note k="w" style={{ marginBottom: 13 }}>This password is shown once. Close this box and it cannot be read again — you would have to issue another reset.</Note>

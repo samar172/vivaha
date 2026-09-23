@@ -6,6 +6,52 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (night) — The label carries a mark, and the marking is the office's
+
+### VC, not VIVAHA CARDS
+
+A carton label is read across a godown at arm's length. The firm's whole name,
+set small enough to fit beside a QR, is not read at all — so the label carries a
+**mark**: two or three letters, set large.
+
+It is a setting, not a constant, because the system was built for one shop and
+printed that shop's name everywhere. **Settings → Company** now edits the name,
+address, GSTIN, state code and phone — all of which reach a tax invoice, and the
+state code decides the whole inter-state GST split — plus the mark and the item
+code prefix, with a live preview of how the label will read. Blank falls back to
+the initials of the name, so *Jain Card Gallery* prints **JCG** without anybody
+typing it.
+
+Four other places signed the firm's name into a message or a badge — the bill
+share, the cart chase, the credentials hand-off, the stock screen's label badge.
+All read the setting now.
+
+### The marking on an item is typed, not generated
+
+`relabel` had always accepted a code; the screen simply never offered one, so
+every item got `VC-` plus its design number whether the office marked things
+that way or not. **Issue your own code** now opens a box with the suggestion
+already in it, to accept or type over, and an item that already carries a code
+has **Change the code**.
+
+Changing it issues a new code and keeps the old one — cartons already on a shelf
+carry it, so it stays on file, scans, and says what replaced it. That was
+already the model; it just had no way in.
+
+A code is letters, numbers and dashes, because it gets written on a carton and
+read back over the phone. Anything else is refused, as is a duplicate, as is a
+"mark" that turns out to be a whole name.
+
+### Verified
+
+13 checks in `scripts/check_branding.py`, repeatable: a different firm set
+end-to-end and reaching the tax invoice, the suggested code following that
+firm's prefix, a typed code accepted and scanning, the marking changed with the
+old code still resolving and pointing at its successor, and three refusals. It
+puts the settings back when it is done. All six harnesses pass.
+
+---
+
 ## 2026-09-24 (evening) — One visit, one bill
 
 ### Printing asked for where it is actually given
