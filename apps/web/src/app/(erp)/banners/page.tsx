@@ -1,12 +1,12 @@
 "use client";
 import { useRef, useState } from "react";
-import { num, fDate } from "@vivaha/shared";
+import { num, fDate, itemRef } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, patch, del } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter } from "@/components/Shell";
-import { KPI, LineChip, Empty, Note, Field, ModalFrame } from "@/components/ui";
+import { KPI, LineChip, Empty, Note, Field, ModalFrame, Num } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import type { ItemView } from "@/components/types";
 
@@ -66,7 +66,7 @@ export default function BannersPage() {
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
               {a.isActive ? <span className="bd b-ok">Live</span> : <span className="bd b-nu">Off</span>}
               {a.lineId ? <LineChip id={a.lineId} /> : <span className="bd b-nu">All lines</span>}
-              {a.item && <span className="bd b-nu">opens {a.item.sku}</span>}
+              {a.item && <span className="bd b-nu">opens {itemRef(a.item)}</span>}
             </div>
             {(a.startsAt || a.endsAt) && <div className="sm" style={{ marginTop: 6 }}>
               {a.startsAt ? `from ${fDate(a.startsAt)}` : "from now"} · {a.endsAt ? `until ${fDate(a.endsAt)}` : "no end date"}
@@ -171,12 +171,12 @@ function BannerForm({ ad, onSaved }: { ad?: Ad; onSaved: () => void }) {
       <Field label="Tapping it opens" hint={f.itemId ? "That item, ready to book" : f.lineId ? "That line's catalogue" : "Nothing — it will not look like a button"}>
         <select value={f.itemId} onChange={(e) => setF({ ...f, itemId: e.target.value })}>
           <option value="">{f.lineId ? "The line's catalogue" : "Nothing — just a notice"}</option>
-          {its.slice(0, 300).map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}
+          {its.slice(0, 300).map((i) => <option key={i.id} value={i.id}>{itemRef(i)} — {i.name}</option>)}
         </select>
       </Field>
       <Field label="Runs from" hint="Leave empty to start now"><input type="date" value={f.startsAt} onChange={(e) => setF({ ...f, startsAt: e.target.value })} /></Field>
       <Field label="Runs until" hint="Leave empty for no end"><input type="date" value={f.endsAt} onChange={(e) => setF({ ...f, endsAt: e.target.value })} /></Field>
-      <Field label="Order" hint="Lower shows first when several match"><input type="number" value={f.sortOrder} onChange={(e) => setF({ ...f, sortOrder: Number(e.target.value) })} /></Field>
+      <Field label="Order" hint="Lower shows first when several match"><Num value={f.sortOrder} onChange={(val) => setF({ ...f, sortOrder: val })} /></Field>
       <Field label="Live"><select value={f.isActive ? "y" : "n"} onChange={(e) => setF({ ...f, isActive: e.target.value === "y" })}><option value="y">Yes — show it in the portal</option><option value="n">No — keep it off</option></select></Field>
     </div>
 

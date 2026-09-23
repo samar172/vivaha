@@ -10,7 +10,7 @@ import { useUI, errMsg, setPanelLang } from "@/lib/ui";
 import { Section, Field, Note } from "./ui";
 import { FirstLoginGate } from "./FirstLogin";
 import { InstallApp, InstallButton } from "./InstallApp";
-import { money, num, fDT, type Perm } from "@vivaha/shared";
+import { money, num, fDT, type Perm, itemRef } from "@vivaha/shared";
 import { ROLE_LABELS } from "@vivaha/shared";
 import { Icon, KIND_ICON, type IconName } from "./icons";
 
@@ -165,7 +165,7 @@ function Palette({ initial, onClose, setGodown, godowns }: { initial: string; on
           {nav.length > 0 && <><div className="plg">Go to</div>{nav.slice(0, 6).map((i) => <div className="pli" key={i.k} onClick={() => go("/" + i.k)}><span className="ic"><Icon n={i.i} s={15} /></span>{i.l}</div>)}</>}
           {ql.startsWith("godown") && <><div className="plg">Godown</div>{[{ id: "ALL", name: "All godowns" }, ...godowns].map((g) => <div className="pli" key={g.id} onClick={() => setGodown(g.id)}><span className="ic"><Icon n="pin" s={15} /></span>{g.name}</div>)}</>}
           {data?.orders.length ? <><div className="plg">Orders</div>{data.orders.map((o) => <div className="pli" key={o.id} onClick={() => go(`/orders?open=${o.id}`)}><span className="ic"><Icon n="receipt" s={15} /></span>{o.id} — {o.firm}<kbd>{o.status.replace(/_/g, " ")}</kbd></div>)}</> : null}
-          {data?.items.length ? <><div className="plg">Items</div>{data.items.map((i) => <div className="pli" key={i.id} onClick={() => go(`/items/${i.id}`)}><span className="ic"><Icon n="tag" s={15} /></span>{i.sku} — {i.name}<kbd>{num(i.available)}</kbd></div>)}</> : null}
+          {data?.items.length ? <><div className="plg">Items</div>{data.items.map((i) => <div className="pli" key={i.id} onClick={() => go(`/items/${i.id}`)}><span className="ic"><Icon n="tag" s={15} /></span>{itemRef(i)} — {i.name}<kbd>{num(i.available)}</kbd></div>)}</> : null}
           {data?.customers.length ? <><div className="plg">Customers</div>{data.customers.map((c) => <div className="pli" key={c.id} onClick={() => go(`/customers/${c.id}`)}><span className="ic"><Icon n="users" s={15} /></span>{c.name}<kbd>{money(c.outstanding)}</kbd></div>)}</> : null}
           {!nav.length && !data?.orders.length && !data?.items.length && !data?.customers.length && !ql.startsWith("godown") && <div className="plg">No matches</div>}
         </div></div>

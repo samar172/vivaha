@@ -3,6 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { prisma } from "../../db";
+import { env } from "../../env";
 import * as svc from "./auth.service";
 
 const router = Router();
@@ -40,10 +41,22 @@ router.post("/change-password", requireAuth, asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Demo helper for the login screen's role/firm pickers (names only — no secrets).
+// The login screen's demo pickers, and off unless somebody deliberately turns
+// them on.
+//
+// This is unauthenticated, and on a live system it was listing every active
+// account: the office's usernames and roles, and every retailer's username
+// alongside their firm name, town and pricing group — to anyone who opened the
+// login page. That is half of each credential and a customer list, given away.
+//
+// It is genuinely useful on a demo, so it stays, behind DEMO_LOGINS=1. With the
+// flag off it returns nothing and the screen asks people to type the username
+// and password the office issued them, which is what a real shop does.
 router.get("/demo-logins", asyncHandler(async (_req, res) => {
+  if (!env.DEMO_LOGINS) return res.json({ demo: false, internal: [], customers: [] });
   const users = await prisma.user.findMany({ where: { isActive: true }, include: { customer: { select: { name: true, group: true, tehsil: true } } }, orderBy: { createdAt: "asc" } });
   res.json({
+    demo: true,
     internal: users.filter((u) => u.role !== "CUSTOMER").map((u) => ({ username: u.username, name: u.name, role: u.role })),
     customers: users.filter((u) => u.role === "CUSTOMER" && u.customer).map((u) => ({ username: u.username, firm: u.customer!.name, group: u.customer!.group, tehsil: u.customer!.tehsil })),
   });

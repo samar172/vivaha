@@ -190,13 +190,31 @@ router.get("/:id/invoice/:no", requirePerm("order.view", "ledger.view"), asyncHa
   // rather than only the one on the customer record.
   const inv = await prisma.invoice.findUnique({ where: { no: req.params.no }, include: { lines: { orderBy: { id: "asc" } }, customer: { include: { contacts: true } }, order: { select: { id: true, dispatches: true, lines: { select: { itemId: true, shipped: true } } } }, amendments: { orderBy: { at: "desc" } } } });
   if (!inv) return res.status(404).json({ error: "Invoice not found" });
+  const named = await prisma.item.findMany({
+    where: { id: { in: inv.lines.map((l) => l.itemId) } },
+    select: { id: true, designNo: true, codes: { where: { status: "ACTIVE" }, select: { code: true, kind: true } } },
+  });
+  const refOf = (itemId: string) => {
+    const it = named.find((x) => x.id === itemId);
+    if (!it) return "";
+    const own = it.codes.find((c) => c.kind === "OWN")?.code ?? it.codes[0]?.code ?? null;
+    return (own || it.designNo || "").trim();
+  };
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Invoice viewed", entityType: "Invoice", entityId: inv.no });
   res.json({
     ...inv, taxable: D(inv.taxable), cgst: D(inv.cgst), sgst: D(inv.sgst), igst: D(inv.igst), total: D(inv.total),
     customer: { ...inv.customer, creditLimit: D(inv.customer.creditLimit) },
     // Shipped-per-item travels with the bill so the correction screen can say
     // what the ceiling on each line is before anybody types over it.
-    lines: inv.lines.map((l) => ({ ...l, rate: D(l.rate), amount: D(l.amount), shipped: inv.order.lines.find((x) => x.itemId === l.itemId)?.shipped ?? 0 })),
+    lines: inv.lines.map((l) => ({
+      ...l, rate: D(l.rate), amount: D(l.amount),
+      shipped: inv.order.lines.find((x) => x.itemId === l.itemId)?.shipped ?? 0,
+      // What the office calls it. The stored sku stays on the row as the key it
+      // always was; this is what the bill prints. InvoiceLine keeps no relation
+      // to Item on purpose — a bill is a snapshot — so the reference is looked
+      // up alongside rather than joined.
+      ref: refOf(l.itemId) || l.sku,
+    })),
     amendments: inv.amendments.map((a) => ({ ...a, oldTotal: D(a.oldTotal), newTotal: D(a.newTotal) })),
     company: await getCompany(), whatsappFrom: await getSetting<string>("WHATSAPP_FROM", ""),
   });

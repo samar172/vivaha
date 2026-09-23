@@ -17,6 +17,11 @@ const envSchema = z.object({
   // Format: cloudinary://API_KEY:API_SECRET@CLOUD_NAME
   CLOUDINARY_URL: z.string().optional(),
   UPLOAD_DIR: z.string().default("./uploads"),
+  // The login screen's demo pickers. Off unless deliberately turned on: the
+  // endpoint behind them is unauthenticated, and on a live system it listed
+  // every account — office usernames, and every retailer's username beside
+  // their firm, town and pricing group.
+  DEMO_LOGINS: z.string().optional().transform((v) => v === "1" || v === "true"),
 });
 
 export const env = envSchema.parse(process.env);

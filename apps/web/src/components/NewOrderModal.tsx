@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { money, num, type Band, rate } from "@vivaha/shared";
+import { money, num, type Band, rate, itemRef } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, get } from "@/lib/api";
-import { ModalFrame, Field, Note, Empty, GateDot, BandPill, Thumb } from "@/components/ui";
+import { ModalFrame, Field, Note, Empty, GateDot, BandPill, Thumb, Num } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import type { Customer, Order } from "@/components/types";
 
@@ -95,8 +95,8 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
     try {
       const r = await get<{ item: { id: string; sku: string; name: string; lineId: string } }>(`/api/codes/resolve?code=${encodeURIComponent(code.trim())}`);
       const hit = cat?.items.find((i) => i.id === r.item.id);
-      if (!hit) { toast(`${r.item.sku} is on another business line — switch the line to add it`, "w"); return; }
-      add(hit); setQ(""); toast(`${hit.sku} added`, "s");
+      if (!hit) { toast(`${itemRef(r.item)} is on another business line — switch the line to add it`, "w"); return; }
+      add(hit); setQ(""); toast(`${itemRef(hit)} added`, "s");
     } catch { toast(`No item carries the code ${code.trim()}`, "e"); }
   };
   const setQty = (id: string, n: number) => setCart((c) => ({ ...c, [id]: Math.max(0, n) }));
@@ -153,7 +153,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
         <table className="dg"><thead><tr><th style={{ width: 30 }}></th><th>Item</th><th className="n">MOQ</th><th className="n">Available</th><th className="n">Rate</th><th></th></tr></thead><tbody>
           {cat?.items.length ? cat.items.map((it) => <tr key={it.id} style={{ cursor: "default" }}>
             <td>{it.available >= it.moq && !cart[it.id] ? <input className="ck" type="checkbox" checked={sel.has(it.id)} onChange={() => toggleOne(it.id)} /> : null}</td>
-            <td className="w"><div style={{ display: "flex", gap: 7, alignItems: "center" }}><Thumb it={it} w={26} h={34} /><div><div>{it.name}</div><div className="sm"><span className="rid">{it.sku}</span>{it.designNo ? ` · ${it.designNo}` : ""}</div></div></div></td>
+            <td className="w"><div style={{ display: "flex", gap: 7, alignItems: "center" }}><Thumb it={it} w={26} h={34} /><div><div>{it.name}</div><div className="sm"><span className="rid">{itemRef(it)}</span>{it.designNo ? ` · ${it.designNo}` : ""}</div></div></div></td>
             <td className="n tab">{num(it.moq)}</td>
             <td className="n tab">{num(it.available)} <BandPill b={it.band} /></td>
             <td className="n tab">{money(it.rate)}<div className="sm">at MOQ</div></td>
@@ -169,8 +169,8 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
             const l = qt?.lines.find((x) => x.itemId === id);
             const it = cat?.items.find((x) => x.id === id);
             return <tr key={id} style={{ cursor: "default" }}>
-              <td className="w">{l?.name ?? it?.name ?? id}<div className="sm"><span className="rid">{l?.sku ?? it?.sku}</span>{l?.short ? <span style={{ color: "var(--er)" }}> · only {num(l.available)} available</span> : l?.belowMoq ? <span style={{ color: "var(--er)" }}> · below MOQ {num(l.moq)}</span> : null}</div></td>
-              <td className="n"><input type="number" style={{ width: 88, textAlign: "right" }} value={qty} onChange={(e) => setQty(id, Number(e.target.value))} /></td>
+              <td className="w">{l?.name ?? it?.name ?? id}<div className="sm"><span className="rid">{l ? itemRef(l) : it ? itemRef(it) : ""}</span>{l?.short ? <span style={{ color: "var(--er)" }}> · only {num(l.available)} available</span> : l?.belowMoq ? <span style={{ color: "var(--er)" }}> · below MOQ {num(l.moq)}</span> : null}</div></td>
+              <td className="n"><Num style={{ width: 88, textAlign: "right" }} value={qty} onChange={(val) => setQty(id, val)} /></td>
               <td className="n tab">{l ? <>{rate(l.rate)}<div className="sm">{l.priceSrc}</div></> : "…"}</td>
               <td className="n tab" style={{ fontWeight: 600 }}>{l ? money(l.amount) : "…"}</td>
               <td><button className="b b-g b-s" onClick={() => drop(id)}><Icon n="x" s={11} /></button></td>

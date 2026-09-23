@@ -544,6 +544,24 @@ input[type=number]{-moz-appearance:textfield}
   .insa .b-s{min-height:34px}
 }
 
+/* A password you can check before pressing the button — typed on a phone, at a
+   counter, from a message somebody read out. */
+.lg-pw{position:relative;display:flex;align-items:center}
+.lg-pw input{flex:1;padding-right:62px}
+.lg-eye{position:absolute;right:8px;font-size:12px;font-weight:600;color:var(--ac);padding:4px 6px;border-radius:5px;background:none;border:0;cursor:pointer}
+.lg-eye:hover{background:var(--ac-bg)}
+.lg-demo{margin-top:13px;padding-top:12px;border-top:1px dashed var(--bd)}
+.lg-demo .lb{margin-bottom:5px}
+
+/* ============ TYPE-TO-FIND PICKER ============ */
+/* A list of matches under the box being typed in. Scrolls rather than growing,
+   so a line near the bottom of a long form does not push the buttons off. */
+.pick{position:absolute;z-index:60;left:0;right:0;top:calc(100% + 3px);max-height:248px;overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:7px;box-shadow:0 14px 34px rgba(16,24,40,.16)}
+.picko{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 11px;font-size:13.5px;border:0;background:none;cursor:pointer;border-bottom:1px solid var(--bd-soft)}
+.picko:last-child{border-bottom:0}
+.picko.on,.picko:hover{background:var(--ac-bg)}
+.picko .sm{margin-top:1px}
+
 /* Instructions shown beside a manual Install button, for the browsers that
    have no install event and only their own menu. */
 .inss{margin-top:8px;border:1px solid var(--bd);background:var(--panel-2);border-radius:7px;padding:9px 11px}

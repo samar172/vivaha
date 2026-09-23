@@ -6,6 +6,73 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-23 (later) — Five things the office could not do
+
+### A number field you could not empty
+
+`<input type="number" value={n} onChange={e => set(Number(e.target.value))}/>`
+is the obvious thing to write and it is wrong: clearing the box gives
+`Number("")`, which is 0, which is written straight back in. The operator
+deletes the figure, a 0 appears under the cursor, and the only way to type 250
+is to select the 0 first. Every quantity, rate, credit limit and GST box in the
+system behaved like that — forty of them.
+
+`<Num>` holds the text being typed separately from the number the form holds.
+An empty box stays empty and reports 0; the form learns the number the moment
+it becomes one. Uncontrolled save-on-blur boxes were left alone: the browser
+owns their text, so they never had the fault.
+
+### Finding an item by typing
+
+The purchase screen picked items from a `<select>` of everything the firm has
+ever stocked. It is a type-to-find box now, matching on the name, the design
+number, the label code on the carton and the system's own key — because a
+vendor's invoice names a card whichever way the vendor writes it.
+
+### WC-1009 is not a name anybody uses
+
+`sku` is a key the system generates and the office does not think in it; they
+think in the design number on the card and the code they print on their label.
+Screens show that now — `itemRef` across every browsing surface, 46 of them.
+A bill uses `itemRefOr`, which falls back to the key, because a line on a tax
+invoice must carry *some* identifier; the reference is looked up alongside the
+line rather than joined, since an invoice line is deliberately a snapshot.
+
+An item with neither a design number nor its own code still shows the generated
+key, and the fix for that is to fill one in — a data job, not a code one.
+
+### Telling a firm its goods have gone
+
+A **Share** button on the Shipped queue, on the row, opening the dispatch
+message ready-addressed. It was three clicks inside the order before.
+
+### Signing in with the credentials you were actually given
+
+The login screen was built for a demo and never grew up: the username was a
+dropdown of accounts the server volunteered, and the password came prefilled
+with the shared one. A retailer handed a username and password by the office had
+nowhere to type either.
+
+Both are typed now, on both tabs, with a show/hide toggle — a wrong password is
+the commonest reason somebody cannot get in, and this is read off a phone at a
+counter.
+
+The demo pickers still exist behind `DEMO_LOGINS=1`, **off by default**, because
+the endpoint behind them is unauthenticated and on a live system it was handing
+out every office username and role, and every retailer's username beside their
+firm, town and pricing group, to anybody who opened the page. That is half of
+each credential and a customer list, given away.
+
+### Verified
+
+In Chrome against the production build: clearing a quantity box leaves it empty
+and accepts 250; the item picker matches on name and on the generated key while
+showing the firm's own reference; Share appears on the Shipped queue and on no
+other tab; a typed portal sign-in lands on the shop; and `demo-logins` returns
+nothing with the flag off and the full list with it on.
+
+---
+
 ## 2026-09-23 — Shelves, editable attributes, and money to the paisa
 
 Four things in one round. The pricing one is the serious one.

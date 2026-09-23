@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { money, money2, num, fDate, locationCode, rate } from "@vivaha/shared";
+import { useMemo, useState } from "react";
+import { money, money2, num, fDate, locationCode, rate, itemRef, itemHaystack } from "@vivaha/shared";
 import { useApi, useGodowns, useLines, refresh, type Godown } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
@@ -9,7 +9,7 @@ import { useUI, errMsg } from "@/lib/ui";
 import { post, patch } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
-import { Pill, DF, Section, ModalFrame, Field, Note } from "@/components/ui";
+import { Pill, DF, Section, ModalFrame, Field, Note, Num } from "@/components/ui";
 import { Qr } from "@/components/Qr";
 import type { ItemView } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
@@ -47,7 +47,7 @@ export default function PurchasePage() {
     <div className="wa">
       {tab === "grn" && <><div className="tbar"><div className="tsr"><Icon n="search" s={13} /><input placeholder="PO or invoice number…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
         <div className="gw"><table className="dg"><thead><tr><th>Document</th><th>Vendor</th><th>Date</th><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Freight</th><th className="n">Value</th><th>Godown split</th><th>Status</th></tr></thead><tbody>
-          {pg.rows.map((p) => { const l = p.lines[0]; return <tr key={p.id} onClick={() => router.push(`/purchase/${p.id}`)}><td><span className="rid">{p.invNo}</span><div className="sm">{p.id}</div></td><td className="w">{p.vendor.name}<div className="sm">{p.vendor.gstin}</div></td><td className="tab">{fDate(p.date)}</td><td className="w">{l?.item.name}<div className="sm">{l?.item.sku}{p.lines.length > 1 ? ` +${p.lines.length - 1}` : ""}</div></td><td className="n tab">{num(l?.qty)}</td><td className="n tab">{money(l?.rate)}</td><td className="n tab">{money(p.freight)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(p.total + p.freight)}</td><td className="sm">{l && Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => g.replace("GD-", "") + ":" + num(l.alloc[g])).join(" · ") : "—"}</td><td><Pill s={p.status} /></td></tr>; })}
+          {pg.rows.map((p) => { const l = p.lines[0]; return <tr key={p.id} onClick={() => router.push(`/purchase/${p.id}`)}><td><span className="rid">{p.invNo}</span><div className="sm">{p.id}</div></td><td className="w">{p.vendor.name}<div className="sm">{p.vendor.gstin}</div></td><td className="tab">{fDate(p.date)}</td><td className="w">{l?.item.name}<div className="sm">{l ? itemRef(l.item) : ""}{p.lines.length > 1 ? ` +${p.lines.length - 1}` : ""}</div></td><td className="n tab">{num(l?.qty)}</td><td className="n tab">{money(l?.rate)}</td><td className="n tab">{money(p.freight)}</td><td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(p.total + p.freight)}</td><td className="sm">{l && Object.keys(l.alloc).length ? Object.keys(l.alloc).map((g) => g.replace("GD-", "") + ":" + num(l.alloc[g])).join(" · ") : "—"}</td><td><Pill s={p.status} /></td></tr>; })}
         </tbody></table></div></>}
       {tab === "vend" && <div className="gw"><table className="dg"><thead><tr><th>Vendor</th><th>GSTIN</th><th>City</th><th>Terms</th><th>Phone</th><th className="n">Documents</th><th className="n">Purchased</th><th></th></tr></thead><tbody>{vendors?.map((v) => <tr key={v.id} onClick={() => can("purchase.create") && openModal(<VendorForm vendor={v} />)} style={{ cursor: can("purchase.create") ? "pointer" : "default" }}><td>{v.name}</td><td className="sm">{v.gstin}</td><td>{v.city}</td><td>{v.terms}</td><td className="sm">{v.phone}</td><td className="n tab">{v.documents}</td><td className="n tab">{money(v.purchased)}</td><td>{can("purchase.create") && <button className="b b-o b-s" onClick={(e) => { e.stopPropagation(); openModal(<VendorForm vendor={v} />); }}>Edit</button>}</td></tr>)}</tbody></table></div>}
       {tab === "pay" && <><Note style={{ marginBottom: 11 }}>Vendor payables mirror the customer ledger: an invoice posts a credit, a payment posts a debit, ageing runs from the invoice date.</Note>
@@ -88,7 +88,7 @@ export function PurchaseDetail({ id }: { id: string }) {
             <Section t="Lines">
               <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Amount</th><th>Godown</th></tr></thead><tbody>
                 {p.lines.map((l) => <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/items/${l.itemId}`)}>
-                  <td className="w">{l.item.name}<div className="sm"><span className="rid">{l.item.sku}</span>{l.batchNo ? ` · batch ${l.batchNo}` : ""}</div></td>
+                  <td className="w">{l.item.name}<div className="sm"><span className="rid">{itemRef(l.item)}</span>{l.batchNo ? ` · batch ${l.batchNo}` : ""}</div></td>
                   <td className="n tab">{num(l.qty)}</td>
                   <td className="n tab">{rate(l.rate)}</td>
                   <td className="n tab">{money(l.qty * l.rate)}</td>
@@ -108,7 +108,7 @@ export function PurchaseDetail({ id }: { id: string }) {
               {labelled.length
                 ? labelled.map((l) => <div key={l.id} style={{ display: "flex", gap: 11, alignItems: "center", marginBottom: 9 }}>
                     <Qr value={l.mfrCode!} size={62} />
-                    <div><div style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700 }}>{l.mfrCode}</div><div className="sm">{l.item.sku} · manufacturer label, filed on receipt</div></div>
+                    <div><div style={{ fontFamily: "var(--mono)", fontSize: 14, fontWeight: 700 }}>{l.mfrCode}</div><div className="sm">{itemRef(l.item)} · manufacturer label, filed on receipt</div></div>
                   </div>)
                 : <div className="sm">No manufacturer label was recorded on this document. It is captured at goods receipt, so a carton that arrives under a factory code can still be scanned later.</div>}
             </Section>
@@ -166,7 +166,7 @@ export function PlaceRows({ godowns, places, setPlaces, qty }: { godowns: Godown
           </optgroup>
           : <option key={r.id} value={r.code}>{r.code}{r.name ? ` — ${r.name}` : ""}</option>))}
       </select>
-      <input type="number" value={p.qty} onChange={(e) => set(i, { qty: Number(e.target.value) || 0 })} style={{ height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} />
+      <Num value={p.qty} onChange={(val) => set(i, { qty: val || 0 })} style={{ height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} />
       {places.length > 1
         ? <button className="b b-g b-s" type="button" onClick={() => setPlaces(places.filter((_, n) => n !== i))} title="Remove"><Icon n="x" s={11} /></button>
         : <span />}
@@ -188,6 +188,65 @@ function placeLabel(l: { alloc: Record<string, number>; places?: Place[] }, godo
   const places = allocToPlaces(l.alloc, l.places);
   if (!places.length) return "—";
   return places.map((p) => `${shortOf(p.godownId)}${p.rack ? " " + p.rack : ""}:${num(p.qty)}`).join(" · ");
+}
+
+// Finding an item by typing, rather than scrolling a list of every design the
+// firm has ever stocked.
+//
+// A vendor's invoice names the card the way the vendor writes it, which may be
+// the design number, the label code on the carton, or the name — so all of them
+// match, and so does the system's own key for anyone who happens to know it.
+// What is shown back is the design number and the name, because WC-1009 is a
+// key this office never asked for and does not think in.
+function ItemPick({ items, value, onPick, empty }: { items: ItemView[]; value: string; onPick: (id: string) => void; empty: string }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const picked = items.find((x) => x.id === value) ?? null;
+
+  const hits = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const pool = t ? items.filter((x) => itemHaystack(x).includes(t)) : items;
+    return pool.slice(0, 40);
+  }, [items, q]);
+
+  const choose = (x: ItemView) => { onPick(x.id); setQ(""); setOpen(false); setHi(0); };
+
+  // A picked item reads as a line, not as a box full of text to delete.
+  if (picked && !open) return <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+    <div style={{ flex: 1, minWidth: 0, border: "1px solid var(--bd)", borderRadius: 5, padding: "6px 9px", background: "var(--panel-2)" }}>
+      <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{picked.name}</div>
+      <div className="sm">{itemRef(picked) || picked.uom} · on hand {num(picked.available)}</div>
+    </div>
+    <button className="b b-o b-s" type="button" onClick={() => { setOpen(true); setQ(""); }}>Change</button>
+  </div>;
+
+  return <div style={{ position: "relative" }}>
+    <input
+      autoFocus={open} value={q} placeholder={empty}
+      onChange={(e) => { setQ(e.target.value); setOpen(true); setHi(0); }}
+      onFocus={() => setOpen(true)}
+      // Blur has to wait for the click on an option to land.
+      onBlur={() => setTimeout(() => setOpen(false), 140)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, hits.length - 1)); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+        else if (e.key === "Enter" && hits[hi]) { e.preventDefault(); choose(hits[hi]); }
+        else if (e.key === "Escape") { setOpen(false); }
+      }}
+    />
+    {open && <div className="pick">
+      {hits.length ? hits.map((x, n) => <button
+        key={x.id} type="button" className={"picko" + (n === hi ? " on" : "")}
+        onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setHi(n)} onClick={() => choose(x)}>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.name}</span>
+          {itemRef(x) && <span className="sm">{itemRef(x)}</span>}
+        </span>
+        <span className="sm" style={{ whiteSpace: "nowrap" }}>{num(x.available)} {x.uom.toLowerCase()}</span>
+      </button>) : <div className="sm" style={{ padding: "9px 11px" }}>Nothing matches “{q}”. Create it below if the vendor has sent something new.</div>}
+    </div>}
+  </div>;
 }
 
 export function PurchaseModal({ po }: { po?: PO } = {}) {
@@ -289,19 +348,17 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
       return <div key={i} className="pol">
         <div className="polh">
           <span className="sm" style={{ fontWeight: 700 }}>Line {i + 1}</span>
-          {it && <span className="sm">{it.sku} · on hand {num(it.available)}</span>}
+          {it && <span className="sm">{itemRef(it)} · on hand {num(it.available)}</span>}
           <span style={{ marginLeft: "auto" }} />
           {rows.length > 1 && <button className="b b-g b-s" type="button" onClick={() => dropRow(i)} title="Remove this line"><Icon n="x" s={11} /></button>}
         </div>
         <div className="fg">
           <Field label="Item" full>
-            <select value={r.itemId} onChange={(e) => setRow(i, { itemId: e.target.value, rate: its.find((x) => x.id === e.target.value)?.landedCost || r.rate })}>
-              <option value="">{its.length ? "Choose an item…" : `No ${L?.name} items yet`}</option>
-              {its.map((x) => <option key={x.id} value={x.id}>{x.sku} — {x.name}</option>)}
-            </select>
+            <ItemPick items={its} value={r.itemId} empty={its.length ? "Type to find an item…" : `No ${L?.name} items yet`}
+              onPick={(id) => setRow(i, { itemId: id, rate: its.find((x) => x.id === id)?.landedCost || r.rate })} />
           </Field>
-          <Field label="Quantity"><input type="number" value={r.qty} onChange={(e) => setRow(i, { qty: Number(e.target.value) })} /></Field>
-          <Field label="Rate (₹)"><input type="number" value={r.rate} onChange={(e) => setRow(i, { rate: Number(e.target.value) })} /></Field>
+          <Field label="Quantity"><Num value={r.qty} onChange={(val) => setRow(i, { qty: val })} /></Field>
+          <Field label="Rate (₹)"><Num value={r.rate} onChange={(val) => setRow(i, { rate: val })} /></Field>
           <Field label={L?.batchTracked ? "Batch (required)" : "Batch (if any)"}><input value={r.batchNo} onChange={(e) => setRow(i, { batchNo: e.target.value })} placeholder="e.g. B2699" /></Field>
           <Field label="Manufacturer label code"><input value={r.mfrCode} onChange={(e) => setRow(i, { mfrCode: e.target.value })} placeholder="e.g. SGP-4113" /></Field>
         </div>
@@ -329,11 +386,11 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
         const filled = { ...blankRow(), itemId: created.id, rate: created.landedCost || 0 };
         return blank >= 0 ? rs.map((r, n) => (n === blank ? filled : r)) : [...rs, filled];
       });
-      setAdding(false); toast(`${created.sku} created in ${L.name}`, "s"); refresh("/api/items");
+      setAdding(false); toast(`${itemRef(created)} created in ${L.name}`, "s"); refresh("/api/items");
     }} />}
 
     <div className="fg" style={{ marginTop: 13 }}>
-      <Field label="Freight & charges (₹) — whole document"><input type="number" value={f.freight} onChange={(e) => setF({ ...f, freight: Number(e.target.value) })} /></Field>
+      <Field label="Freight & charges (₹) — whole document"><Num value={f.freight} onChange={(val) => setF({ ...f, freight: val })} /></Field>
       <Field label="Status"><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value as "POSTED" })}><option value="POSTED">Received now (GRN)</option><option value="IN_TRANSIT">In transit (PO)</option></select></Field>
       {f.status === "IN_TRANSIT" && <Field label="ETA"><input type="date" value={f.eta} onChange={(e) => setF({ ...f, eta: e.target.value })} /></Field>}
     </div>
@@ -441,11 +498,11 @@ function NewItemInline({ line, vendorId, onDone }: { line: { id: string; name: s
       {attrs?.filter((a) => a.lineId === line.id).map((a) => <Field key={a.key} label={a.label}><select value={n.attrs[a.key] ?? ""} onChange={(e) => setN({ ...n, attrs: { ...n.attrs, [a.key]: e.target.value } })}><option value="">—</option>{a.values.map((v) => <option key={v}>{v}</option>)}</select></Field>)}
       <Field label="UOM"><input value={n.uom} onChange={(e) => setN({ ...n, uom: e.target.value })} /></Field>
       <Field label="Pack unit"><select value={n.packUom} onChange={(e) => setN({ ...n, packUom: e.target.value })}><option value="">—</option>{line.packUoms.map((p) => <option key={p}>{p}</option>)}</select></Field>
-      <Field label="Per pack"><input type="number" value={n.perPack} onChange={(e) => setN({ ...n, perPack: Number(e.target.value) })} /></Field>
-      <Field label="MOQ"><input type="number" value={n.moq} onChange={(e) => setN({ ...n, moq: Number(e.target.value) })} /></Field>
-      <Field label="Landed cost (₹)"><input type="number" value={n.landedCost} onChange={(e) => setN({ ...n, landedCost: Number(e.target.value) })} /></Field>
-      <Field label="Slab 1 rate (₹)"><input type="number" value={n.base} onChange={(e) => setN({ ...n, base: Number(e.target.value) })} /></Field>
-      <Field label="GST %"><input type="number" value={n.gstPct} onChange={(e) => setN({ ...n, gstPct: Number(e.target.value) })} /></Field>
+      <Field label="Per pack"><Num value={n.perPack} onChange={(val) => setN({ ...n, perPack: val })} /></Field>
+      <Field label="MOQ"><Num value={n.moq} onChange={(val) => setN({ ...n, moq: val })} /></Field>
+      <Field label="Landed cost (₹)"><Num value={n.landedCost} onChange={(val) => setN({ ...n, landedCost: val })} /></Field>
+      <Field label="Slab 1 rate (₹)"><Num value={n.base} onChange={(val) => setN({ ...n, base: val })} /></Field>
+      <Field label="GST %"><Num value={n.gstPct} onChange={(val) => setN({ ...n, gstPct: val })} /></Field>
     </div>
     <div className="sm" style={{ marginTop: 8 }}>SKU is issued automatically from the line code. Deeper slabs are set at 89 / 80 / 74 % of slab 1 — tune them later under Items &amp; Rates.</div>
     <button className="b b-p" style={{ marginTop: 11 }} disabled={busy} onClick={save}>{busy ? "Saving…" : "Create and use this item"}</button>
@@ -461,7 +518,7 @@ function ReceiveModal({ p }: { p: PO }) { const { closeModal, toast } = useUI();
   const [mfr, setMfr] = useState<Record<string, string>>(() => Object.fromEntries(p.lines.map((l) => [l.itemId, l.mfrCode ?? ""])));
   const go = async () => { try { await post(`/api/purchases/${p.id}/receive`, { lines: p.lines.map((l) => ({ itemId: l.itemId, places: al[l.itemId] ?? [], alloc: placesToAlloc(al[l.itemId] ?? []), batchNo: batch[l.itemId] || undefined, mfrCode: mfr[l.itemId] || undefined })) }); toast("Goods received — stock landed, landed cost recomputed", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Receive — " + p.invNo} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Post GRN</button></>}>
-    {p.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 7 }}>{l.item.sku} — {l.item.name} · {num(l.qty)} {l.item.uom}</div><PlaceRows godowns={godowns ?? []} places={al[l.itemId] ?? []} setPlaces={(pl) => setAl({ ...al, [l.itemId]: pl })} qty={l.qty} /><Field label="Batch (if batch-tracked)"><input value={batch[l.itemId] ?? ""} onChange={(e) => setBatch({ ...batch, [l.itemId]: e.target.value })} /></Field><Field label="Manufacturer QR / label code on the cartons"><input value={mfr[l.itemId] ?? ""} onChange={(e) => setMfr({ ...mfr, [l.itemId]: e.target.value })} placeholder="Scan or type — e.g. SGP-4113" /></Field></div>)}
+    {p.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 7 }}>{itemRef(l.item)} — {l.item.name} · {num(l.qty)} {l.item.uom}</div><PlaceRows godowns={godowns ?? []} places={al[l.itemId] ?? []} setPlaces={(pl) => setAl({ ...al, [l.itemId]: pl })} qty={l.qty} /><Field label="Batch (if batch-tracked)"><input value={batch[l.itemId] ?? ""} onChange={(e) => setBatch({ ...batch, [l.itemId]: e.target.value })} /></Field><Field label="Manufacturer QR / label code on the cartons"><input value={mfr[l.itemId] ?? ""} onChange={(e) => setMfr({ ...mfr, [l.itemId]: e.target.value })} placeholder="Scan or type — e.g. SGP-4113" /></Field></div>)}
     <Note style={{ marginTop: 4 }}>Whatever label arrives on the cartons is filed against the item here. It stays scannable even after the office sticks its own code over it.</Note>
   </ModalFrame>;
 }
@@ -469,5 +526,5 @@ function ReceiveModal({ p }: { p: PO }) { const { closeModal, toast } = useUI();
 function VendorPayModal({ v }: { v: Vendor }) {
   const { closeModal, toast } = useUI(); const [amt, setAmt] = useState(v.outstanding); const [ref, setRef] = useState(() => "NEFT-" + Math.floor(Math.random() * 90000));
   const go = async () => { try { await post("/api/purchases/vendor-payments", { vendorId: v.id, amount: Number(amt), ref }); toast("Vendor payment recorded", "s"); closeModal(); refresh("/api/masters/vendors"); } catch (e) { toast(errMsg(e), "e"); } };
-  return <ModalFrame title={"Pay vendor — " + v.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Record payment</button></>}><div className="fg"><Field label="Amount (₹)"><input type="number" value={amt} onChange={(e) => setAmt(Number(e.target.value))} /></Field><Field label="Reference"><input value={ref} onChange={(e) => setRef(e.target.value)} /></Field></div></ModalFrame>;
+  return <ModalFrame title={"Pay vendor — " + v.name} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Record payment</button></>}><div className="fg"><Field label="Amount (₹)"><Num value={amt} onChange={(val) => setAmt(val)} /></Field><Field label="Reference"><input value={ref} onChange={(e) => setRef(e.target.value)} /></Field></div></ModalFrame>;
 }

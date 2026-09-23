@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { money, num, fDate, rate } from "@vivaha/shared";
+import { money, num, fDate, rate, itemRef } from "@vivaha/shared";
 import { useApi } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
@@ -80,7 +80,7 @@ function AbandonedCarts({ rows, onChanged }: { rows: AbandonedCart[]; onChanged:
         <td className="w" onClick={(e) => e.stopPropagation()}><a href={`/customers/${r.customer.id}`} onClick={(e) => { e.preventDefault(); router.push(`/customers/${r.customer.id}`); }}>{r.customer.name}</a><div className="sm">{r.customer.tehsil} · {r.customer.phone}</div></td>
         <td className="w">
           {r.lines.slice(0, 3).map((l) => <div key={l.itemId} className="sm">
-            <span className="rid">{l.sku}</span> × {num(l.qty)}
+            <span className="rid">{itemRef(l)}</span> × {num(l.qty)}
             {l.gone ? <span style={{ color: "var(--er)" }}> · no longer sold</span> : l.short ? <span style={{ color: "var(--wa)" }}> · only {num(l.available)} left</span> : null}
           </div>)}
           {r.lines.length > 3 ? <div className="sm">+{r.lines.length - 3} more</div> : null}
@@ -137,7 +137,7 @@ function BasketModal({ cart, onChanged }: { cart: AbandonedCart; onChanged: () =
       <th>Item</th><th className="n">Wanted</th><th className="n">Available</th><th className="n">Rate</th><th className="n">Amount</th>
     </tr></thead><tbody>
       {cart.lines.map((l) => <tr key={l.itemId} style={{ cursor: "pointer" }} onClick={() => { closeModal(); router.push(`/items/${l.itemId}`); }}>
-        <td className="w"><span className="rid">{l.sku}</span><div className="sm">{l.name}</div></td>
+        <td className="w"><span className="rid">{itemRef(l)}</span><div className="sm">{l.name}</div></td>
         <td className="n tab">{num(l.qty)}</td>
         <td className="n tab" style={{ color: l.gone ? "var(--er)" : l.short ? "var(--wa)" : undefined }}>
           {l.gone ? "no longer sold" : num(l.available)}
@@ -173,7 +173,7 @@ function ChaseModal({ cart, onDone }: { cart: AbandonedCart; onDone: () => void 
 
   const text = [
     `${cart.customer.name} — आपकी कार्ट में ${cart.count} आइटम हैं`,
-    cart.lines.slice(0, 3).map((l) => `${l.sku} × ${l.qty}`).join(", "),
+    cart.lines.slice(0, 3).map((l) => `${itemRef(l)} × ${l.qty}`).join(", "),
     `कुल ${money(cart.value)}`,
     note.trim(),
     "— Vivaha Cards",

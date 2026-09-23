@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import { money, money2, num, fDate, fDT, dueLbl, daysTo, rate, ORDER_STATUS_LABEL, type OrderStatus } from "@vivaha/shared";
+import { money, money2, num, fDate, fDT, dueLbl, daysTo, rate, ORDER_STATUS_LABEL, type OrderStatus, itemRef } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post } from "@/lib/api";
-import { DF, Section, ModalFrame, Field, Note, Hold, Timeline } from "./ui";
+import { DF, Section, ModalFrame, Field, Note, Hold, Timeline, Num } from "./ui";
 import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
 import { Icon } from "./icons";
@@ -87,7 +87,7 @@ export function OrderDetail({ id }: { id: string }) {
             <Section t={<>{lines?.find((l) => l.id === lid)?.name} · GST {groups[lid][0].gstPct}%</>}>
               <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>Item</th><th className="n">Qty</th><th className="n">Rate</th><th className="n">Amount</th><th>Godown</th></tr></thead><tbody>
                 {groups[lid].map((l) => <tr key={l.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/items/${l.itemId}`)}>
-                  <td className="w"><span className="rid">{l.item.sku}</span><div className="sm">{l.item.name}</div></td>
+                  <td className="w"><span className="rid">{itemRef(l.item)}</span><div className="sm">{l.item.name}</div></td>
                   <td className="n tab">{num(l.qty)}{l.shipped > 0 && l.shipped < l.qty && <div className="sm" style={{ color: "var(--wa)" }}>{num(l.shipped)} shipped</div>}</td>
                   <td className="n tab">{rate(l.rate)}<div className="sm">{l.priceSrc === "override" ? "override" : `slab ${rate(l.slabRate)} ×${l.mult}`}</div></td>
                   <td className="n tab">{money(l.amount)}</td>
@@ -182,14 +182,14 @@ function AllocModal({ o }: { o: Order }) { const { closeModal, toast } = useUI()
     let need = line.qty;
     for (const g of pool) { if (need <= 0) break; const take = Math.min(g.free, need); next[g.id] = take; need -= take; }
     setAl((a) => ({ ...a, [iid]: next }));
-    if (need > 0) toast(`Only ${line.qty - need} of ${line.qty} available across the godowns for ${line.item.sku}`, "w");
+    if (need > 0) toast(`Only ${line.qty - need} of ${line.qty} available across the godowns for ${itemRef(line.item)}`, "w");
   };
   const fifoAll = () => o.lines.forEach((l) => fifo(l.itemId));
 
   const save = async () => { if (o.lines.some((l) => sum(l.itemId) !== l.qty)) return toast("Every line must allocate to exactly its ordered quantity", "e"); try { await post(`/api/orders/${o.id}/allocate`, { alloc: al }); toast("Allocation saved", "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title={"Godown allocation — " + o.id} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-o" onClick={fifoAll}>Auto-allocate · oldest stock first</button><button className="b b-p" onClick={save}>Confirm allocation</button></>}>
     <Note style={{ marginBottom: 13 }}>Opened on the split the booking took, which is by highest availability. <b>Auto-allocate</b> re-does every line first-in-first-out — the godown holding the oldest stock is emptied first — and each line can be re-done on its own. Whatever you settle on, every line must allocate to exactly its ordered quantity before you can confirm.</Note>
-    {o.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}><div style={{ fontSize: 13.5, fontWeight: 700 }}>{l.item.sku} — {l.item.name} · need {num(l.qty)} {l.item.uom}</div><button className="b b-o b-s" style={{ marginLeft: "auto" }} onClick={() => fifo(l.itemId)}>Oldest first</button></div><div style={{ display: "flex", gap: 8 }}>{godowns?.map((g) => { const row = items?.items.find((i) => i.id === l.itemId)?.godowns.find((x) => x.godownId === g.id); const av = (row?.available ?? 0) + (l.alloc[g.id] || 0); return <div key={g.id} style={{ flex: 1 }}><div className="sm" style={{ marginBottom: 3 }}>{g.short} · avail {num(av)}{row?.oldestAt ? <> · since {fDate(row.oldestAt)}</> : null}</div><input type="number" value={al[l.itemId]?.[g.id] ?? 0} onChange={(e) => setAl({ ...al, [l.itemId]: { ...al[l.itemId], [g.id]: Number(e.target.value) || 0 } })} style={{ width: "100%", height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></div>; })}</div><div className="sm" style={{ marginTop: 6 }}>{sum(l.itemId) === l.qty ? <span style={{ color: "var(--ok)", fontWeight: 700 }}><Icon n="check" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(sum(l.itemId))} / {num(l.qty)} allocated</span> : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(sum(l.itemId))} / {num(l.qty)} — must equal the ordered quantity</span>}</div></div>)}
+    {o.lines.map((l) => <div key={l.id} style={{ border: "1px solid var(--bd)", borderRadius: 6, padding: 10, marginBottom: 9 }}><div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}><div style={{ fontSize: 13.5, fontWeight: 700 }}>{itemRef(l.item)} — {l.item.name} · need {num(l.qty)} {l.item.uom}</div><button className="b b-o b-s" style={{ marginLeft: "auto" }} onClick={() => fifo(l.itemId)}>Oldest first</button></div><div style={{ display: "flex", gap: 8 }}>{godowns?.map((g) => { const row = items?.items.find((i) => i.id === l.itemId)?.godowns.find((x) => x.godownId === g.id); const av = (row?.available ?? 0) + (l.alloc[g.id] || 0); return <div key={g.id} style={{ flex: 1 }}><div className="sm" style={{ marginBottom: 3 }}>{g.short} · avail {num(av)}{row?.oldestAt ? <> · since {fDate(row.oldestAt)}</> : null}</div><Num value={al[l.itemId]?.[g.id] ?? 0} onChange={(val) => setAl({ ...al, [l.itemId]: { ...al[l.itemId], [g.id]: val || 0 } })} style={{ width: "100%", height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} /></div>; })}</div><div className="sm" style={{ marginTop: 6 }}>{sum(l.itemId) === l.qty ? <span style={{ color: "var(--ok)", fontWeight: 700 }}><Icon n="check" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(sum(l.itemId))} / {num(l.qty)} allocated</span> : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(sum(l.itemId))} / {num(l.qty)} — must equal the ordered quantity</span>}</div></div>)}
   </ModalFrame>;
 }
 
@@ -267,13 +267,13 @@ function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openMod
 
   return <ModalFrame title={"Dispatch — " + o.id} onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={go}>Confirm dispatch</button></>}>
     <Note style={{ marginBottom: 13 }}>Enter the quantity actually shipped per line. Anything short creates a <b>backorder</b> that stays reserved — the invoice is raised only for what leaves the godown.</Note>
-    <table className="dg" style={{ marginBottom: 14 }}><thead><tr><th>Item</th><th className="n">Ordered</th><th className="n">Already shipped</th><th className="n">Ship now</th></tr></thead><tbody>{o.lines.map((l) => <tr key={l.id} style={{ cursor: "default" }}><td className="w">{l.item.sku}<div className="sm">{l.item.name}</div></td><td className="n tab">{num(l.qty)}</td><td className="n tab">{num(l.shipped)}</td><td className="n"><input type="number" value={ship[l.itemId]} min={0} max={l.qty - l.shipped} onChange={(e) => setShip({ ...ship, [l.itemId]: Number(e.target.value) || 0 })} style={{ width: 92, height: 29, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} /></td></tr>)}</tbody></table>
+    <table className="dg" style={{ marginBottom: 14 }}><thead><tr><th>Item</th><th className="n">Ordered</th><th className="n">Already shipped</th><th className="n">Ship now</th></tr></thead><tbody>{o.lines.map((l) => <tr key={l.id} style={{ cursor: "default" }}><td className="w">{itemRef(l.item)}<div className="sm">{l.item.name}</div></td><td className="n tab">{num(l.qty)}</td><td className="n tab">{num(l.shipped)}</td><td className="n"><Num value={ship[l.itemId]} min={0} max={l.qty - l.shipped} onChange={(val) => setShip({ ...ship, [l.itemId]: val || 0 })} style={{ width: 92, height: 29, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} /></td></tr>)}</tbody></table>
 
     <div className="st">How it is going</div>
     <div style={{ display: "flex", gap: 7, margin: "7px 0 11px" }}>{tab("TRANSPORT", "Transport company")}{tab("BUS", "By bus")}</div>
 
     {mode === "TRANSPORT"
-      ? <div className="fg"><Field label="Transporter"><input value={f.transporter} onChange={(e) => setF({ ...f, transporter: e.target.value })} /></Field><Field label="LR number"><input value={f.lr} onChange={(e) => setF({ ...f, lr: e.target.value })} /></Field><Field label="Tracking"><input value={f.tracking} onChange={(e) => setF({ ...f, tracking: e.target.value })} /></Field><Field label="Packages"><input type="number" value={f.packages} onChange={(e) => setF({ ...f, packages: Number(e.target.value) })} /></Field><Field label="Freight (₹)"><input type="number" value={f.freight} onChange={(e) => setF({ ...f, freight: Number(e.target.value) })} /></Field><Field label="E-way bill"><input value={o.total > 50000 ? f.ewb : "Not required (< ₹50,000)"} disabled={o.total <= 50000} onChange={(e) => setF({ ...f, ewb: e.target.value })} /></Field></div>
+      ? <div className="fg"><Field label="Transporter"><input value={f.transporter} onChange={(e) => setF({ ...f, transporter: e.target.value })} /></Field><Field label="LR number"><input value={f.lr} onChange={(e) => setF({ ...f, lr: e.target.value })} /></Field><Field label="Tracking"><input value={f.tracking} onChange={(e) => setF({ ...f, tracking: e.target.value })} /></Field><Field label="Packages"><Num value={f.packages} onChange={(val) => setF({ ...f, packages: val })} /></Field><Field label="Freight (₹)"><Num value={f.freight} onChange={(val) => setF({ ...f, freight: val })} /></Field><Field label="E-way bill"><input value={o.total > 50000 ? f.ewb : "Not required (< ₹50,000)"} disabled={o.total <= 50000} onChange={(e) => setF({ ...f, ewb: e.target.value })} /></Field></div>
       : <>
         <Note style={{ marginBottom: 11 }}>There is no LR on a bus and nobody to chase, so the bus number, the driver&apos;s phone and a photograph of the bundle on board are the consignment note. They go to the firm in one message as soon as this is saved.</Note>
         <div className="fg">
@@ -281,8 +281,8 @@ function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openMod
           <Field label="Driver / conductor phone *" hint="The customer rings this to collect"><input value={bus.driverPhone} onChange={(e) => setBus({ ...bus, driverPhone: e.target.value })} placeholder="98290 00000" inputMode="numeric" /></Field>
           <Field label="Bus operator / route"><input value={bus.operator} onChange={(e) => setBus({ ...bus, operator: e.target.value })} placeholder="e.g. Jodhpur–Bikaner evening" /></Field>
           <Field label="Loaded at"><input type="datetime-local" value={bus.loadedAt} onChange={(e) => setBus({ ...bus, loadedAt: e.target.value })} /></Field>
-          <Field label="Packages"><input type="number" value={f.packages} onChange={(e) => setF({ ...f, packages: Number(e.target.value) })} /></Field>
-          <Field label="Freight (₹)"><input type="number" value={f.freight} onChange={(e) => setF({ ...f, freight: Number(e.target.value) })} /></Field>
+          <Field label="Packages"><Num value={f.packages} onChange={(val) => setF({ ...f, packages: val })} /></Field>
+          <Field label="Freight (₹)"><Num value={f.freight} onChange={(val) => setF({ ...f, freight: val })} /></Field>
         </div>
         <div className="st" style={{ marginTop: 13 }}>Photographs of the loaded bundle</div>
         <div className="sm" style={{ marginBottom: 8 }}>Two: one of the bundle on the bus, one close enough to read the bus number. This is the only proof of handover a bus consignment has.</div>

@@ -10,7 +10,7 @@ import { post } from "@/lib/api";
 import { PageHead } from "@/components/PageHead";
 import { useFooter, usePager } from "@/components/Shell";
 import { Pill, LineChip, GateDot, Hold, Empty, Bar } from "@/components/ui";
-import { useOrderActions } from "@/components/OrderDetail";
+import { useOrderActions, ShareDispatchModal } from "@/components/OrderDetail";
 import { NewOrderModal } from "@/components/NewOrderModal";
 import type { Order } from "@/components/types";
 import { exportCsv } from "@/lib/csv";
@@ -50,8 +50,20 @@ export default function OrdersPage() {
             <td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{money(o.total)}<div className="sm">+{money(o.tax)} GST</div></td>
             <td>{fDate(o.requiredBy)}<div className="sm" style={{ color: urgent ? "var(--er)" : "var(--t4)" }}>{dueLbl(o.requiredBy)}{urgent ? <Icon n="alert" s={11} style={{ display: "inline", verticalAlign: "-1px", marginLeft: 3 }} /> : null}</div></td>
             <td><GateDot status={g.status} /> {g.restricted ? (g.mode === "BLOCK" ? "Blocked" : "Warn") : g.status === "near" ? "Near" : "OK"}</td><td><Pill s={o.status} /></td>
-            <td style={{ minWidth: 90 }}><div style={{ width: 74 }}><Bar pct={orderProgress(o.status as OrderStatus) * 100} color={closed ? "var(--er)" : undefined} /></div></td><td>{A.actionBtn(o)}</td></tr>; })
-          : <tr><td colSpan={11}><Empty t="Nothing here" d="No orders in this stage for the selected line." action={<button className="b b-o" onClick={() => { setTab("all"); setQ(""); }}>Show all orders</button>} /></td></tr>}
+            <td style={{ minWidth: 90 }}><div style={{ width: 74 }}><Bar pct={orderProgress(o.status as OrderStatus) * 100} color={closed ? "var(--er)" : undefined} /></div></td>
+            <td style={{ whiteSpace: "nowrap" }}>
+              {/* On the shipped queue, the thing worth doing to a row is telling
+                  the firm it has gone — bus number, driver, LR, invoice — so it
+                  sits on the row rather than three clicks inside the order. */}
+              {tab === "shipped" && o.dispatches.length > 0 && can("order.view") && <button
+                className="b b-o b-s" title="Send the dispatch details to the firm on WhatsApp"
+                style={{ marginRight: 6 }}
+                onClick={(e) => { e.stopPropagation(); openModal(<ShareDispatchModal orderId={o.id} dispatchId={o.dispatches[o.dispatches.length - 1].id} />, "n"); }}>
+                <Icon n="swap" s={12} /> Share
+              </button>}
+              {A.actionBtn(o)}
+            </td></tr>; })
+          : <tr><td colSpan={12}><Empty t="Nothing here" d="No orders in this stage for the selected line." action={<button className="b b-o" onClick={() => { setTab("all"); setQ(""); }}>Show all orders</button>} /></td></tr>}
       </tbody></table></div>
     </div>
   </>;

@@ -1,13 +1,13 @@
 "use client";
 import { useRef, useState } from "react";
-import { money, num, fDT, marginFloor, paise, rate } from "@vivaha/shared";
+import { money, num, fDT, marginFloor, paise, rate, itemRef } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, patch, del } from "@/lib/api";
-import { Pill, BandPill, LineChip, Thumb, DF, Section, ModalFrame, Field, Note } from "./ui";
+import { Pill, BandPill, LineChip, Thumb, DF, Section, ModalFrame, Field, Note, Num } from "./ui";
 import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
 import { Qr } from "./Qr";
@@ -192,10 +192,10 @@ export function AdjustModal({ itemId }: { itemId?: string }) {
   const submit = async () => { try { await post("/api/stock/adjust", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Adjustment posted — ${num(f.qty)} ${f.dir}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Stock adjustment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-d" onClick={submit}>Post adjustment</button></>}>
     <div className="fg">
-      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
+      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{itemRef(i)} — {i.name}</option>)}</select></Field>
       <Field label="Godown"><select value={f.godownId} onChange={(e) => setF({ ...f, godownId: e.target.value })}>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
       <Field label="Direction"><select value={f.dir} onChange={(e) => setF({ ...f, dir: e.target.value })}><option value="damage">Available → damaged</option><option value="quarantine">Available → quarantined</option><option value="recover">Damaged → available</option><option value="writeoff">Damaged → written off</option></select></Field>
-      <Field label="Quantity"><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field>
+      <Field label="Quantity"><Num value={f.qty} onChange={(val) => setF({ ...f, qty: val })} /></Field>
       <Field label="Reason (required)" full><textarea value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="e.g. Water seepage in Godown B, 8 boxes on the north wall" /></Field>
     </div>
     <Note k="w" style={{ marginTop: 11 }}>Damaged and quarantined stock is excluded from availability <b>and</b> from inventory valuation.</Note>
@@ -211,10 +211,10 @@ export function TransferModal({ itemId }: { itemId?: string }) {
   const submit = async () => { try { const t = await post<{ id: string }>("/api/stock/transfers", { ...f, itemId: f.itemId || its[0]?.id, qty: Number(f.qty) }); toast(`Transfer ${t.id} raised — ${num(f.qty)} in transit to ${f.toId}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Godown transfer" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={submit}>Raise transfer</button></>}>
     <div className="fg">
-      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
+      <Field label="Item" full><select value={f.itemId || its[0]?.id || ""} onChange={(e) => setF({ ...f, itemId: e.target.value })}>{its.map((i) => <option key={i.id} value={i.id}>{itemRef(i)} — {i.name}</option>)}</select></Field>
       <Field label="From"><select value={f.fromId} onChange={(e) => setF({ ...f, fromId: e.target.value })}>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
       <Field label="To"><select value={f.toId} onChange={(e) => setF({ ...f, toId: e.target.value })}>{godowns?.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
-      <Field label="Quantity" full hint={<>Available at {f.fromId}: <b>{num(av)}</b>{f.qty > av && <span style={{ color: "var(--er)" }}> — exceeds available</span>}</>}><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field>
+      <Field label="Quantity" full hint={<>Available at {f.fromId}: <b>{num(av)}</b>{f.qty > av && <span style={{ color: "var(--er)" }}> — exceeds available</span>}</>}><Num value={f.qty} onChange={(val) => setF({ ...f, qty: val })} /></Field>
     </div>
     <Note k="i" style={{ marginTop: 11 }}>Stock leaves the source immediately and belongs to neither godown until it is received at the destination.</Note>
   </ModalFrame>;
@@ -258,16 +258,16 @@ export function ItemForm({ item }: { item?: ItemView }) {
       {attrs?.filter((a) => a.lineId === f.lineId).map((a) => <Field key={a.key} label={a.label}><select value={(f.attrs as Record<string, string>)[a.key] ?? ""} onChange={(e) => setF({ ...f, attrs: { ...f.attrs, [a.key]: e.target.value } })}><option value="">—</option>{a.values.map((v) => <option key={v}>{v}</option>)}</select></Field>)}
       <Field label="UOM"><input value={f.uom} onChange={(e) => setF({ ...f, uom: e.target.value })} /></Field>
       <Field label="Pack unit"><select value={f.packUom} onChange={(e) => setF({ ...f, packUom: e.target.value })}><option value="">—</option>{L?.packUoms.map((p) => <option key={p}>{p}</option>)}</select></Field>
-      <Field label="Per pack"><input type="number" value={f.perPack} onChange={(e) => setF({ ...f, perPack: Number(e.target.value) })} /></Field>
-      <Field label="MOQ"><input type="number" value={f.moq} onChange={(e) => setF({ ...f, moq: Number(e.target.value) })} /></Field>
-      <Field label="Landed cost (₹)"><input type="number" step="0.01" value={f.landedCost} onChange={(e) => setF({ ...f, landedCost: Number(e.target.value) })} /></Field>
-      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %" hint={annual ? "This line runs on a yearly published list" : "Paise are kept — 13.20 stays 13.20"}><input type="number" step="0.01" value={f.base} onChange={(e) => setF({ ...f, base: Number(e.target.value) })} /></Field>
+      <Field label="Per pack"><Num value={f.perPack} onChange={(val) => setF({ ...f, perPack: val })} /></Field>
+      <Field label="MOQ"><Num value={f.moq} onChange={(val) => setF({ ...f, moq: val })} /></Field>
+      <Field label="Landed cost (₹)"><Num step="0.01" value={f.landedCost} onChange={(val) => setF({ ...f, landedCost: val })} /></Field>
+      <Field label="Slab 1 rate (₹) — deeper slabs at 89 / 80 / 74 %" hint={annual ? "This line runs on a yearly published list" : "Paise are kept — 13.20 stays 13.20"}><Num step="0.01" value={f.base} onChange={(val) => setF({ ...f, base: val })} /></Field>
       <Field label="Multiplier for this item" hint="Leave blank to follow each firm's pricing group — the normal case. Set it to fix the markup whoever is buying.">
         <input type="number" step="0.01" placeholder="follows the firm's group" value={f.multiplier ?? ""} onChange={(e) => setF({ ...f, multiplier: e.target.value === "" ? null : Number(e.target.value) })} />
       </Field>
       {annual && rateChanged && <Field label="Why the list is being revised mid-year *" full hint="Recorded against the item — retailers have been quoting this list since April"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Manufacturer revised the paper rate in October" /></Field>}
       <Field label="HSN"><input value={f.hsn} onChange={(e) => setF({ ...f, hsn: e.target.value })} /></Field>
-      <Field label="GST %"><input type="number" value={f.gstPct} onChange={(e) => setF({ ...f, gstPct: Number(e.target.value) })} /></Field>
+      <Field label="GST %"><Num value={f.gstPct} onChange={(val) => setF({ ...f, gstPct: val })} /></Field>
     </div>
     <ItemPhoto item={item} />
   </ModalFrame>;

@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
-import { money, money2, num, fDate, fDT, rate as showRate } from "@vivaha/shared";
+import { money, money2, num, fDate, fDT, rate as showRate, itemRef } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, put, patch, del } from "@/lib/api";
-import { DF, Section, ModalFrame, Field, Note, Bar, Timeline } from "./ui";
+import { DF, Section, ModalFrame, Field, Note, Bar, Timeline, Num } from "./ui";
 import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
 import { Icon } from "./icons";
@@ -200,23 +200,23 @@ function OverrideModal({ c }: { c: Full }) {
     <div className="st">Firm-wide</div>
     <div className="sm" style={{ marginBottom: 8 }}>Applies to everything this firm buys, on top of the <b>{c.group}</b> group multiplier of ×{c.multiplier}. A per-item arrangement below outranks it.</div>
     <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 15 }}>
-      <Field label="Discount off the group rate (%)"><input type="number" value={adj} onChange={(e) => setAdj(Number(e.target.value))} /></Field>
+      <Field label="Discount off the group rate (%)"><Num value={adj} onChange={(val) => setAdj(val)} /></Field>
       <button className="b b-o" style={{ marginBottom: 2 }} onClick={saveAdj}>Save</button>
     </div>
 
     <div className="st">Per item</div>
     <Note style={{ marginBottom: 13 }}>A per-item price outranks the quantity slab, the group multiplier and the firm-wide discount. It still cannot go below the margin floor without an authorised override. On cards the published list is the manufacturer&apos;s and stands for the financial year — a firm&apos;s own rate here sits against that list and does not change it.</Note>
-    {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Agreed</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{o.sku} {o.name}</td><td className="n tab">{showRate(o.slabRate)}</td><td className="n tab">{showRate(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{showRate(o.rate)}{o.mode === "PERCENT" && o.pct != null ? <div className="sm">{o.pct}% off list</div> : null}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No per-item pricing set for this firm.</div>}
+    {list.length ? <table className="dg" style={{ marginBottom: 13 }}><thead><tr><th>Item</th><th className="n">Slab rate</th><th className="n">Group rate</th><th className="n">Agreed</th><th></th></tr></thead><tbody>{list.map((o) => <tr key={o.itemId} style={{ cursor: "default" }}><td>{itemRef(o)} {o.name}</td><td className="n tab">{showRate(o.slabRate)}</td><td className="n tab">{showRate(o.groupRate)}</td><td className="n tab" style={{ fontWeight: 700, color: o.rate < o.floor ? "var(--er)" : "var(--ac)" }}>{showRate(o.rate)}{o.mode === "PERCENT" && o.pct != null ? <div className="sm">{o.pct}% off list</div> : null}</td><td><button className="b b-g b-s" onClick={() => rm(o.itemId)}>Remove</button></td></tr>)}</tbody></table> : <div className="sm" style={{ marginBottom: 13 }}>No per-item pricing set for this firm.</div>}
     {its.length ? <>
       <div className="fg">
-        <Field label="Item" full><select value={iid || its[0]?.id || ""} onChange={(e) => setIid(e.target.value)}>{its.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
+        <Field label="Item" full><select value={iid || its[0]?.id || ""} onChange={(e) => setIid(e.target.value)}>{its.map((i) => <option key={i.id} value={i.id}>{itemRef(i)} — {i.name}</option>)}</select></Field>
         <Field label="How it was agreed"><select value={mode} onChange={(e) => setMode(e.target.value as "FLAT" | "PERCENT")}><option value="FLAT">A fixed rate</option><option value="PERCENT">A discount off list</option></select></Field>
         {mode === "FLAT"
-          ? <Field label="Agreed rate (₹ per unit)"><input type="number" value={rate} onChange={(e) => setRate(Number(e.target.value))} /></Field>
-          : <Field label="Discount (%)" hint="Follows the price list, so it stays right when rates move"><input type="number" value={pct} onChange={(e) => setPct(Number(e.target.value))} /></Field>}
+          ? <Field label="Agreed rate (₹ per unit)"><Num value={rate} onChange={(val) => setRate(val)} /></Field>
+          : <Field label="Discount (%)" hint="Follows the price list, so it stays right when rates move"><Num value={pct} onChange={(val) => setPct(val)} /></Field>}
         <Field label="Reason" full><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Volume commitment for the season" /></Field>
       </div>
-      {sel && <div className="sm" style={{ marginTop: 7 }}>{sel.sku} landed cost {showRate(sel.landedCost)} · MOQ {sel.moq} {sel.uom}</div>}
+      {sel && <div className="sm" style={{ marginTop: 7 }}>{itemRef(sel)} landed cost {showRate(sel.landedCost)} · MOQ {sel.moq} {sel.uom}</div>}
     </> : <div className="sm">This firm deals only in lines that use the fixed price list.</div>}
   </ModalFrame>;
 }
@@ -225,7 +225,7 @@ export function PaymentModal({ customerId }: { customerId?: string }) { const { 
   const [f, setF] = useState(() => ({ customerId: customerId ?? "", amount: 25000, method: "UPI", ref: "REF" + (880900 + Math.floor(Math.random() * 900)), date: new Date().toISOString().slice(0, 10) }));
   const go = async () => { try { const r = await post<{ receiptNo: string; outstanding: number; autoLifted: boolean }>("/api/ledger/payments", { ...f, customerId: f.customerId || custs?.[0]?.id, amount: Number(f.amount) }); toast(`Receipt ${r.receiptNo} posted · outstanding now ${money(r.outstanding)}${r.autoLifted ? " · block auto-lifted" : ""}`, "s"); closeModal(); refresh("/api/"); } catch (e) { toast(errMsg(e), "e"); } };
   return <ModalFrame title="Record payment" onClose={closeModal} actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" onClick={go}>Post receipt</button></>}>
-    <div className="fg"><Field label="Firm" full><select value={f.customerId || custs?.[0]?.id || ""} onChange={(e) => setF({ ...f, customerId: e.target.value })}>{custs?.map((c) => <option key={c.id} value={c.id}>{c.name} — outstanding {money(c.gate.out)}</option>)}</select></Field><Field label="Amount (₹)"><input type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: Number(e.target.value) })} /></Field><Field label="Method"><select value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}><option>UPI</option><option>NEFT</option><option>Cheque</option><option>Cash</option></select></Field><Field label="Reference"><input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} /></Field><Field label="Date"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field></div>
+    <div className="fg"><Field label="Firm" full><select value={f.customerId || custs?.[0]?.id || ""} onChange={(e) => setF({ ...f, customerId: e.target.value })}>{custs?.map((c) => <option key={c.id} value={c.id}>{c.name} — outstanding {money(c.gate.out)}</option>)}</select></Field><Field label="Amount (₹)"><Num value={f.amount} onChange={(val) => setF({ ...f, amount: val })} /></Field><Field label="Method"><select value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}><option>UPI</option><option>NEFT</option><option>Cheque</option><option>Cash</option></select></Field><Field label="Reference"><input value={f.ref} onChange={(e) => setF({ ...f, ref: e.target.value })} /></Field><Field label="Date"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field></div>
     <Note style={{ marginTop: 11 }}>Receipts allocate oldest-invoice-first by default. Any unallocated amount sits as on-account credit.</Note>
   </ModalFrame>;
 }
@@ -266,7 +266,7 @@ function LineProducts({ enabled }: { enabled: string[] }) {
         {g.items.length
           ? <table className="dg" style={{ fontSize: 12.5 }}><tbody>
             {g.items.slice(0, 40).map((i) => <tr key={i.id} style={{ cursor: "default" }}>
-              <td className="w"><span className="rid">{i.sku}</span> {i.name}</td>
+              <td className="w"><span className="rid">{itemRef(i)}</span> {i.name}</td>
               <td className="n tab" style={{ width: 92, color: i.available > 0 ? "var(--t6)" : "var(--er)" }}>{i.available > 0 ? `${num(i.available)} ${i.uom.toLowerCase()}` : "out of stock"}</td>
             </tr>)}
             {g.items.length > 40 && <tr style={{ cursor: "default" }}><td colSpan={2} className="sm">…and {num(g.items.length - 40)} more</td></tr>}
@@ -340,8 +340,8 @@ export function CustomerForm({ customer }: { customer?: Customer } = {}) { const
       <Field label="Deals in (drives which lines they see in the portal)" full><div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "7px 0" }}>{lines?.map((l) => <label key={l.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 14 }}><input type="checkbox" className="ck" checked={f.linesEnabled.includes(l.id)} onChange={(e) => setF({ ...f, linesEnabled: e.target.checked ? [...f.linesEnabled, l.id] : f.linesEnabled.filter((x) => x !== l.id) })} />{l.name}</label>)}</div>
         <LineProducts enabled={f.linesEnabled} /></Field>
       <Field label="Pricing group"><select value={f.group} onChange={(e) => setF({ ...f, group: e.target.value })}>{groups?.map((g) => <option key={g.name} value={g.name}>{g.name} — ×{g.multiplier}</option>)}</select></Field><Field label="Sales executive"><select value={f.salesExecId} onChange={(e) => setF({ ...f, salesExecId: e.target.value })}><option value="">—</option>{execs?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-      <Field label="Credit limit (₹)" hint="Suggested ₹1,80,000 from machine capacity"><input type="number" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: Number(e.target.value) })} /></Field><Field label="Credit days" hint="Time or amount, whichever breaches first"><input type="number" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: Number(e.target.value) })} /></Field>
-      <Field label="Firm discount (%)" hint="Off the group rate, on everything they buy. Per-item prices are set from the drawer."><input type="number" value={f.priceAdjPct} onChange={(e) => setF({ ...f, priceAdjPct: Number(e.target.value) })} /></Field>
+      <Field label="Credit limit (₹)" hint="Suggested ₹1,80,000 from machine capacity"><Num value={f.creditLimit} onChange={(val) => setF({ ...f, creditLimit: val })} /></Field><Field label="Credit days" hint="Time or amount, whichever breaches first"><Num value={f.creditDays} onChange={(val) => setF({ ...f, creditDays: val })} /></Field>
+      <Field label="Firm discount (%)" hint="Off the group rate, on everything they buy. Per-item prices are set from the drawer."><Num value={f.priceAdjPct} onChange={(val) => setF({ ...f, priceAdjPct: val })} /></Field>
       <Field label="Gate mode" full><select value={f.gateMode} onChange={(e) => setF({ ...f, gateMode: e.target.value as "WARN" | "BLOCK" })}><option value="WARN">WARN — allow with a recorded reason</option><option value="BLOCK">BLOCK — needs an authorised override</option></select></Field></div>
 
     <div className="st" style={{ marginTop: 16 }}>Shop location</div>

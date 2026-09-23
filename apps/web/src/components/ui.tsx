@@ -71,5 +71,48 @@ export const fmtMoney = money; export const fmtNum = num; export const fmtDT = f
 export function ModalFrame({ title, children, actions, onClose }: { title: ReactNode; children: ReactNode; actions: ReactNode; onClose: () => void }) {
   return <><div className="mh"><h3>{title}</h3><button className="b b-g b-s" onClick={onClose}><Icon n="x" s={13} /></button></div><div className="mbd">{children}</div><div className="ma">{actions}</div></>;
 }
+// A number box you can actually empty.
+//
+// `<input type="number" value={n} onChange={e => set(Number(e.target.value))}/>`
+// is the obvious thing to write and it is wrong: clearing the box gives
+// `Number("")`, which is 0, which is written straight back into the box. The
+// operator deletes the figure, a 0 appears under the cursor, and the only way
+// to type 250 is to select the 0 first. Every quantity, rate and credit limit
+// in the system behaved like that.
+//
+// So the text being typed is held here, separately from the number the form
+// holds. An empty box stays empty and reports 0; the form is told the number
+// the moment it becomes one. The box re-reads the prop only when the value
+// changes from outside — a re-quote, a reset, a row being swapped — which is
+// why the last value reported is remembered rather than compared against the
+// text.
+export function Num({
+  value, onChange, empty = 0, step, min, max, placeholder, disabled, title, className, style, onBlur,
+}: {
+  value: number; onChange: (n: number) => void; empty?: number;
+  step?: number | string; min?: number; max?: number; placeholder?: string; disabled?: boolean;
+  title?: string; className?: string; style?: React.CSSProperties; onBlur?: () => void;
+}) {
+  const [text, setText] = useState(() => (value === 0 && empty === 0 ? "0" : String(value ?? "")));
+  const [sent, setSent] = useState(value);
+  if (value !== sent) { setSent(value); setText(String(value ?? "")); }
+
+  return <input
+    type="number" inputMode="decimal"
+    value={text} step={step} min={min} max={max} placeholder={placeholder} disabled={disabled}
+    title={title} className={className} style={style}
+    onChange={(e) => {
+      const t = e.target.value;
+      setText(t);
+      // "" and a lone "-" are somebody mid-edit, not a number yet.
+      const n = t.trim() === "" || t === "-" ? empty : Number(t);
+      if (!Number.isNaN(n)) { setSent(n); onChange(n); }
+    }}
+    // Leaving an empty box shows what the form actually holds, so nobody walks
+    // away thinking a blank field means blank.
+    onBlur={() => { if (text.trim() === "" || text === "-") setText(String(empty)); onBlur?.(); }}
+  />;
+}
+
 export const Field = ({ label, children, hint, full }: { label: string; children: ReactNode; hint?: ReactNode; full?: boolean }) => <div className={"fd" + (full ? " f" : "")}><label>{label}</label>{children}{hint && <div className="hint">{hint}</div>}</div>;
 export const Note = ({ k, children, style }: { k?: "w" | "i" | "o"; children: ReactNode; style?: React.CSSProperties }) => <div className={"note " + (k ?? "")} style={style}>{children}</div>;

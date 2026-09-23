@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { num, slabRate, rate } from "@vivaha/shared";
+import { num, slabRate, rate, itemRef } from "@vivaha/shared";
 import { useApi, useLines } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
@@ -35,7 +35,7 @@ export default function ItemsPage() {
       <div className="gw"><table className="dg"><thead><tr><th style={{ width: 30 }}></th><th className="sortable" onClick={() => sortBy("sku")}>Item{ic("sku")}</th><th>Line</th><th>Attributes</th><th className="n sortable" onClick={() => sortBy("cost")}>Landed cost{ic("cost")}</th><th className="n">Slab 1 / 500+ / 2000+</th><th className="n sortable" onClick={() => sortBy("avail")}>Available{ic("avail")}</th><th>Stock band</th><th>HSN · GST</th><th>Status</th></tr></thead><tbody>
         {pg.rows.length ? pg.rows.map((i) => { const svc = lines?.find((l) => l.id === i.lineId)?.workflow === "JOBWORK"; return <tr key={i.id} className={sel.has(i.id) ? "sel" : ""} onClick={() => router.push(`/items/${i.id}`)}>
           <td onClick={(e) => { e.stopPropagation(); setSel((s) => { const n = new Set(s); if (n.has(i.id)) n.delete(i.id); else n.add(i.id); return n; }); }}><input className="ck" type="checkbox" checked={sel.has(i.id)} readOnly /></td>
-          <td className="w"><div style={{ display: "flex", gap: 8, alignItems: "center" }}><Thumb it={i} w={36} h={46} style={{ width: 26 }} /><div><span className="rid">{i.sku}</span> <span style={{ color: "var(--t9)" }}>{i.name}</span><div className="sm">{i.designNo ? i.designNo + " · " : ""}{i.nameHi}</div></div></div></td>
+          <td className="w"><div style={{ display: "flex", gap: 8, alignItems: "center" }}><Thumb it={i} w={36} h={46} style={{ width: 26 }} /><div><span className="rid">{itemRef(i)}</span> <span style={{ color: "var(--t9)" }}>{i.name}</span><div className="sm">{i.designNo ? i.designNo + " · " : ""}{i.nameHi}</div></div></div></td>
           <td><LineChip id={i.lineId} /></td><td className="w"><div className="sm" style={{ fontFamily: "inherit" }}>{Object.values(i.attrs).slice(0, 3).join(" · ")}</div></td>
           <td className="n tab">{rate(i.landedCost)}</td><td className="n tab">{i.slabs.map((s) => s.rate).slice(0, 3).join(" / ")}</td>
           <td className="n tab" style={{ fontWeight: 600, color: "var(--t9)" }}>{svc ? "—" : num(i.available)}</td><td>{svc ? <span className="sm">service</span> : <BandPill b={i.band} />}</td>

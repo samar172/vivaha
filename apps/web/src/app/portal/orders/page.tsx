@@ -1,11 +1,11 @@
 "use client";
 import { useState } from "react";
-import { money2, num, fDT, fDate } from "@vivaha/shared";
+import { money2, num, fDT, fDate, itemRef } from "@vivaha/shared";
 import { useApi, refresh } from "@/lib/hooks";
 import { useUI } from "@/lib/ui";
 import { post } from "@/lib/api";
 import { Sect } from "@/components/portal/Bits";
-import { Hold, ModalFrame, Field, Note } from "@/components/ui";
+import { Hold, ModalFrame, Field, Note, Num } from "@/components/ui";
 
 interface PO { id: string; status: string; statusHi: string; createdAt: string; total: number; holdUntil: string | null; lines: { name: string; sku: string; qty: number; shipped: number }[]; backorder: number; dispatch: { lr: string; transporter: string } | null; invoiceNo: string | null; lastWhy: string }
 const CLS: Record<string, string> = { BOOKED: "b-wa", APPROVED: "b-ok", RESERVED: "b-in", ALLOCATED: "b-in", PICKING: "b-wa", PICKED: "b-in", PACKED: "b-in", READY_TO_DISPATCH: "b-wa", DISPATCHED: "b-in", PARTIALLY_DISPATCHED: "b-wa", DELIVERED: "b-ok", LAPSED: "b-er", REJECTED: "b-er", CANCELLED: "b-er" };
@@ -32,8 +32,8 @@ function PReturn({ o }: { o: PO }) {
   const [f, setF] = useState({ idx: 0, qty: 24, reason: "" });
   const go = async () => { if (!f.reason.trim() || f.qty <= 0) return toast("मात्रा और कारण दोनों भरें", "e"); try { const r = await post<{ id: string }>("/api/portal/returns", { orderId: o.id, itemId: await itemIdFor(o, f.idx), qty: Number(f.qty), reason: f.reason, hasPhoto: true }); toast(`वापसी request भेज दी गई — ${r.id}`, "s"); closeModal(); refresh("/api/portal"); } catch (e) { toast(e instanceof Error ? e.message : "Error", "e"); } };
   return <ModalFrame title="माल वापसी" onClose={closeModal} actions={<button className="b b-p hi" style={{ flex: 1, height: 44 }} onClick={go}>वापसी भेजें</button>}>
-    <div className="lb">{o.id}</div><Field label="कौन सा आइटम"><select value={f.idx} onChange={(e) => setF({ ...f, idx: Number(e.target.value) })}>{o.lines.map((l, i) => <option key={l.sku} value={i}>{l.name} — {num(l.shipped || l.qty)} भेजे गए</option>)}</select></Field>
-    <Field label="कितने वापस"><input type="number" value={f.qty} onChange={(e) => setF({ ...f, qty: Number(e.target.value) })} /></Field><Field label="कारण"><textarea className="hi" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="जैसे — छपाई में धब्बा, 24 पीस ख़राब" /></Field>
+    <div className="lb">{o.id}</div><Field label="कौन सा आइटम"><select value={f.idx} onChange={(e) => setF({ ...f, idx: Number(e.target.value) })}>{o.lines.map((l, i) => <option key={itemRef(l)} value={i}>{l.name} — {num(l.shipped || l.qty)} भेजे गए</option>)}</select></Field>
+    <Field label="कितने वापस"><Num value={f.qty} onChange={(val) => setF({ ...f, qty: val })} /></Field><Field label="कारण"><textarea className="hi" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="जैसे — छपाई में धब्बा, 24 पीस ख़राब" /></Field>
     <button className="b b-o hi" style={{ width: "100%", marginTop: 4, marginBottom: 10 }} onClick={() => toast("फ़ोटो जोड़ी गई", "s")}>📷 फ़ोटो जोड़ें</button>
     <Note><span className="hi">आपकी request ऑफ़िस जाएगी। जाँच के बाद ही तय होगा कि माल अच्छे स्टॉक में जाएगा या ख़राब में, और उसी हिसाब से credit note बनेगा।</span></Note>
   </ModalFrame>;
