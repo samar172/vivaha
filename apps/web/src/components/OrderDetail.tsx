@@ -130,7 +130,7 @@ export function OrderDetail({ id }: { id: string }) {
                   <DF k="Bus number" v={d.busNo} mono /><DF k="Driver / conductor" v={d.driverPhone} mono />
                   {d.transporter && d.transporter !== "By bus" && <DF k="Operator / route" v={d.transporter} />}
                   <DF k="Loaded at" v={d.loadedAt ? fDT(d.loadedAt) : "—"} mono />
-                  <DF k="Expected arrival" v={d.arrivesAt ? fDT(d.arrivesAt) : "—"} mono />
+                  <DF k={`Reaches ${c.tehsil}`} v={d.arrivesAt ? fDT(d.arrivesAt) : "—"} mono />
                 </>
                 : <><DF k="Transporter" v={d.transporter} mono /><DF k="LR number" v={d.lr} mono /><DF k="Tracking" v={d.tracking} mono /></>}
               <DF k="Packages" v={d.packages} mono /><DF k="Freight" v={money(d.freight)} mono /><DF k="Dispatched" v={fDate(d.at)} mono />
@@ -231,6 +231,18 @@ function shrink(file: File): Promise<string> {
 
 // Local time as an <input type="datetime-local"> wants it.
 const localNow = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+const plusHours = (from: string, h: number) => {
+  const d = new Date(from || localNow());
+  d.setHours(d.getHours() + h);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+};
+/** "6h 30m" — how long a run is, for a line that has to read at a glance. */
+const hoursBetween = (a: string, b: string) => {
+  const mins = Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000));
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+};
 
 // Setting rates on an order that is still Booked.
 //
@@ -338,7 +350,25 @@ function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openMod
           <Field label="Loaded at"><input type="datetime-local" value={bus.loadedAt} onChange={(e) => setBus({ ...bus, loadedAt: e.target.value })} /></Field>
           {/* The one thing the firm actually rings to ask. Recorded here so the
               message can say it, instead of somebody working it out again. */}
-          <Field label="Expected arrival" hint="When the bus is due at their end — goes in the message"><input type="datetime-local" value={bus.arrivesAt} onChange={(e) => setBus({ ...bus, arrivesAt: e.target.value })} /></Field>
+          {/* The one thing the firm rings to ask, so it is asked for by the
+              name they would use: when it reaches *them*. Typing a full date and
+              time at a counter is fiddly, so the usual answers are buttons —
+              the route is known, the office knows it runs six or eight hours. */}
+          <Field label={`Estimated arrival at ${o.customer.tehsil}`} full
+            hint="When the bus reaches them — this is what goes in the message to the firm">
+            <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+              <input type="datetime-local" value={bus.arrivesAt} onChange={(e) => setBus({ ...bus, arrivesAt: e.target.value })} style={{ flex: "1 1 220px" }} />
+              {[4, 6, 8, 12].map((h) => <button key={h} type="button" className="b b-o b-s"
+                title={`${h} hours after it was loaded`}
+                onClick={() => setBus({ ...bus, arrivesAt: plusHours(bus.loadedAt, h) })}>+{h}h</button>)}
+              {bus.arrivesAt && <button type="button" className="b b-g b-s" onClick={() => setBus({ ...bus, arrivesAt: "" })}>Clear</button>}
+            </div>
+            {bus.arrivesAt && <div className="sm" style={{ marginTop: 5 }}>
+              {new Date(bus.arrivesAt) <= new Date(bus.loadedAt)
+                ? <span style={{ color: "var(--er)" }}>That is before it was loaded — check the date.</span>
+                : <>Reaching {o.customer.tehsil} about <b>{fDT(bus.arrivesAt)}</b> — {hoursBetween(bus.loadedAt, bus.arrivesAt)} after loading.</>}
+            </div>}
+          </Field>
           <Field label="Packages"><Num value={f.packages} onChange={(val) => setF({ ...f, packages: val })} /></Field>
           <Field label="Freight (₹)"><Num value={f.freight} onChange={(val) => setF({ ...f, freight: val })} /></Field>
         </div>
@@ -408,7 +438,7 @@ export function ShareDispatchModal({ orderId, dispatchId }: { orderId: string; d
     d.mode === "BUS" ? `Bus no: ${d.busNo}` : `LR no: ${d.lr}`,
     d.mode === "BUS" ? `Driver / conductor: ${d.driverPhone}` : d.tracking ? `Tracking: ${d.tracking}` : "",
     d.mode === "BUS" && d.loadedAt ? `Loaded at: ${fDT(d.loadedAt)}` : "",
-    d.arrivesAt ? `Expected arrival: ${fDT(d.arrivesAt)}` : "",
+    d.arrivesAt ? `Expected to reach ${data.customer.tehsil}: ${fDT(d.arrivesAt)}` : "",
     `Packages: ${num(d.packages)}`,
     inv ? `Invoice ${inv.no} — Rs ${money2(inv.total)}` : "",
     d.photos.length ? `Photo of the loaded bundle: ${d.photos[0]}` : "",

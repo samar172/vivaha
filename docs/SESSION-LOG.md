@@ -6,6 +6,38 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (late) — "Estimated arrival at destination"
+
+The field existed and was labelled *Expected arrival*, which does not say where.
+Restating the requirement was the right correction: the question the firm is
+ringing to ask is when it reaches **them**, and a label that leaves that to be
+inferred is a label doing half its job.
+
+It now names the town — *Estimated arrival at Nokha* — and so does the order
+panel (*Reaches Nokha*) and the message (*Expected to reach Nokha: 25 Sep
+07:30*). The destination comes off the firm's own tehsil, so nobody types it.
+
+And it is quick to enter, because typing a full date and time at a counter is
+fiddly and the office already knows what the route takes: **+4h / +6h / +8h /
++12h** from the loading time, with a line underneath reading back *"Reaching
+Nokha about 25 Sep 02:30 — 8h after loading"*, and a refusal to accept an
+arrival before the loading time.
+
+### And a harness that should have existed already
+
+Bus dispatch had none in the repo — the one that covered it lived in a
+scratchpad and was cleared. `scripts/check_dispatch.py` now covers both ways
+goods leave: the three refusals where a field is the only handle on the
+consignment, the bus number, driver, photograph and arrival stored, the eight
+hours between loading and arrival holding as a duration rather than a wall
+clock, the bill raised, the sending recorded and counted, the history saying how
+it went — and a transporter consignment with an LR, no bus fields and no
+arrival time, because there it is optional.
+
+Eight harnesses, all passing.
+
+---
+
 ## 2026-09-24 (night, later) — Why a deployed fix still looked broken
 
 The same three things were reported three times, so I stopped explaining and
