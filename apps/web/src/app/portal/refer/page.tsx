@@ -6,7 +6,7 @@ import { useUI } from "@/lib/ui";
 import { post } from "@/lib/api";
 import { Sect } from "@/components/portal/Bits";
 export default function ReferPage() {
-  const { data, mutate } = useApi<{ code: string; rows: { id: string; name: string; tehsil: string; state: string; reward: number; createdAt: string }[] }>("/api/portal/referrals"); const { data: tehsils } = useApi<string[]>("/api/masters/tehsils"); const { toast } = useUI();
+  const { data, mutate } = useApi<{ code: string; rows: { id: string; name: string; tehsil: string; state: string; reward: number; createdAt: string }[] }>("/api/portal/referrals"); const { data: tehsils } = useApi<string[]>("/api/portal/tehsils"); const { toast } = useUI();
   const [f, setF] = useState({ name: "", address: "", tehsil: "Bikaner", phone: "" });
   const go = async () => { if (!f.name || !f.phone) return toast("नाम और नंबर ज़रूरी है", "e"); try { await post("/api/portal/referrals", f); toast("भेज दिया — हमारा आदमी संपर्क करेगा", "s"); setF({ name: "", address: "", tehsil: "Bikaner", phone: "" }); mutate(); } catch (e) { toast(e instanceof Error ? e.message : "Error", "e"); } };
   const ST: Record<string, [string, string, string]> = { "Reward released": ["✓", "var(--ok)", "जमा"], "First order pending": ["●", "var(--wa)", "पहला ऑर्डर बाकी"], Contacted: ["○", "var(--t4)", "संपर्क किया"], Submitted: ["○", "var(--t4)", "भेजा गया"] };

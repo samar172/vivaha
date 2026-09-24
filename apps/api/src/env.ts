@@ -7,9 +7,19 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(20),
   PORT: z.coerce.number().default(4100),
   CORS_ORIGIN: z.string().default("http://localhost:3100"),
-  // Vercel gives every preview deployment its own *.vercel.app host, so they cannot
-  // be enumerated in CORS_ORIGIN. Opt in per environment rather than always allowing.
-  ALLOW_VERCEL_ORIGINS: z.string().optional().transform((v) => v === "true"),
+  // Vercel gives every preview deployment its own host, so previews cannot be
+  // enumerated in CORS_ORIGIN. This used to be answered by allowing *any*
+  // *.vercel.app origin, which is not a small thing: the refresh token is an
+  // httpOnly cookie with SameSite=None in production, so a page on any
+  // vercel.app subdomain — and they are free to register — could call
+  // /api/auth/refresh with the visitor's cookie and read a working access token
+  // straight out of the response. That is account takeover for anyone signed in
+  // who happened to open the page.
+  //
+  // So a preview host must now match this project's own suffix, which includes
+  // the Vercel team slug and cannot be registered by anybody else. Unset means
+  // no preview origin is allowed at all, which is the right default.
+  VERCEL_PREVIEW_SUFFIX: z.string().optional(),
   // Item photographs. Set CLOUDINARY_URL and images go to Cloudinary; leave it
   // unset and they land on local disk under UPLOAD_DIR, served at /api/uploads,
   // so a developer checkout works with no external account. Same arrangement,

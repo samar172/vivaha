@@ -33,9 +33,20 @@ export const app = express();
 app.set("trust proxy", 1);
 app.use(helmet());
 const origins = env.CORS_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean);
-const VERCEL_HOST = /^https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app$/i;
+// A preview deployment is allowed only when its host ends with this project's
+// own suffix — which carries the Vercel team slug, so no one else can register
+// a matching host. It used to be any *.vercel.app, and those are free to take:
+// with credentials allowed and the refresh cookie set SameSite=None, such a
+// page could call /api/auth/refresh on a visitor's behalf and read back a live
+// access token.
+const previewSuffix = env.VERCEL_PREVIEW_SUFFIX?.trim().toLowerCase() || null;
+const isOwnPreview = (origin: string) => {
+  if (!previewSuffix) return false;
+  const host = origin.toLowerCase();
+  return host.startsWith("https://") && host.endsWith(previewSuffix) && host.length > previewSuffix.length + 8;
+};
 const allowOrigin = (origin?: string) =>
-  !origin || origins.includes(origin) || origin.startsWith("http://localhost") || (env.ALLOW_VERCEL_ORIGINS && VERCEL_HOST.test(origin));
+  !origin || origins.includes(origin) || origin.startsWith("http://localhost") || isOwnPreview(origin);
 app.use(cors({ origin: (origin, cb) => cb(null, allowOrigin(origin)), credentials: true }));
 // A full-database restore is a whole business in one payload, so it gets its
 // own ceiling; everything else stays on the tight limit.
@@ -63,7 +74,14 @@ app.get("/health", (_req, res) => res.json({ ok: true, service: "vivaha-api" }))
 app.use("/api/auth", authRoutes);
 
 const internal = [requireAuth, requireInternal];
-app.use("/api/masters", requireAuth, mastersRoutes);
+// Masters are the office's own reference data, and they are read-only to most
+// roles — which is why this once sat on requireAuth alone. That was wrong: a
+// retailer's portal token is a signed-in token, so any customer could read the
+// whole supplier list, with each supplier's GSTIN, phone, UPI id, what we have
+// bought from them and what we still owe — and the pricing groups, from which
+// every other firm's tier can be worked out. Writes were always refused; the
+// reads were the leak. The portal has its own router and needs nothing here.
+app.use("/api/masters", ...internal, mastersRoutes);
 app.use("/api/items", ...internal, itemsRoutes);
 app.use("/api/stock", ...internal, stockRoutes);
 app.use("/api/purchases", ...internal, purchasesRoutes);

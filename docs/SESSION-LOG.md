@@ -6,6 +6,74 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (security) — Two holes, and a promise the shop could not keep
+
+Asked to check the portal and that every endpoint is closed. 187 routes
+enumerated, each against its guard. Writes were sound everywhere. Two reads were
+not, and both were serious.
+
+### Any customer could read the whole supplier list
+
+`/api/masters` was mounted on `requireAuth` alone, not `requireInternal` — and a
+retailer's portal token is a signed-in token. So any customer could read every
+vendor with their GSTIN, phone, UPI id, what we had bought from them, what we
+still owed and how old the debt was; plus the godowns and racks, and the pricing
+groups, from which every other firm's tier can be worked out. A competitor with
+a portal login learns our suppliers and our buying volumes.
+
+Writes were always refused. The reads were the leak. Masters are internal now.
+The portal used exactly one thing from there — the tehsil list, for saying where
+a referred firm is — and that is served from the shop's own router.
+
+### Any *.vercel.app page could take over a signed-in session
+
+CORS allowed any `https://*.vercel.app` origin with credentials. The refresh
+token is an httpOnly cookie set `SameSite=None` in production, so a page on any
+vercel.app subdomain — and those are free to register — could call
+`/api/auth/refresh` with a visitor's cookie and read a live access token
+straight out of the response. Account takeover for anyone signed in who opened
+the page.
+
+The wildcard is gone. Preview hosts must now match this project's own suffix,
+which carries the Vercel team slug and cannot be registered by anyone else;
+unset means no preview origin at all. Production lists its real hosts. Verified
+against the live API: an unrelated vercel.app origin gets no
+`Access-Control-Allow-Origin` header back.
+
+### A Book button on a card that could not be booked
+
+Not a security fault but a real one, found walking the shop. The stock bands are
+measured against the **line's** full-set quantity, which is not the same number
+as the **item's** own minimum order. A card with 116 left against an MOQ of 250
+read as *"Limited — 116 pcs"* with a working Book button, and the cart then
+refused it: *"only 116 available"*. A dead end the retailer walks into by doing
+exactly what the screen invited.
+
+`band()` takes the MOQ now. Such a card reads *"सिर्फ़ 116 बचे — कम से कम 250
+चाहिए"* and does not offer Book. The harness checks the promise directly: every
+card offering a Book button is put in the cart at its MOQ — 31 cards, no
+mismatches.
+
+### What the audit found sound
+
+Every portal route that takes an id scopes to the caller's own firm; another
+firm's bill and another firm's re-order both come back not-found. An office
+token is refused by the shop. The catalogue shows a stock *band* and never a
+godown count, which is right — a retailer has no business knowing our exact
+position. Login is rate limited and locks an account after five failures.
+Uploads are public by design and documented as such, and now hold payment
+screenshots on Cloudinary's unguessable URLs — worth revisiting if proofs ever
+need to be private.
+
+### Verified
+
+`scripts/check_portal.py` — 40 checks: the shop working end to end including a
+scan of the printed label, a partly-read label, a replaced label still
+resolving, and an unknown one returning nothing; and the isolation, route by
+route. Eleven harnesses, all passing.
+
+---
+
 ## 2026-09-24 (last) — A rack is written down, not chosen
 
 Racks arrived as a master: create them in Settings, then pick one. That is

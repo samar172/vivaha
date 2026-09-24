@@ -30,7 +30,7 @@ export function sumBuckets(rows: StockBuckets[]): StockBuckets & { available: nu
 
 // F-01 display band — protects stock depth from competitors while telling the
 // retailer exactly what they need to know to book.
-export type BandKind = "svc" | "out" | "eta" | "low" | "ltd" | "in";
+export type BandKind = "svc" | "out" | "eta" | "short" | "low" | "ltd" | "in";
 export interface Band {
   k: BandKind;
   label: string;
@@ -52,7 +52,10 @@ export function band(
   line: Pick<BusinessLineConfig, "workflow" | "minSetQty">,
   availableQty: number,
   uom: string,
-  inTransitEta?: string | Date | null
+  inTransitEta?: string | Date | null,
+  /** The item's own minimum order. A band that ignores it can offer a Book
+   *  button on a card the cart will then refuse — see below. */
+  moq?: number,
 ): Band {
   if (line.workflow === "JOBWORK")
     return { k: "svc", label: "Service", hi: "सेवा", cls: "neu", dot: "#8A93A3", qty: 0, canBook: false };
@@ -61,6 +64,22 @@ export function band(
     if (inTransitEta)
       return { k: "eta", label: "Arriving " + fmtDate(inTransitEta), hi: fmtDate(inTransitEta) + " तक आएगा", cls: "neu", dot: "#8A93A3", qty: 0, canBook: false, prebook: true, eta: new Date(inTransitEta).toISOString() };
     return { k: "out", label: "Out of stock", hi: "स्टॉक ख़त्म", cls: "err", dot: "#BE123C", qty: 0, canBook: false };
+  }
+  // There is stock, but not enough to make up one order of it.
+  //
+  // The bands are measured against the line's full-set quantity, which is not
+  // the same number as the item's own minimum order — so a card with 116 left
+  // against an MOQ of 250 read as "Limited, 116 pcs" with a working Book
+  // button, and the cart then refused it: "only 116 available". A dead end the
+  // retailer walks into by doing exactly what the screen invited.
+  //
+  // It cannot be booked, so it does not say it can, and it says why.
+  if (moq && D < moq) {
+    return {
+      k: "short", cls: "warn", dot: "#D07A2E", qty: D, canBook: false,
+      label: `Only ${num(D)} left — under the minimum order of ${num(moq)}`,
+      hi: `सिर्फ़ ${num(D)} बचे — कम से कम ${num(moq)} चाहिए`,
+    };
   }
   if (D >= 3 * M) return { k: "in", label: "In stock", hi: "स्टॉक में है", cls: "ok", dot: "#15803D", qty: D, canBook: true };
   if (D >= M) return { k: "ltd", label: "Limited — " + num(D) + " " + uom.toLowerCase(), hi: "सीमित — " + num(D) + " बाकी", cls: "warn", dot: "#B45309", qty: D, canBook: true };

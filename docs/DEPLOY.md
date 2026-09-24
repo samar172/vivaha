@@ -96,7 +96,14 @@ Deploy to a preview first (plain `vercel`), check it, then promote to production
 ### If you do point a browser straight at the API host
 
 `CORS_ORIGIN` in the server `.env` holds the allowed origins as a comma list,
-and `ALLOW_VERCEL_ORIGINS=true` additionally permits any `https://*.vercel.app`
+and `VERCEL_PREVIEW_SUFFIX` additionally permits this project's own preview
+hosts — set it to the suffix Vercel gives them, which carries the team slug
+(e.g. `-samarbhati251-5760s-projects.vercel.app`). It replaced an earlier
+`ALLOW_VERCEL_ORIGINS=true`, which allowed **any** `*.vercel.app` origin: those
+are free to register, and with credentials allowed and the refresh cookie set
+`SameSite=None`, such a page could call `/api/auth/refresh` on a signed-in
+visitor's behalf and read back a live access token. Leave it unset and no
+preview origin is allowed, which is the right default for production.
 host so per-deployment preview URLs work without editing the server each time.
 After changing either, `ssh saangri "pm2 restart vivaha-api"`.
 

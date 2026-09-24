@@ -73,7 +73,7 @@ export async function loadItemViews(where: Prisma.ItemWhereInput = {}, godownId?
       slabs: it.slabs.map((s) => ({ fromQty: s.fromQty, toQty: s.toQty, rate: D(s.rate) })),
       onHand: scoped.onHand, reserved: scoped.reserved, hold: scoped.hold, damaged: scoped.damaged, quarantined: scoped.quarantined, available: scoped.available,
       godowns: Object.values(gmap),
-      band: band(it.line, tot.available, it.uom, eta),
+      band: band(it.line, tot.available, it.uom, eta, it.moq),
       inTransitEta: eta,
     };
   });

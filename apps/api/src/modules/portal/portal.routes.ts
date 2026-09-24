@@ -30,6 +30,15 @@ const pub = (i: ItemView, rate: number) => ({ id: i.id, sku: i.sku, designNo: i.
 // Job work is quoted with the office, not bought off the shelf, and the portal
 // has no flow for it — offering it in the line switcher only leads to a
 // catalogue where every item reads "0 available".
+// The tehsil list, for a firm telling us where somebody it referred is. It is
+// the one piece of office reference data the shop legitimately needs, so it is
+// served from the shop's own router rather than opening the masters to a
+// customer token.
+router.get("/tehsils", asyncHandler(async (_req, res) => {
+  const a = await prisma.attributeDef.findFirst({ where: { key: "tehsil", lineId: null } });
+  res.json((a?.values as string[]) ?? []);
+}));
+
 router.get("/me", asyncHandler(async (req, res) => {
   const c = await me(req);
   const [g, lines, cart, kit] = await Promise.all([gate(c), prisma.businessLine.findMany({ where: { id: { in: c.linesEnabled as string[] }, isActive: true, workflow: "FULFIL" }, orderBy: { sortOrder: "asc" } }), prisma.cart.findUnique({ where: { customerId: c.id } }), prisma.kit.findUnique({ where: { customerId: c.id } })]);
