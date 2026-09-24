@@ -6,6 +6,42 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (last) — A rack is written down, not chosen
+
+Racks arrived as a master: create them in Settings, then pick one. That is
+ceremony at exactly the wrong moment. The man with the carton in his hands knows
+it is going on rack 7 — he should be able to write 7, not stop, find somebody
+with settings access, and have rack 7 created first.
+
+So the rack is a box you type into. Whatever this godown has been used for
+before is offered underneath as you type, and anything new is **learnt the
+moment it is used** — registered on the godown as the receipt posts, so it is a
+suggestion next time. `7` is the whole rack; `7/B` is one shelf on it, and both
+halves are learnt. The same at a transfer receipt.
+
+The master is still there and still worth using — a rack with a name against it
+(*near the shutter*) reads better than a bare number, and a rack holding stock
+still refuses to be renumbered or retired. It simply stopped being a gate.
+
+### And the supplier's UPI id is optional, which the screen now says
+
+It read like a blocker: *"no UPI ID on file, so there is no QR to show"* next to
+a settlement that will not happen. The settlement happens perfectly well — the
+firm is credited, what we owe that supplier falls, our reference ties the two.
+The QR is a convenience for putting a payee in front of a customer, nothing
+more, and the note says so.
+
+### Verified
+
+`scripts/check_racks.py`: a receipt onto a rack nobody created accepted, the
+godown having learnt both the rack and the shelf, the stock sitting exactly
+where it was written, a second unknown rack still accepted — because what it
+learnt is a suggestion and not a constraint — a rack holding stock still
+refusing retirement, and a direct settlement posting for a supplier with no UPI
+id. Nine harnesses, all passing.
+
+---
+
 ## 2026-09-24 (late) — "Estimated arrival at destination"
 
 The field existed and was labelled *Expected arrival*, which does not say where.

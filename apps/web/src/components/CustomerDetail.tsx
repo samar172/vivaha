@@ -357,7 +357,9 @@ export function PaymentModal({ customerId }: { customerId?: string }) {
                   <div style={{ marginTop: 7, color: "var(--wa)" }}>One thing this cannot hide: a UPI QR carries the payee&apos;s name, so the customer will see who they are paying inside their own app. What is controlled here is what this system discloses and what the paperwork says.</div>
                 </div>
               </div>
-              : <Note k="w" style={{ marginTop: 10 }}>{vendor?.name} has no UPI ID on file, so there is no QR to show. Add it under Purchase → Vendors, or take the payment the usual way.</Note>}
+              : <Note style={{ marginTop: 10 }}>
+                No UPI ID is on file for {vendor?.name}, so there is no QR to put in front of the customer — show them the supplier&apos;s own QR however you normally would. The settlement itself still posts: the firm is credited and what we owe that supplier falls, with our reference tying the two. Adding the UPI ID under Purchase → Vendors only saves fetching the QR by hand.
+              </Note>}
           </>}
       </>}
   </ModalFrame>;

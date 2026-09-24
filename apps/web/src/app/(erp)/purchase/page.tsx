@@ -155,17 +155,22 @@ export function PlaceRows({ godowns, places, setPlaces, qty }: { godowns: Godown
       <select value={p.godownId} onChange={(e) => set(i, { godownId: e.target.value, rack: "" })} style={{ height: 30 }}>
         {godowns.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
       </select>
-      {/* One list, grouped by rack: the rack itself, then each shelf on it. A
-          rack with no shelves is a single line, the way it always was. */}
-      <select value={p.rack} onChange={(e) => set(i, { rack: e.target.value })} style={{ height: 30 }} title="Where inside that godown">
-        <option value="">Rack not recorded</option>
-        {racksOf(p.godownId).map((r) => (r.subRacks?.length
-          ? <optgroup key={r.id} label={r.code + (r.name ? ` — ${r.name}` : "")}>
-            <option value={r.code}>{r.code} — anywhere on this rack</option>
-            {r.subRacks.map((sr) => <option key={sr.id} value={locationCode(r.code, sr.code)}>{locationCode(r.code, sr.code)}{sr.name ? ` — ${sr.name}` : ""}</option>)}
-          </optgroup>
-          : <option key={r.id} value={r.code}>{r.code}{r.name ? ` — ${r.name}` : ""}</option>))}
-      </select>
+      {/* Written down, not chosen. The man with the carton in his hands knows
+          it is going on rack 7; he should be able to write 7. Whatever this
+          godown has been used for before is offered as a suggestion, and a new
+          one is remembered the moment it is used. "7/B" is shelf B of rack 7. */}
+      <input
+        list={`racks-${p.godownId}`} value={p.rack} placeholder="rack — e.g. 7 or 7/B"
+        onChange={(e) => set(i, { rack: e.target.value })}
+        title="Where inside that godown. Type anything; a new rack is remembered."
+        style={{ height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 8px" }}
+      />
+      <datalist id={`racks-${p.godownId}`}>
+        {racksOf(p.godownId).flatMap((r) => [
+          <option key={r.id} value={r.code}>{r.name || "whole rack"}</option>,
+          ...(r.subRacks ?? []).map((sr) => <option key={sr.id} value={locationCode(r.code, sr.code)}>{sr.name || `shelf ${sr.code}`}</option>),
+        ])}
+      </datalist>
       <Num value={p.qty} onChange={(val) => set(i, { qty: val || 0 })} style={{ height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px", textAlign: "right" }} />
       {places.length > 1
         ? <button className="b b-g b-s" type="button" onClick={() => setPlaces(places.filter((_, n) => n !== i))} title="Remove"><Icon n="x" s={11} /></button>
@@ -178,6 +183,7 @@ export function PlaceRows({ godowns, places, setPlaces, qty }: { godowns: Godown
         : <span style={{ color: "var(--er)", fontWeight: 700 }}><Icon n="x" s={12} style={{ display: "inline", verticalAlign: "-2px" }} /> {num(s)} / {num(qty)} — must equal quantity</span>}</span>
     </div>
     {places.some((p) => !p.rack) && <div className="sm" style={{ marginTop: 5 }}>A row with no rack is stored as unrecorded — fine when the godown does not use racks, but the picker will not be told where to look.</div>}
+    <div className="sm" style={{ marginTop: 4 }}>Type the rack as you write it on the shelf. <b>7</b> is the whole rack, <b>7/B</b> is one shelf on it. A rack this godown has not used before is remembered from here.</div>
   </>;
 }
 
@@ -469,7 +475,7 @@ export function VendorForm({ vendor }: { vendor?: Vendor } = {}) {
       <Field label="City"><input value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} /></Field>
       <Field label="Payment terms"><select value={v.terms} onChange={(e) => setV({ ...v, terms: e.target.value })}>{["Advance", "Net 15", "Net 30", "Net 45", "Net 60"].map((t) => <option key={t}>{t}</option>)}</select></Field>
       <Field label="Phone"><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} /></Field>
-      <Field label="UPI ID" full hint="Only used when a customer is asked to settle their bill by paying this supplier directly. Never shown to the customer by this system."><input value={v.upiId} onChange={(e) => setV({ ...v, upiId: e.target.value })} placeholder="name@bank" /></Field>
+      <Field label="UPI ID (optional)" full hint="Only so a QR can be put in front of a customer settling their bill by paying this supplier directly. Leave it blank and that still works — you show them the supplier's own QR instead."><input value={v.upiId} onChange={(e) => setV({ ...v, upiId: e.target.value })} placeholder="name@bank" /></Field>
     </div>
     {vendor
       ? <Note style={{ marginTop: 11 }}>{vendor.documents} document{vendor.documents === 1 ? "" : "s"} name this vendor. They keep the figures they were billed at — only the vendor record changes.</Note>

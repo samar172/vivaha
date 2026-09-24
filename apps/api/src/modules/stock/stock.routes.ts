@@ -9,7 +9,7 @@ import { audit } from "../../services/audit";
 import { notify } from "../../services/notify";
 import { nextTransferNo } from "../../services/sequence";
 import { badRequest, notFound } from "../../utils/httpError";
-import { ageDays, available } from "@vivaha/shared";
+import { ageDays, available, splitLocation } from "@vivaha/shared";
 
 const router = Router();
 
@@ -50,6 +50,19 @@ router.post("/transfers/:id/receive", requirePerm("stock.transfer"), asyncHandle
   if (!t) throw notFound("Transfer not found");
   if (t.status !== "IN_TRANSIT") throw badRequest("Already received");
   const out = await prisma.$transaction(async (tx) => {
+    // A rack written down here is remembered, the same as at a goods receipt.
+    const loc = stock.rackOf(rack);
+    if (loc && loc !== stock.RACK_NONE) {
+      const { rack: code, sub } = splitLocation(loc);
+      let row = await tx.rack.findUnique({ where: { godownId_code: { godownId: t.toId, code } } });
+      if (!row) row = await tx.rack.create({ data: { godownId: t.toId, code } });
+      else if (!row.isActive) row = await tx.rack.update({ where: { id: row.id }, data: { isActive: true } });
+      if (sub) {
+        const shelf = await tx.subRack.findUnique({ where: { rackId_code: { rackId: row.id, code: sub } } });
+        if (!shelf) await tx.subRack.create({ data: { rackId: row.id, code: sub } });
+        else if (!shelf.isActive) await tx.subRack.update({ where: { id: shelf.id }, data: { isActive: true } });
+      }
+    }
     await stock.receive(tx, t.itemId, t.toId, t.qty, t.id, req.user!.name, t.batchNo === "-" ? null : t.batchNo, null, "TRANSFER_IN", rack);
     await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Stock transfer received", entityType: "Transfer", entityId: t.id, oldValue: "In Transit", newValue: rack ? `Received · rack ${rack}` : "Received" });
     return tx.transfer.update({ where: { id: t.id }, data: { status: "RECEIVED", receivedAt: new Date() } });

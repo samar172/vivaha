@@ -9,7 +9,7 @@ import { audit } from "../../services/audit";
 import { notify } from "../../services/notify";
 import { nextPurchaseNo } from "../../services/sequence";
 import { badRequest, notFound } from "../../utils/httpError";
-import { recomputeLandedCost } from "@vivaha/shared";
+import { recomputeLandedCost, splitLocation } from "@vivaha/shared";
 
 const router = Router();
 
@@ -55,6 +55,31 @@ function placementsOf(l: { places?: { godownId: string; rack: string; qty: numbe
   return { places, alloc: stock.placementsToMap(places) };
 }
 const placedQty = (p: Placed) => p.places.reduce((s, x) => s + x.qty, 0);
+
+// A rack is written down, not chosen from a list somebody remembered to make.
+//
+// Racks began as a master you had to create in Settings before you could put
+// anything on one — which is ceremony at exactly the wrong moment. The man with
+// the carton in his hands knows it is going on rack 7; he should be able to
+// write 7. So whatever is typed at a receipt is accepted, and the godown learns
+// it: a code the firm has not used before is registered as it is used, and
+// turns up as a suggestion next time.
+//
+// "R-1/A" means shelf A of rack 1, so both halves are learnt.
+async function learnRacks(tx: Parameters<typeof audit>[0], places: stock.Placement[]) {
+  for (const p of places) {
+    const loc = stock.rackOf(p.rack);
+    if (!loc || loc === stock.RACK_NONE) continue;
+    const { rack, sub } = splitLocation(loc);
+    let row = await tx.rack.findUnique({ where: { godownId_code: { godownId: p.godownId, code: rack } } });
+    if (!row) row = await tx.rack.create({ data: { godownId: p.godownId, code: rack } });
+    else if (!row.isActive) row = await tx.rack.update({ where: { id: row.id }, data: { isActive: true } });
+    if (!sub) continue;
+    const shelf = await tx.subRack.findUnique({ where: { rackId_code: { rackId: row.id, code: sub } } });
+    if (!shelf) await tx.subRack.create({ data: { rackId: row.id, code: sub } });
+    else if (!shelf.isActive) await tx.subRack.update({ where: { id: shelf.id }, data: { isActive: true } });
+  }
+}
 // Prisma types a Json column as a structural value; a list of placements is one.
 const asJson = (v: unknown) => v as Prisma.InputJsonValue;
 
@@ -118,6 +143,7 @@ router.post("/", requirePerm("purchase.create"), asyncHandler(async (req, res) =
       for (const l of b.lines) {
         const it = im[l.itemId];
         const onHandBefore = (await stock.bucketsAll(tx, l.itemId)).onHand;
+        await learnRacks(tx, placementsOf(l).places);
         for (const pl of placementsOf(l).places) await stock.receive(tx, l.itemId, pl.godownId, pl.qty, id, req.user!.name, l.batchNo ?? null, l.expiry ? new Date(l.expiry) : l.batchNo ? new Date(Date.now() + 365 * 864e5) : null, "GRN", pl.rack);
         const share = gross > 0 ? (b.freight * (l.qty * l.rate)) / gross : 0;
         const newCost = recomputeLandedCost(D(it.landedCost), onHandBefore, l.qty, l.rate, share);
@@ -199,6 +225,7 @@ router.post("/:id/receive", requirePerm("purchase.create"), asyncHandler(async (
       const pl = placementsOf(inp); if (placedQty(pl) !== l.qty) throw badRequest(`${l.item.sku}: allocation must sum to ${l.qty}`);
       if (l.item.batchTracked && !inp.batchNo) throw badRequest(`${l.item.sku} is batch-tracked — batch number required`);
       const onHandBefore = (await stock.bucketsAll(tx, l.itemId)).onHand;
+      await learnRacks(tx, pl.places);
       for (const p of pl.places) await stock.receive(tx, l.itemId, p.godownId, p.qty, po.id, req.user!.name, inp.batchNo ?? null, inp.batchNo ? new Date(Date.now() + 365 * 864e5) : null, "GRN", p.rack);
       const share = gross > 0 ? (D(po.freight) * (l.qty * D(l.rate))) / gross : 0;
       const newCost = recomputeLandedCost(D(l.item.landedCost), onHandBefore, l.qty, D(l.rate), share);

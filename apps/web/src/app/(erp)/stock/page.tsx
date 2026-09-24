@@ -77,15 +77,14 @@ function ReceiveTransfer({ t }: { t: { id: string; toId: string } }) {
     catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
   };
   return <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-    {racks.length > 0 && <select value={rack} onChange={(e) => setRack(e.target.value)} style={{ height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 6px" }}>
-      <option value="">Rack…</option>
-      {racks.map((r) => (r.subRacks?.length
-        ? <optgroup key={r.id} label={r.code}>
-          <option value={r.code}>{r.code} — anywhere</option>
-          {r.subRacks.map((sr) => <option key={sr.id} value={locationCode(r.code, sr.code)}>{locationCode(r.code, sr.code)}</option>)}
-        </optgroup>
-        : <option key={r.id} value={r.code}>{r.code}</option>))}
-    </select>}
+    <input list={`trf-racks-${t.toId}`} value={rack} placeholder="rack" onChange={(e) => setRack(e.target.value)}
+      title="Where it went. Type anything." style={{ width: 92, height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} />
+    <datalist id={`trf-racks-${t.toId}`}>
+      {racks.flatMap((r) => [
+        <option key={r.id} value={r.code}>{r.name || "whole rack"}</option>,
+        ...(r.subRacks ?? []).map((sr) => <option key={sr.id} value={locationCode(r.code, sr.code)}>{sr.name || `shelf ${sr.code}`}</option>),
+      ])}
+    </datalist>
     <button className="b b-o b-s" disabled={busy} onClick={go}>Receive at {t.toId}</button>
   </div>;
 }
