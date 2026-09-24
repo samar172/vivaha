@@ -354,11 +354,20 @@ export function PurchaseModal({ po }: { po?: PO } = {}) {
         </div>
         <div className="fg">
           <Field label="Item" full>
+            {/* Picking an item leaves the rate empty on purpose. It used to be
+                filled with the item's landed cost — a weighted average carrying
+                freight from every past receipt, which is not what this vendor is
+                charging today, and a number already in the box is a number
+                nobody re-reads. What they last charged is shown under the rate
+                as a reminder, not as an answer. */}
             <ItemPick items={its} value={r.itemId} empty={its.length ? "Type to find an item…" : `No ${L?.name} items yet`}
-              onPick={(id) => setRow(i, { itemId: id, rate: its.find((x) => x.id === id)?.landedCost || r.rate })} />
+              onPick={(id) => setRow(i, { itemId: id, rate: 0 })} />
           </Field>
           <Field label="Quantity"><Num value={r.qty} onChange={(val) => setRow(i, { qty: val })} /></Field>
-          <Field label="Rate (₹)"><Num value={r.rate} onChange={(val) => setRow(i, { rate: val })} /></Field>
+          <Field label="Rate (₹) — what this vendor is charging"
+            hint={it ? (it.purchasePrice != null ? `Last bought at ${rate(it.purchasePrice)}` : "Never bought before") : undefined}>
+            <Num value={r.rate} step="0.01" placeholder="off their invoice" onChange={(val) => setRow(i, { rate: val })} />
+          </Field>
           <Field label={L?.batchTracked ? "Batch (required)" : "Batch (if any)"}><input value={r.batchNo} onChange={(e) => setRow(i, { batchNo: e.target.value })} placeholder="e.g. B2699" /></Field>
           <Field label="Manufacturer label code"><input value={r.mfrCode} onChange={(e) => setRow(i, { mfrCode: e.target.value })} placeholder="e.g. SGP-4113" /></Field>
         </div>

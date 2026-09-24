@@ -17,6 +17,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import { UIProvider } from "@/lib/ui";
 import { AppStateProvider } from "@/lib/app-state";
 import { ManifestForRoute } from "@/components/ManifestForRoute";
+import { FreshBuild } from "@/components/FreshBuild";
 
 export const metadata: Metadata = {
   title: "Vivaha Cards ERP — Wholesale Operations Suite",
@@ -85,6 +86,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <script dangerouslySetInnerHTML={{ __html: BOOT }} />
         <ManifestForRoute />
+        <FreshBuild />
         <AuthProvider><AppStateProvider><UIProvider>{children}</UIProvider></AppStateProvider></AuthProvider>
       </body>
     </html>

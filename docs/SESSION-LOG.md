@@ -6,6 +6,87 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-24 (night, later) — Why a deployed fix still looked broken
+
+The same three things were reported three times, so I stopped explaining and
+went and drove the live site. The searchable picker and the number fields were
+there and working — search by name, search by the old key, clear a quantity box
+and type over it, all confirmed in the browser on production.
+
+So the report was not wrong about what they were seeing; it was right about
+something I had not thought about. **A single-page app does not re-fetch its own
+JavaScript when you click around inside it.** A tab left open since the morning,
+or an installed app never closed, keeps running the morning's build for as long
+as it stays open. A fix can be live, correct and invisible.
+
+Every build now carries an id. The running app asks `/build-id` when the tab
+comes back into focus and every few minutes besides, and when the answer differs
+it says so — and reloads properly on the next navigation, so in practice it
+fixes itself on the next click and the bar is only for those who want it now.
+
+### And one real leak I had missed
+
+An own code is suggested as prefix + design number, **falling back to the SKU**.
+So an item with no design number got `VC-WC-1002` — and WC-1002 went straight
+back onto the picker, the label and the bill, after all the work to hide it. The
+suggestion uses the item's name now. Existing codes are untouched: they are on
+cartons, and the item screen can re-mark one while keeping the old scannable.
+
+### Prices: history, a manual update, and not inheriting the old cost
+
+A goods receipt moved two prices and recorded neither. The history screen
+answered "why is this dearer" only for what somebody typed on the item screen,
+while the commonest reason a cost moves is a delivery at a different rate — a
+landed cost drifting upward across four receipts with nothing written down is
+exactly the drift nobody can explain later. Both movements are recorded now,
+against the receipt that caused them.
+
+**Update price** on the item runs the price-list endpoint for one item: same
+margin floor, same effective date, same history — a price set on the item screen
+and a price set on the list cannot behave differently.
+
+And a purchase line no longer prefills the item's landed cost. That is a
+weighted average carrying freight from every past receipt, which is not what
+this vendor is charging today, and a number already in the box is a number
+nobody re-reads. It starts empty, with *last bought at ₹20* underneath as a
+reminder rather than an answer.
+
+### Alt+S — the item's whole movement
+
+The item screen showed twelve recent movements, which answers "what happened
+lately". The question asked at a counter is "when did we last buy this, from
+whom, at what, and who has been taking it". `Alt+S` opens that: bought and sold
+on one page, oldest first, with a running quantity that reconciles because
+transfers, damage and job-work draws are in it too. A row opens the document
+behind it.
+
+### Rates the office can type
+
+A wholesale counter agrees prices out loud. The list is where the conversation
+starts, not where it has to end — so anyone with `cust.price` can type over the
+rate while booking, and **Change rates** does the same on an order that is still
+Booked.
+
+Past approval it is refused, and the refusal is the point: the credit gate and
+the stock reservation were both decided against the old figures. Below the
+margin floor still needs `margin.override`, and every typed rate is written to
+the audit log with the list price it replaced.
+
+### Bus arrival time
+
+The one thing a firm rings to ask. Recorded with the consignment and carried
+into the WhatsApp message, instead of being worked out again by whoever answers.
+
+### Verified
+
+26 checks in `scripts/check_rates_and_ledger.py`: a typed rate quoted, booked
+and re-priced; the refusal past approval; the floor holding for a user without
+the override — tested as that user; the ledger's running balance reconciling and
+its date window narrowing; and a receipt writing both price movements. All seven
+harnesses pass.
+
+---
+
 ## 2026-09-24 (night) — The label carries a mark, and the marking is the office's
 
 ### VC, not VIVAHA CARDS

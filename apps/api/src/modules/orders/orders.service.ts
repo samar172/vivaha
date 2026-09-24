@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { invoiceTotals, ORDER_FLOW, type OrderStatus, M } from "@vivaha/shared";
+import { invoiceTotals, ORDER_FLOW, ORDER_STATUS_LABEL, marginFloor, paise, type OrderStatus, M } from "@vivaha/shared";
 import { prisma, D, type Db } from "../../db";
 import * as stock from "../../services/stock";
 import { audit } from "../../services/audit";
@@ -8,7 +8,7 @@ import { nextInvoiceNo, nextOrderNo } from "../../services/sequence";
 import { gateFor } from "../../services/credit";
 import { loadItemViews } from "../../services/items";
 import { pricerFor } from "../../services/pricing";
-import { getHomeState } from "../../services/settings";
+import { getHomeState, getMinMargin } from "../../services/settings";
 import { badRequest, notFound, forbidden } from "../../utils/httpError";
 
 export const orderInclude = {
@@ -138,7 +138,7 @@ export interface DispatchInput {
   ship: Record<string, number>;
   mode?: "TRANSPORT" | "BUS";
   transporter: string; lr?: string; tracking?: string; packages?: number; freight?: number; ewb?: string;
-  busNo?: string; driverPhone?: string; loadedAt?: string; photos?: string[];
+  busNo?: string; driverPhone?: string; loadedAt?: string; arrivesAt?: string; photos?: string[];
 }
 export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
   if (!["READY_TO_DISPATCH", "PARTIALLY_DISPATCHED"].includes(o.status)) throw badRequest("Order is not staged for dispatch");
@@ -212,6 +212,7 @@ export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
       packages: inp.packages ?? 1, freight: inp.freight ?? 0, ewb: inp.ewb ?? null,
       busNo: inp.busNo?.trim() ?? "", driverPhone: inp.driverPhone?.trim() ?? "",
       loadedAt: inp.loadedAt ? new Date(inp.loadedAt) : mode === "BUS" ? new Date() : null,
+      arrivesAt: inp.arrivesAt ? new Date(inp.arrivesAt) : null,
       photos: inp.photos ?? [],
       lines: shippedLines, invoiceNo: no, by: actor.name,
     } });
@@ -223,6 +224,50 @@ export async function dispatch(o: OrderFull, actor: Actor, inp: DispatchInput) {
     await notify(tx, { text: `Order ${o.id} dispatched to ${o.customer.name} — ${how}`, kind: "OK", role: "SALES_EXECUTIVE", link: `/orders/${o.id}` });
     return { invoiceNo: no, total: t.total, full, dispatchId: d.id };
   });
+}
+
+// Re-pricing an order that has not been approved yet.
+//
+// The counter agrees a figure and the order is already on the screen — before
+// this, the only way to honour it was to cancel and rebook, which throws away
+// the stock hold and the booking's own history. A Booked order has moved no
+// stock out and raised no bill, so its rates can still be set; anything past
+// approval cannot, because the reservation and the credit gate were decided
+// against these numbers.
+export async function reprice(o: OrderFull, actor: Actor, rates: Record<string, number>, reason: string) {
+  if (o.status !== "BOOKED") {
+    throw badRequest(`${o.id} is ${ORDER_STATUS_LABEL[o.status as OrderStatus] ?? o.status.toLowerCase()} — rates can only be set while an order is still Booked. Past that, the credit gate and the reservation were decided against these figures.`);
+  }
+  if (!actor.perms.includes("cust.price")) throw forbidden(`Your role (${actor.role}) cannot set rates by hand. That needs cust.price.`);
+  if (!reason.trim()) throw badRequest("Say why the rate is being changed — it goes on the order's history");
+
+  const [homeState, minMargin] = await Promise.all([getHomeState(), getMinMargin()]);
+  const views = await loadItemViews({ id: { in: o.lines.map((l) => l.itemId) } });
+
+  const next = o.lines.map((l) => {
+    const want = rates[l.itemId];
+    const rate = want == null ? D(l.rate) : paise(want);
+    const view = views.find((v) => v.id === l.itemId);
+    return { l, rate, floor: marginFloor(view?.landedCost ?? 0, minMargin), sku: l.item.sku, changed: rate !== D(l.rate) };
+  });
+  if (!next.some((n) => n.changed)) throw badRequest("No rate is different from what the order already carries");
+  const under = next.find((n) => n.changed && n.rate < n.floor);
+  if (under && !actor.perms.includes("margin.override")) {
+    throw forbidden(`${under.sku} at ₹${under.rate.toFixed(2)} is below its margin floor of ₹${under.floor.toFixed(2)}. That needs margin.override.`);
+  }
+
+  const t = invoiceTotals(next.map((n) => ({ amount: paise(n.rate * n.l.qty), gstPct: n.l.gstPct })), o.customer.gstin, homeState);
+  await prisma.$transaction(async (tx) => {
+    for (const n of next.filter((x) => x.changed)) {
+      await tx.orderLine.update({ where: { id: n.l.id }, data: { rate: n.rate, amount: paise(n.rate * n.l.qty), priceSrc: "manual" } });
+      await audit(tx, { userId: actor.id, actor: actor.name, action: "Rate set by hand on an order", entityType: "Order", entityId: o.id,
+                        oldValue: `${n.sku} ₹${D(n.l.rate).toFixed(2)}`, newValue: `₹${n.rate.toFixed(2)}`,
+                        reason: n.rate < n.floor ? `Below the floor of ₹${n.floor.toFixed(2)} — ${reason.trim()}` : reason.trim() });
+    }
+    await tx.order.update({ where: { id: o.id }, data: { subtotal: t.taxable, tax: t.tax, total: t.total } });
+    await tx.orderEvent.create({ data: { orderId: o.id, from: o.status, to: o.status, by: actor.name, why: `Re-priced — ₹${D(o.total).toFixed(2)} → ₹${t.total.toFixed(2)} · ${reason.trim()}` } });
+  });
+  return { total: t.total, was: D(o.total) };
 }
 
 export async function revive(o: OrderFull, actor: Actor) {
@@ -272,7 +317,17 @@ export const flowIndex = (s: OrderStatus) => ORDER_FLOW.indexOf(s);
 // only the entry point differs, so an assisted order cannot be priced or gated
 // on softer terms than a self-service one.
 
-export interface NewOrderLine { itemId: string; qty: number }
+// A rate the office typed, overriding what the slabs and the firm's group say.
+//
+// The list is the list, but a wholesale counter is a place where prices get
+// agreed out loud — a long-standing customer, a slow-moving design, a load
+// being cleared. Until now the only way to honour that was a standing per-item
+// arrangement on the firm, which is a different thing: this is one order.
+//
+// It is gated and it is recorded. Below the margin floor still needs
+// margin.override, because a floor that a typed number walks through is not a
+// floor.
+export interface NewOrderLine { itemId: string; qty: number; rate?: number }
 export interface NewOrderInput { customerId: string; lines: NewOrderLine[]; requiredBy?: string; note?: string; overrideReason?: string }
 
 export interface QuoteLine {
@@ -280,6 +335,8 @@ export interface QuoteLine {
   artSeed: number; imageUrl: string | null; qty: number; moq: number; available: number;
   rate: number; slabRate: number; mult: number; priceSrc: string; amount: number; gstPct: number; hsn: string;
   short: boolean; belowMoq: boolean;
+  /** What it would have been without a typed rate, and the floor it must clear. */
+  listRate: number; floor: number; belowFloor: boolean;
 }
 
 // Priced, stock-checked and credit-checked, but nothing is written. The modal
@@ -297,11 +354,15 @@ export async function quoteOrder(input: { customerId: string; lines: NewOrderLin
     const it = views.find((v) => v.id === w.itemId);
     if (!it) throw badRequest("Item not found");
     const pr = price(it, w.qty);
+    // A rate typed by the office wins over the computed one, and says so.
+    const manual = w.rate != null && w.rate >= 0 && Math.abs(w.rate - pr.rate) > 0.004;
+    const rate = manual ? paise(w.rate!) : pr.rate;
     lines.push({
       itemId: it.id, sku: it.sku, designNo: it.designNo, name: it.name, nameHi: it.nameHi, lineId: it.lineId, uom: it.uom,
       artSeed: it.artSeed, imageUrl: it.imageUrl, qty: w.qty, moq: it.moq, available: it.available,
-      rate: pr.rate, slabRate: pr.slab, mult: pr.mult, priceSrc: pr.src, amount: pr.rate * w.qty, gstPct: it.gstPct, hsn: it.hsn,
+      rate, slabRate: pr.slab, mult: pr.mult, priceSrc: manual ? "manual" : pr.src, amount: paise(rate * w.qty), gstPct: it.gstPct, hsn: it.hsn,
       short: w.qty > it.available, belowMoq: w.qty < it.moq,
+      listRate: pr.rate, floor: pr.floor, belowFloor: rate < pr.floor,
     });
   }
   const totals = invoiceTotals(lines, customer.gstin, homeState);
@@ -335,6 +396,18 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
   if (short) throw badRequest(M.onlyAvailable(short.available, short.sku));
   const below = q.lines.find((l) => l.belowMoq);
   if (below) throw badRequest(M.belowMoq(below.sku, below.moq));
+
+  // A typed rate is somebody's decision; a typed rate under the floor is
+  // somebody else's. The list can be departed from, the floor cannot — not
+  // without the capability that exists to say so.
+  const typed = q.lines.filter((l) => l.priceSrc === "manual");
+  if (typed.length && !actor.perms.includes("cust.price")) {
+    throw forbidden(`Your role (${actor.role}) cannot set a rate by hand on an order. That needs cust.price.`);
+  }
+  const under = typed.find((l) => l.belowFloor);
+  if (under && !actor.perms.includes("margin.override")) {
+    throw forbidden(`${under.sku} at ₹${under.rate.toFixed(2)} is below its margin floor of ₹${under.floor.toFixed(2)}. That needs margin.override.`);
+  }
 
   // Same rule the approval screen applies: a BLOCK gate needs credit.override,
   // and any restricted gate needs a reason on the record.
@@ -372,6 +445,12 @@ export async function createOrder(input: NewOrderInput, actor: Actor): Promise<O
       events: { create: { from: null, to: "BOOKED", by: bookedBy, why } },
     } });
     await audit(tx, { userId: actor.id, actor: actor.name, action: "Order booked at the office", entityType: "Order", entityId: id, newValue: "₹" + q.totals.total.toFixed(2), reason: input.overrideReason?.trim() || input.note?.trim() || "" });
+    // A rate somebody typed is never left to be inferred from the total.
+    for (const l of typed) {
+      await audit(tx, { userId: actor.id, actor: actor.name, action: "Rate set by hand on an order", entityType: "Order", entityId: id,
+                        oldValue: `${l.sku} list ₹${l.listRate.toFixed(2)}`, newValue: `₹${l.rate.toFixed(2)}`,
+                        reason: l.belowFloor ? `Below the floor of ₹${l.floor.toFixed(2)} — ${input.overrideReason?.trim() || "overridden"}` : input.note?.trim() || "" });
+    }
     if (q.gate.restricted) await audit(tx, { userId: actor.id, actor: actor.name, action: "Order booked past the credit gate", entityType: "Customer", entityId: q.customer.name, oldValue: "Restricted", newValue: "Booked", reason: input.overrideReason!.trim() });
     const text = `Order ${id} booked for ${q.customer.name} by ${actor.name} — ₹${q.totals.total.toLocaleString("en-IN")}${q.gate.restricted ? " · credit warning" : ""}`;
     await notify(tx, { text, kind: q.gate.restricted ? "WARN" : "OK", role: "SALES_EXECUTIVE", link: `/orders/${id}` });

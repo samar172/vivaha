@@ -26,6 +26,7 @@ export function useOrderActions() { const { toast, closeModal, openModal } = use
   const status = (o: Order, to: string, why: string) => run(() => post(`/api/orders/${o.id}/status`, { to }), `${o.id} → ${why}`);
   const revive = (o: Order) => run(() => post(`/api/orders/${o.id}/revive`), "Revived — original rates kept, hold restarted");
   const allocate = (o: Order) => openModal(<AllocModal o={o} />, "w");
+  const reprice = (o: Order) => openModal(<RepriceModal o={o} />, "w");
   const dispatch = (o: Order) => openModal(<DispatchModal o={o} />, "w");
   const actionBtn = (o: Order, stop = true) => {
     const e = (fn: () => void) => (ev: React.MouseEvent) => { if (stop) ev.stopPropagation(); fn(); };
@@ -42,7 +43,7 @@ export function useOrderActions() { const { toast, closeModal, openModal } = use
     if (s === "LAPSED" && can("order.approve")) return <button className="b b-o b-s" onClick={e(() => revive(o))}>Revive</button>;
     return null;
   };
-  return { approve, reject, cancel, reserve, status, revive, allocate, dispatch, actionBtn, user };
+  return { approve, reject, cancel, reserve, status, revive, allocate, reprice, dispatch, actionBtn, user };
 }
 
 // An order opens on its own page, the way a card and a firm do. The order is
@@ -69,6 +70,10 @@ export function OrderDetail({ id }: { id: string }) {
       actions={<>
         <button className="b b-o" onClick={() => router.push("/orders")}><Icon n="chevronL" s={13} /> Back to orders</button>
         {A.actionBtn(o, false)}
+        {/* Before approval the order has moved no stock out and raised no bill,
+            so a figure agreed at the counter can still be honoured without
+            cancelling and rebooking. */}
+        {o.status === "BOOKED" && can("cust.price") && <button className="b b-o" onClick={() => A.reprice(o)}>Change rates</button>}
         {o.status === "BOOKED" && can("order.approve") && <button className="b b-d" onClick={() => A.reject(o)}>Reject</button>}
         {["RESERVED", "ALLOCATED"].includes(o.status) && can("order.allocate") && <button className="b b-o" onClick={() => A.allocate(o)}>Re-allocate</button>}
         {["APPROVED", "RESERVED", "ALLOCATED"].includes(o.status) && can("order.approve") && <button className="b b-g" onClick={() => A.cancel(o)}>Cancel order</button>}
@@ -125,6 +130,7 @@ export function OrderDetail({ id }: { id: string }) {
                   <DF k="Bus number" v={d.busNo} mono /><DF k="Driver / conductor" v={d.driverPhone} mono />
                   {d.transporter && d.transporter !== "By bus" && <DF k="Operator / route" v={d.transporter} />}
                   <DF k="Loaded at" v={d.loadedAt ? fDT(d.loadedAt) : "—"} mono />
+                  <DF k="Expected arrival" v={d.arrivesAt ? fDT(d.arrivesAt) : "—"} mono />
                 </>
                 : <><DF k="Transporter" v={d.transporter} mono /><DF k="LR number" v={d.lr} mono /><DF k="Tracking" v={d.tracking} mono /></>}
               <DF k="Packages" v={d.packages} mono /><DF k="Freight" v={money(d.freight)} mono /><DF k="Dispatched" v={fDate(d.at)} mono />
@@ -226,6 +232,55 @@ function shrink(file: File): Promise<string> {
 // Local time as an <input type="datetime-local"> wants it.
 const localNow = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
+// Setting rates on an order that is still Booked.
+//
+// Past approval this is refused, and the refusal is the point: the credit gate
+// was decided against these figures and the stock was reserved against them. A
+// Booked order has done neither, so it can still be re-priced — which beats
+// cancelling and rebooking, because that throws away the hold and the history.
+function RepriceModal({ o }: { o: Order }) {
+  const { closeModal, toast } = useUI();
+  const [rates, setRates] = useState<Record<string, number>>(() => Object.fromEntries(o.lines.map((l) => [l.itemId, l.rate])));
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const was = o.lines.reduce((t, l) => t + l.rate * l.qty, 0);
+  const now = o.lines.reduce((t, l) => t + (rates[l.itemId] ?? l.rate) * l.qty, 0);
+  const changed = o.lines.filter((l) => (rates[l.itemId] ?? l.rate) !== l.rate);
+
+  const go = async () => {
+    if (!changed.length) return toast("No rate is different yet", "e");
+    if (reason.trim().length < 3) return toast("Say why — it goes on the order's history", "e");
+    setBusy(true);
+    try {
+      const r = await post<{ total: number; was: number }>(`/api/orders/${o.id}/reprice`, { rates, reason: reason.trim() });
+      toast(`${o.id} re-priced — ${money2(r.was)} → ${money2(r.total)}`, "s");
+      closeModal(); refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  return <ModalFrame title={`Change rates — ${o.id}`} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={go}>Save rates</button></>}>
+    <Note style={{ marginBottom: 12 }}>This order is still <b>Booked</b>, so nothing has left the godown and no bill exists — the rates can still be set. Once it is approved they cannot: the credit gate and the stock reservation were both decided against these figures.</Note>
+    <table className="dg" style={{ marginBottom: 12 }}><thead><tr><th>Item</th><th className="n">Qty</th><th className="n">Was</th><th className="n">Now</th><th className="n">Amount</th></tr></thead><tbody>
+      {o.lines.map((l) => { const v = rates[l.itemId] ?? l.rate; return <tr key={l.id} style={{ cursor: "default" }}>
+        <td className="w">{l.item.name}<div className="sm">{itemRef(l.item)}{l.priceSrc === "manual" ? " · already typed" : ` · ${l.priceSrc}`}</div></td>
+        <td className="n tab">{num(l.qty)}</td>
+        <td className="n tab sm">{rate(l.rate)}</td>
+        <td className="n"><Num value={v} step="0.01" style={{ width: 96, textAlign: "right", fontWeight: v !== l.rate ? 700 : 400 }} onChange={(val) => setRates((m) => ({ ...m, [l.itemId]: val }))} /></td>
+        <td className="n tab">{money2(v * l.qty)}</td>
+      </tr>; })}
+    </tbody></table>
+    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}><div style={{ width: 280 }}>
+      <div className="df"><span className="k">Goods was</span><span className="v m">{money2(was)}</span></div>
+      <div className="df"><span className="k"><b>Goods now</b></span><span className="v m" style={{ fontWeight: 700 }}>{money2(now)}</span></div>
+      <div className="df"><span className="k">Difference</span><span className="v m" style={{ color: now > was ? "var(--ok)" : now < was ? "var(--er)" : undefined }}>{money2(now - was)}</span></div>
+    </div></div>
+    <Field label="Why (required — goes on the order's history)" full><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rate agreed with Mr Sharma on the phone" /></Field>
+    <div className="sm" style={{ marginTop: 8 }}>Tax is recomputed from the new figures. A rate below the item&apos;s margin floor needs <b>margin.override</b>, and is recorded as such.</div>
+  </ModalFrame>;
+}
+
 function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openModal } = useUI();
   const [ship, setShip] = useState<Record<string, number>>(Object.fromEntries(o.lines.map((l) => [l.itemId, l.qty - l.shipped])));
   // Two ways goods leave this building, and they are not variations of one
@@ -233,7 +288,7 @@ function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openMod
   // swaps the fields rather than showing both and leaving half of them blank.
   const [mode, setMode] = useState<"TRANSPORT" | "BUS">("TRANSPORT");
   const [f, setF] = useState(() => ({ transporter: "Rajasthan Roadways Cargo", lr: "LR-" + (56000 + Math.floor(Math.random() * 3000)), tracking: "TRK" + (905000 + Math.floor(Math.random() * 9000)), packages: o.lines.length + 1, freight: 650, ewb: o.total > 50000 ? "EWB-" + (721400 + Math.floor(Math.random() * 900)) : "" }));
-  const [bus, setBus] = useState(() => ({ operator: "", busNo: "", driverPhone: "", loadedAt: localNow() }));
+  const [bus, setBus] = useState(() => ({ operator: "", busNo: "", driverPhone: "", loadedAt: localNow(), arrivesAt: "" }));
   const [photos, setPhotos] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -252,7 +307,7 @@ function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openMod
     }
     setBusy(true);
     const body = mode === "BUS"
-      ? { ship, mode, transporter: bus.operator.trim() || "By bus", busNo: bus.busNo.trim(), driverPhone: bus.driverPhone.trim(), loadedAt: new Date(bus.loadedAt).toISOString(), photos, packages: Number(f.packages), freight: Number(f.freight), ewb: o.total > 50000 ? f.ewb || undefined : undefined }
+      ? { ship, mode, transporter: bus.operator.trim() || "By bus", busNo: bus.busNo.trim(), driverPhone: bus.driverPhone.trim(), loadedAt: new Date(bus.loadedAt).toISOString(), arrivesAt: bus.arrivesAt ? new Date(bus.arrivesAt).toISOString() : undefined, photos, packages: Number(f.packages), freight: Number(f.freight), ewb: o.total > 50000 ? f.ewb || undefined : undefined }
       : { ship, mode, ...f, packages: Number(f.packages), freight: Number(f.freight), ewb: f.ewb || undefined };
     try {
       const r = await post<{ invoiceNo: string; total: number; full: boolean; dispatchId: string }>(`/api/orders/${o.id}/dispatch`, body);
@@ -281,6 +336,9 @@ function DispatchModal({ o }: { o: Order }) { const { closeModal, toast, openMod
           <Field label="Driver / conductor phone *" hint="The customer rings this to collect"><input value={bus.driverPhone} onChange={(e) => setBus({ ...bus, driverPhone: e.target.value })} placeholder="98290 00000" inputMode="numeric" /></Field>
           <Field label="Bus operator / route"><input value={bus.operator} onChange={(e) => setBus({ ...bus, operator: e.target.value })} placeholder="e.g. Jodhpur–Bikaner evening" /></Field>
           <Field label="Loaded at"><input type="datetime-local" value={bus.loadedAt} onChange={(e) => setBus({ ...bus, loadedAt: e.target.value })} /></Field>
+          {/* The one thing the firm actually rings to ask. Recorded here so the
+              message can say it, instead of somebody working it out again. */}
+          <Field label="Expected arrival" hint="When the bus is due at their end — goes in the message"><input type="datetime-local" value={bus.arrivesAt} onChange={(e) => setBus({ ...bus, arrivesAt: e.target.value })} /></Field>
           <Field label="Packages"><Num value={f.packages} onChange={(val) => setF({ ...f, packages: val })} /></Field>
           <Field label="Freight (₹)"><Num value={f.freight} onChange={(val) => setF({ ...f, freight: val })} /></Field>
         </div>
@@ -305,7 +363,7 @@ const waDigits = (phone: string) => { const d = phone.replace(/\D/g, ""); return
 
 interface DispatchRow {
   id: string; mode: "TRANSPORT" | "BUS"; transporter: string; lr: string; tracking: string; packages: number; freight: number;
-  busNo: string; driverPhone: string; loadedAt: string | null; photos: string[]; invoiceNo: string | null; at: string; by: string;
+  busNo: string; driverPhone: string; loadedAt: string | null; arrivesAt: string | null; photos: string[]; invoiceNo: string | null; at: string; by: string;
   sentCount: number; lastSent: { at: string; by: string; toName: string; toPhone: string } | null;
 }
 interface DispatchBundle {
@@ -350,6 +408,7 @@ export function ShareDispatchModal({ orderId, dispatchId }: { orderId: string; d
     d.mode === "BUS" ? `Bus no: ${d.busNo}` : `LR no: ${d.lr}`,
     d.mode === "BUS" ? `Driver / conductor: ${d.driverPhone}` : d.tracking ? `Tracking: ${d.tracking}` : "",
     d.mode === "BUS" && d.loadedAt ? `Loaded at: ${fDT(d.loadedAt)}` : "",
+    d.arrivesAt ? `Expected arrival: ${fDT(d.arrivesAt)}` : "",
     `Packages: ${num(d.packages)}`,
     inv ? `Invoice ${inv.no} — Rs ${money2(inv.total)}` : "",
     d.photos.length ? `Photo of the loaded bundle: ${d.photos[0]}` : "",

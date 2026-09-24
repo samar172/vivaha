@@ -202,6 +202,87 @@ router.get("/:id/price-history", requirePerm("item.view"), asyncHandler(async (r
   }));
 }));
 
+// Everything that ever happened to one item, the way a Tally ledger reads.
+//
+// The item screen shows the last dozen stock movements, which answers "what
+// happened recently" and not "when did we last buy this, from whom, at what,
+// and who has been buying it". That is the question somebody standing at the
+// counter with a customer actually has, so it is one page: bought and sold,
+// oldest first, with a running quantity.
+//
+// Everything is read from records that already exist — goods receipts, invoice
+// lines, the movement log — so nothing here can disagree with the documents.
+router.get("/:id/ledger", requirePerm("item.view"), asyncHandler(async (req, res) => {
+  const q = z.object({ from: z.string().optional(), to: z.string().optional() }).parse(req.query);
+  const item = await prisma.item.findUnique({ where: { id: req.params.id }, select: { id: true, sku: true, name: true, uom: true, designNo: true, landedCost: true, purchasePrice: true } });
+  if (!item) throw notFound(M.itemNotFound());
+  const since = q.from ? new Date(q.from) : undefined;
+  const until = q.to ? new Date(q.to + "T23:59:59") : undefined;
+  const window = since || until ? { gte: since, lte: until } : undefined;
+
+  const [purchases, sales, moves] = await Promise.all([
+    prisma.purchaseLine.findMany({
+      where: { itemId: item.id, purchase: { ...(window ? { date: window } : {}) } },
+      include: { purchase: { select: { id: true, invNo: true, date: true, status: true, vendor: { select: { id: true, name: true, code: true } } } } },
+    }),
+    prisma.invoiceLine.findMany({
+      where: { itemId: item.id, jobId: null, invoice: { ...(window ? { date: window } : {}) } },
+      include: { invoice: { select: { no: true, date: true, status: true, customer: { select: { id: true, name: true, code: true } } } } },
+    }),
+    // Everything that was not a sale or a purchase — damage, transfers, job
+    // work drawing base cards — so the quantity column actually reconciles.
+    prisma.stockTxn.findMany({
+      where: { itemId: item.id, type: { notIn: ["GRN", "DISPATCH", "HOLD", "HOLD_RELEASE", "RESERVE", "RESERVE_RELEASE"] }, ...(window ? { at: window } : {}) },
+      orderBy: { at: "asc" },
+    }),
+  ]);
+
+  type Row = {
+    kind: "PURCHASE" | "SALE" | "MOVE"; at: Date; ref: string; doc: string;
+    party: { id: string; name: string; code: string | null } | null;
+    inQty: number; outQty: number; rate: number | null; value: number | null; note: string;
+  };
+  const rows: Row[] = [
+    ...purchases.map((l) => ({
+      kind: "PURCHASE" as const, at: l.purchase.date, ref: l.purchase.invNo, doc: l.purchase.id,
+      party: l.purchase.vendor, inQty: l.qty, outQty: 0, rate: D(l.rate), value: Math.round(l.qty * D(l.rate) * 100) / 100,
+      note: l.purchase.status === "IN_TRANSIT" ? "in transit — not landed yet" : "",
+    })),
+    ...sales.map((l) => ({
+      kind: "SALE" as const, at: l.invoice.date, ref: l.invoice.no, doc: l.invoice.no,
+      party: l.invoice.customer, inQty: 0, outQty: l.qty, rate: D(l.rate), value: D(l.amount),
+      note: l.invoice.status === "Posted" ? "" : l.invoice.status.toLowerCase(),
+    })),
+    ...moves.map((m) => ({
+      kind: "MOVE" as const, at: m.at, ref: m.ref ?? m.type, doc: m.ref ?? "",
+      party: null,
+      inQty: ["TRANSFER_IN", "RETURN_IN", "RECOVER"].includes(m.type) ? m.qty : 0,
+      outQty: ["TRANSFER_OUT", "DAMAGE", "WRITE_OFF", "QUARANTINE"].includes(m.type) ? m.qty : 0,
+      rate: null, value: null,
+      note: `${m.type.toLowerCase().replace(/_/g, " ")}${m.godownId ? " · " + m.godownId : ""}${m.rack && m.rack !== "-" ? "/" + m.rack : ""}${m.reason ? " · " + m.reason : ""}`,
+    })),
+  ].sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  let bal = 0;
+  const ledger = rows.map((r) => { bal += r.inQty - r.outQty; return { ...r, balance: bal }; });
+
+  const bought = purchases.reduce((t, l) => t + l.qty, 0);
+  const sold = sales.reduce((t, l) => t + l.qty, 0);
+  const spend = purchases.reduce((t, l) => t + l.qty * D(l.rate), 0);
+  const take = sales.reduce((t, l) => t + D(l.amount), 0);
+  res.json({
+    item: { ...item, landedCost: D(item.landedCost), purchasePrice: item.purchasePrice == null ? null : D(item.purchasePrice) },
+    ledger,
+    summary: {
+      bought, sold, spend: Math.round(spend * 100) / 100, take: Math.round(take * 100) / 100,
+      avgBuy: bought ? Math.round((spend / bought) * 100) / 100 : null,
+      avgSell: sold ? Math.round((take / sold) * 100) / 100 : null,
+      vendors: [...new Map(purchases.filter((l) => l.purchase.vendor).map((l) => [l.purchase.vendor.id, l.purchase.vendor])).values()],
+      customers: [...new Map(sales.map((l) => [l.invoice.customer.id, l.invoice.customer])).values()].length,
+    },
+  });
+}));
+
 router.get("/:id", requirePerm("item.view"), asyncHandler(async (req, res) => {
   const v = await loadItemView(req.params.id);
   if (!v) throw notFound(M.itemNotFound());

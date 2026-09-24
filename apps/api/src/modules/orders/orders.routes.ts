@@ -33,7 +33,8 @@ router.get("/", requirePerm("order.view"), asyncHandler(async (req, res) => {
 
 const newOrderBody = z.object({
   customerId: z.string(),
-  lines: z.array(z.object({ itemId: z.string(), qty: z.number().int() })).default([]),
+  // A rate the office typed. Optional — most orders take the list.
+  lines: z.array(z.object({ itemId: z.string(), qty: z.number().int(), rate: z.number().min(0).optional() })).default([]),
   requiredBy: z.string().optional(),
   note: z.string().optional(),
   overrideReason: z.string().optional(),
@@ -127,7 +128,7 @@ router.post("/:id/dispatch", requirePerm("order.dispatch"), asyncHandler(async (
     // Bus consignments. The photographs arrive as data URLs on the JSON body,
     // the same road item photographs take — the browser has already redrawn
     // them down to a sensible size.
-    busNo: z.string().optional(), driverPhone: z.string().optional(), loadedAt: z.string().optional(),
+    busNo: z.string().optional(), driverPhone: z.string().optional(), loadedAt: z.string().optional(), arrivesAt: z.string().optional(),
     photos: z.array(z.string()).max(4).optional(),
   }).parse(req.body);
   // Stored before the consignment is written, because an upload is a network
@@ -175,6 +176,13 @@ router.post("/:id/dispatch/:did/share", requirePerm("order.dispatch"), asyncHand
   await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Dispatch details sent", entityType: "Order", entityId: req.params.id, newValue: `${b.channel} · ${b.toName || b.toPhone}` });
   res.status(201).json(share);
 }));
+// Setting rates on an order that has not been approved yet.
+router.post("/:id/reprice", requirePerm("order.create", "order.approve"), asyncHandler(async (req, res) => {
+  const b = z.object({ rates: z.record(z.number().min(0)), reason: z.string().trim().min(3, "Say why the rate is being changed") }).parse(req.body);
+  const r = await svc.reprice(await svc.getOrder(prisma, req.params.id), actor(req), b.rates, b.reason);
+  res.json({ ...r, order: svc.serializeOrder(await svc.getOrder(prisma, req.params.id)) });
+}));
+
 router.post("/:id/revive", requirePerm("order.approve"), asyncHandler(async (req, res) => {
   await svc.revive(await svc.getOrder(prisma, req.params.id), actor(req));
   res.json(svc.serializeOrder(await svc.getOrder(prisma, req.params.id)));

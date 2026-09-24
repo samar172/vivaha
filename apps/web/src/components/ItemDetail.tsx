@@ -1,13 +1,13 @@
 "use client";
-import { useRef, useState } from "react";
-import { money, num, fDT, marginFloor, paise, rate, itemRef } from "@vivaha/shared";
+import { useEffect, useRef, useState } from "react";
+import { money, num, fDate, fDT, marginFloor, paise, rate, itemRef } from "@vivaha/shared";
 import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAppState } from "@/lib/app-state";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
 import { post, patch, del } from "@/lib/api";
-import { Pill, BandPill, LineChip, Thumb, DF, Section, ModalFrame, Field, Note, Num } from "./ui";
+import { Pill, BandPill, LineChip, Thumb, DF, Section, ModalFrame, Field, Note, Num, KPI, Empty } from "./ui";
 import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
 import { Qr } from "./Qr";
@@ -26,6 +26,17 @@ export function ItemDetail({ id }: { id: string }) {
   // The footer's count belongs to whatever list was last shown; a detail page
   // has no record count of its own, so clear it rather than inherit one.
   useFooter(null);
+  // Alt+S, the way the trade's own software does it — and a button beside the
+  // title, because a shortcut nobody is told about is not a feature.
+  const [ledger, setLedger] = useState(false);
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if (e.altKey && (e.key === "s" || e.key === "S")) { e.preventDefault(); setLedger(true); }
+      if (e.key === "Escape") setLedger(false);
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
   if (!i) return <div className="wa"><div className="sm">Loading…</div></div>;
   // The item's own multiplier if it has one, otherwise the Regular group's,
   // which is what this table has always illustrated with.
@@ -38,11 +49,13 @@ export function ItemDetail({ id }: { id: string }) {
       sub={<><span className="rid">{i.designNo || i.sku}</span> · {L?.name}{i.nameHi ? <> · <span className="hi">{i.nameHi}</span></> : null}</>}
       actions={<>
         <button className="b b-o" onClick={() => router.push("/items")}><Icon n="chevronL" s={13} /> Back to items</button>
+        <button className="b b-o" title="Every purchase and sale of this item (Alt+S)" onClick={() => setLedger(true)}><Icon n="history" s={13} /> Movement <kbd>Alt+S</kbd></button>
         {can("item.edit") && <button className="b b-p" onClick={() => openModal(<ItemForm item={i} />, "w")}>Edit item</button>}
         {can("stock.adjust") && !svc && <button className="b b-o" onClick={() => openModal(<AdjustModal itemId={i.id} />)}>Adjust stock</button>}
         {can("stock.transfer") && !svc && <button className="b b-o" onClick={() => openModal(<TransferModal itemId={i.id} />)}>Transfer</button>}
       </>}
     />
+    {ledger && <ItemLedger id={i.id} onClose={() => setLedger(false)} />}
     <div className="wa">
       <div className="idg">
       <div>
@@ -63,7 +76,8 @@ export function ItemDetail({ id }: { id: string }) {
             {/* Rates carry paise. ₹13.20 shown as ₹13 is not a rounding — on a
                 carton of ten thousand cards it is two thousand rupees. */}
             <table className="dg" style={{ fontSize: 13 }}><thead><tr><th>From</th><th>To</th><th className="n">Rate</th><th className="n">Sells at ×{mult}</th><th className="n">Margin</th></tr></thead><tbody>{i.slabs.map((s, x) => { const r = paise(s.rate * mult); const m = r > 0 ? ((r - i.landedCost) / r) * 100 : 0; const applies = i.moq >= s.fromQty && i.moq <= s.toQty; return <tr key={x} style={{ cursor: "default", background: applies ? "var(--wa-bg)" : undefined, fontWeight: applies ? 600 : undefined }}><td className="tab">{num(s.fromQty)}</td><td className="tab">{s.toQty > 1e8 ? "∞" : num(s.toQty)}</td><td className="n tab">{rate(s.rate)}</td><td className="n tab">{rate(r)}</td><td className="n tab" style={{ color: m < i.minMargin * 100 ? "var(--er)" : "var(--ok)" }}>{m.toFixed(1)}%</td></tr>; })}</tbody></table>
-            <div className="sm" style={{ marginTop: 7 }}>Landed cost {rate(i.landedCost)} · floor {rate(marginFloor(i.landedCost, i.minMargin))}</div>
+            <div className="sm" style={{ marginTop: 7 }}>Supplier&apos;s price {i.purchasePrice == null ? "—" : rate(i.purchasePrice)} · landed cost {rate(i.landedCost)} · floor {rate(marginFloor(i.landedCost, i.minMargin))}</div>
+            {can("item.edit") && <button className="b b-p b-s" style={{ marginTop: 9 }} onClick={() => openModal(<PriceUpdateModal i={i} />)}>Update price</button>}
             <div className="sm" style={{ marginTop: 4 }}>{i.multiplier
               ? <>This item carries its own multiplier of <b>×{i.multiplier}</b>, so it sells at that markup whoever is buying — the firm&apos;s pricing group does not apply.</>
               : <>Shown at the <b>Regular</b> group&apos;s ×{mult}. Each firm&apos;s own group decides what it actually pays; set a multiplier on this item to fix the markup for everybody.</>}</div>
@@ -99,7 +113,7 @@ interface PriceChange { id: string; field: string; oldValue: number; newValue: n
 // What this item used to cost and what it costs now, straight off the record of
 // actual changes. Nothing is estimated, and an item nobody has repriced simply
 // says so rather than inventing a trend.
-const FIELD_LABEL: Record<string, string> = { slab1: "Slab 1 rate", landedCost: "Landed cost" };
+const FIELD_LABEL: Record<string, string> = { slab1: "Selling price (slab 1)", landedCost: "Landed cost", purchasePrice: "Supplier's price" };
 function PriceHistorySection({ itemId }: { itemId: string }) {
   const { data } = useApi<PriceChange[]>(`/api/items/${itemId}/price-history`);
   if (!data) return null;
@@ -322,6 +336,134 @@ export function ItemForm({ item }: { item?: ItemView }) {
       <Field label="GST %"><Num value={f.gstPct} onChange={(val) => setF({ ...f, gstPct: val })} /></Field>
     </div>
     <ItemPhoto item={item} />
+  </ModalFrame>;
+}
+
+// Everything that ever happened to this item, the way a Tally ledger reads.
+//
+// The panel on the item screen shows the last dozen movements, which answers
+// "what happened recently". The question actually asked at a counter is "when
+// did we last buy this, from whom, at what, and who has been taking it" — so
+// this is bought and sold on one page, oldest first, with a running quantity
+// that reconciles because transfers, damage and job-work draws are in it too.
+//
+// Alt+S, because that is the key the trade's own software uses for a ledger.
+interface LedgerRow {
+  kind: "PURCHASE" | "SALE" | "MOVE"; at: string; ref: string; doc: string;
+  party: { id: string; name: string; code: string | null } | null;
+  inQty: number; outQty: number; rate: number | null; value: number | null; note: string; balance: number;
+}
+interface LedgerData {
+  item: { id: string; sku: string; name: string; uom: string; landedCost: number; purchasePrice: number | null };
+  ledger: LedgerRow[];
+  summary: { bought: number; sold: number; spend: number; take: number; avgBuy: number | null; avgSell: number | null; vendors: { id: string; name: string }[]; customers: number };
+}
+
+function ItemLedger({ id, onClose }: { id: string; onClose: () => void }) {
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  const [kind, setKind] = useState<"ALL" | "PURCHASE" | "SALE">("ALL");
+  const qs = `${from ? `&from=${from}` : ""}${to ? `&to=${to}` : ""}`;
+  const { data } = useApi<LedgerData>(`/api/items/${id}/ledger?x=1${qs}`);
+  const router = useRouter();
+
+  const rows = (data?.ledger ?? []).filter((r) => kind === "ALL" || r.kind === kind);
+  const s = data?.summary;
+
+  return <div className="pwov" onClick={onClose}>
+    <div className="ldgr" onClick={(e) => e.stopPropagation()}>
+      <div className="drh">
+        <strong style={{ fontSize: 14.5 }}>{data ? `${data.item.name} — movement` : "Movement"}</strong>
+        <span className="sm" style={{ marginLeft: 8 }}>every purchase and sale</span>
+        <button className="b b-g b-s" style={{ marginLeft: "auto" }} onClick={onClose}><Icon n="x" s={13} /></button>
+      </div>
+      <div className="tbar">
+        <span className="ptab">
+          {(["ALL", "PURCHASE", "SALE"] as const).map((k) => <button key={k} className={kind === k ? "on" : ""} onClick={() => setKind(k)}>{k === "ALL" ? "Everything" : k === "PURCHASE" ? "Bought" : "Sold"}</button>)}
+        </span>
+        <span className="sm">From</span><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} />
+        <span className="sm">to</span><input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ height: 27, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 7px" }} />
+        {(from || to) && <button className="b b-o b-s" onClick={() => { setFrom(""); setTo(""); }}>Clear</button>}
+        <span style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--t4)" }}>{rows.length} entries</span>
+      </div>
+      {!data ? <div className="sm" style={{ padding: 14 }}>Loading…</div> : <>
+        <div className="kpis c4" style={{ margin: "0 0 11px" }}>
+          <KPI l="Bought" v={`${num(s!.bought)} ${data.item.uom.toLowerCase()}`} d={s!.avgBuy ? `avg ${rate(s!.avgBuy)}` : "never bought"} />
+          <KPI l="Sold" v={`${num(s!.sold)} ${data.item.uom.toLowerCase()}`} d={s!.avgSell ? `avg ${rate(s!.avgSell)}` : "never sold"} />
+          <KPI l="Spent" v={money(s!.spend)} d={s!.vendors.length ? s!.vendors.map((v) => v.name).join(", ") : "—"} />
+          <KPI l="Taken" v={money(s!.take)} d={`${s!.customers} firm${s!.customers === 1 ? "" : "s"}`} />
+        </div>
+        <div className="gw" style={{ maxHeight: "48vh", overflow: "auto" }}><table className="dg"><thead><tr>
+          <th>Date</th><th>Particulars</th><th>Party</th><th className="n">In</th><th className="n">Out</th><th className="n">Rate</th><th className="n">Value</th><th className="n">Balance</th>
+        </tr></thead><tbody>
+          {rows.length ? rows.map((r, n) => <tr key={r.kind + r.ref + n} style={{ cursor: r.party ? "pointer" : "default" }}
+            onClick={() => { if (r.kind === "PURCHASE") router.push(`/purchase/${r.doc}`); else if (r.kind === "SALE" && r.party) router.push(`/customers/${r.party.id}`); }}>
+            <td className="tab sm">{fDate(r.at)}</td>
+            <td className="w">{r.kind === "PURCHASE" ? "Purchase" : r.kind === "SALE" ? "Sale" : "Movement"} <span className="rid">{r.ref}</span>{r.note ? <div className="sm">{r.note}</div> : null}</td>
+            <td className="sm">{r.party ? <>{r.party.code ? <span className="tab">{r.party.code} </span> : null}{r.party.name}</> : "—"}</td>
+            <td className="n tab" style={{ color: r.inQty ? "var(--ok)" : "var(--t4)" }}>{r.inQty ? num(r.inQty) : ""}</td>
+            <td className="n tab" style={{ color: r.outQty ? "var(--er)" : "var(--t4)" }}>{r.outQty ? num(r.outQty) : ""}</td>
+            <td className="n tab">{r.rate == null ? "" : rate(r.rate)}</td>
+            <td className="n tab">{r.value == null ? "" : money(r.value)}</td>
+            <td className="n tab" style={{ fontWeight: 600 }}>{num(r.balance)}</td>
+          </tr>) : <tr><td colSpan={8}><Empty t="Nothing in this period" d="Widen the dates, or this item has not moved." /></td></tr>}
+        </tbody></table></div>
+        <div className="sm" style={{ marginTop: 9 }}>Oldest first, so the balance column reads down. Transfers, damage and job-work draws are included, which is why it reconciles with the godown rather than with sales alone. A row opens the document behind it.</div>
+      </>}
+    </div>
+  </div>;
+}
+
+// Changing one item's price, from the item.
+//
+// The same road the price list takes — the same endpoint, the same margin
+// floor, the same effective date — because a price set here and a price set
+// there must not be able to behave differently. The difference is only that
+// this is one item, in front of somebody who came to look at it.
+function PriceUpdateModal({ i }: { i: ItemView & { minMargin: number } }) {
+  const { closeModal, toast } = useUI();
+  const [f, setF] = useState(() => ({
+    purchasePrice: i.purchasePrice ?? 0,
+    multiplier: i.multiplier ?? 0,
+    sellingPrice: i.slabs[0]?.rate ?? 0,
+    from: new Date().toISOString().slice(0, 10),
+    reason: "",
+  }));
+  const [busy, setBusy] = useState(false);
+  const floor = marginFloor(i.landedCost, i.minMargin);
+  const was = i.slabs[0]?.rate ?? 0;
+
+  // Typing a markup gives a price; typing a price gives back the markup.
+  const setMult = (v: number) => setF((x) => ({ ...x, multiplier: v, sellingPrice: x.purchasePrice && v ? paise(x.purchasePrice * v) : x.sellingPrice }));
+  const setSelling = (v: number) => setF((x) => ({ ...x, sellingPrice: v, multiplier: x.purchasePrice ? Math.round((v / x.purchasePrice) * 1000) / 1000 : x.multiplier }));
+  const setPurchase = (v: number) => setF((x) => ({ ...x, purchasePrice: v, sellingPrice: x.multiplier ? paise(v * x.multiplier) : x.sellingPrice }));
+
+  const go = async () => {
+    if (!f.sellingPrice) return toast("Enter the price it should sell at", "e");
+    setBusy(true);
+    try {
+      const r = await post<{ immediate: boolean; scheduled: number }>("/api/items/price-list", {
+        effectiveFrom: new Date(f.from + "T00:00:00").toISOString(),
+        reason: f.reason.trim(),
+        rows: [{ itemId: i.id, purchasePrice: f.purchasePrice || null, multiplier: f.multiplier || null, sellingPrice: Number(f.sellingPrice) }],
+      });
+      toast(r.immediate ? `${i.name} now sells at ${rate(f.sellingPrice)}` : `${rate(f.sellingPrice)} set for ${fDate(f.from)} — today's rate stands until then`, "s");
+      closeModal(); refresh("/api/");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  return <ModalFrame title={`Update price — ${i.name}`} onClose={closeModal}
+    actions={<><button className="b b-o" onClick={closeModal}>Cancel</button><button className="b b-p" disabled={busy} onClick={go}>Save price</button></>}>
+    <div className="fg">
+      <Field label="Supplier&apos;s price (₹)" hint="Before freight — kept current from every goods receipt"><Num value={f.purchasePrice} step="0.01" onChange={setPurchase} /></Field>
+      <Field label="× Multiplier" hint="Blank follows the firm&apos;s pricing group"><Num value={f.multiplier} step="0.01" placeholder="group" onChange={setMult} /></Field>
+      <Field label="Sells at (₹)" hint={`Was ${rate(was)}`}><Num value={f.sellingPrice} step="0.01" onChange={setSelling} /></Field>
+      <Field label="In force from" hint="Today applies at once; a later date waits"><input type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
+      <Field label="Why (kept in the price history)" full><input value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="e.g. Supplier revised the list for the season" /></Field>
+    </div>
+    {f.sellingPrice > 0 && f.sellingPrice < floor && <Note k="w" style={{ marginTop: 11 }}>
+      {rate(f.sellingPrice)} is below this item&apos;s margin floor of {rate(floor)} — landed cost {rate(i.landedCost)} plus {Math.round(i.minMargin * 100)}%. Saving it needs <b>margin.override</b>.
+    </Note>}
+    <Note style={{ marginTop: 11 }}>The deeper slabs follow at 89 / 80 / 74% of this, the way the catalogue has always been built. Every change is written to this item&apos;s price history with your name against it.</Note>
   </ModalFrame>;
 }
 

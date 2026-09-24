@@ -890,6 +890,10 @@ model Dispatch {
   busNo       String   @default("")
   driverPhone String   @default("")
   loadedAt    DateTime?
+  // When the bus is due at the far end. The whole reason a firm rings is "when
+  // will it reach" — so it is recorded and goes out in the message rather than
+  // being worked out again by whoever answers the phone.
+  arrivesAt   DateTime?
   photos      Json     @default("[]") // [url]
   lines       Json     @default("[]") // [{ itemId, qty, godownId }]
   invoiceNo   String?

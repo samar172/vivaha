@@ -72,6 +72,26 @@ async function registerMfrCode(tx: Parameters<typeof audit>[0], itemId: string, 
   }
   await tx.itemCode.create({ data: { code: trimmed, itemId, kind: "MANUFACTURER", status: "ACTIVE", vendorId, by, note: "Recorded at goods receipt" } });
 }
+
+// A receipt moves two prices, and both belong in the item's history.
+//
+// The history screen answers "why is this dearer than last season", and until
+// now it only saw what somebody typed on the item screen — while the commonest
+// reason a cost moves is a delivery arriving at a different rate. A landed cost
+// that drifts upward across four receipts with nothing recorded is exactly the
+// drift nobody can explain afterwards.
+async function recordPriceMove(
+  tx: Parameters<typeof audit>[0],
+  itemId: string, by: string, ref: string,
+  moves: { field: "landedCost" | "purchasePrice"; from: number; to: number }[],
+) {
+  const real = moves.filter((m) => Math.abs(m.to - m.from) > 0.004);
+  if (!real.length) return;
+  await tx.itemPriceHistory.createMany({
+    data: real.map((m) => ({ itemId, field: m.field, oldValue: m.from, newValue: m.to, by, reason: `Goods receipt ${ref}` })),
+  });
+}
+
 const poSchema = z.object({ vendorId: z.string(), invNo: z.string().min(1), date: z.string().optional(), eta: z.string().optional(), freight: z.number().min(0).default(0), status: z.enum(["POSTED", "IN_TRANSIT"]).default("POSTED"), lines: z.array(lineSchema).min(1) });
 
 router.post("/", requirePerm("purchase.create"), asyncHandler(async (req, res) => {
@@ -105,6 +125,10 @@ router.post("/", requirePerm("purchase.create"), asyncHandler(async (req, res) =
         // against; purchasePrice is the supplier's own rate, which is what the
         // office prices off. Both move on a receipt, and neither is the other.
         await tx.item.update({ where: { id: it.id }, data: { landedCost: newCost, purchasePrice: l.rate } });
+        await recordPriceMove(tx, it.id, req.user!.name, b.invNo, [
+          { field: "landedCost", from: D(it.landedCost), to: newCost },
+          { field: "purchasePrice", from: it.purchasePrice == null ? 0 : D(it.purchasePrice), to: l.rate },
+        ]);
         await audit(tx, { userId: req.user!.id, actor: req.user!.name, action: "Purchase invoice posted", entityType: "Purchase", entityId: b.invNo, newValue: "₹" + Math.round(l.qty * l.rate + share), reason: `Landed cost ₹${D(it.landedCost)} → ₹${newCost}` });
         await notify(tx, { text: `Goods receipt ${b.invNo} posted — ${l.qty} ${it.uom} of ${it.sku}`, kind: "OK", role: "PURCHASE_MANAGER" });
       }
@@ -179,6 +203,10 @@ router.post("/:id/receive", requirePerm("purchase.create"), asyncHandler(async (
       const share = gross > 0 ? (D(po.freight) * (l.qty * D(l.rate))) / gross : 0;
       const newCost = recomputeLandedCost(D(l.item.landedCost), onHandBefore, l.qty, D(l.rate), share);
       await tx.item.update({ where: { id: l.itemId }, data: { landedCost: newCost, purchasePrice: D(l.rate) } });
+      await recordPriceMove(tx, l.itemId, req.user!.name, po.invNo, [
+        { field: "landedCost", from: D(l.item.landedCost), to: newCost },
+        { field: "purchasePrice", from: l.item.purchasePrice == null ? 0 : D(l.item.purchasePrice), to: D(l.rate) },
+      ]);
       const mfr = inp.mfrCode?.trim() || l.mfrCode || null;
       await tx.purchaseLine.update({ where: { id: l.id }, data: { alloc: pl.alloc, places: asJson(pl.places), batchNo: inp.batchNo ?? null, mfrCode: mfr } });
       if (mfr) await registerMfrCode(tx, l.itemId, mfr, po.vendorId, req.user!.name);

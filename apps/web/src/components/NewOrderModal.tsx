@@ -3,13 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { money, num, type Band, rate, itemRef } from "@vivaha/shared";
 import { useApi, useLines, refresh } from "@/lib/hooks";
 import { useUI, errMsg } from "@/lib/ui";
+import { useAuth } from "@/lib/auth-context";
 import { post, get } from "@/lib/api";
 import { ModalFrame, Field, Note, Empty, GateDot, BandPill, Thumb, Num } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import type { Customer, Order } from "@/components/types";
 
 interface CatItem { id: string; sku: string; designNo: string | null; name: string; nameHi: string; lineId: string; uom: string; moq: number; available: number; band: Band | null; gstPct: number; artSeed: number; imageUrl: string | null; code: string | null; rate: number }
-interface QuoteLine { itemId: string; sku: string; name: string; lineId: string; uom: string; artSeed: number; imageUrl: string | null; qty: number; moq: number; available: number; rate: number; slabRate: number; mult: number; priceSrc: string; amount: number; gstPct: number; short: boolean; belowMoq: boolean }
+interface QuoteLine { itemId: string; sku: string; designNo?: string | null; code?: string | null; name: string; lineId: string; uom: string; artSeed: number; imageUrl: string | null; qty: number; moq: number; available: number; rate: number; slabRate: number; mult: number; priceSrc: string; amount: number; gstPct: number; short: boolean; belowMoq: boolean; listRate: number; floor: number; belowFloor: boolean }
 interface Quote { customer: { id: string; name: string; blockReason: string | null; gateMode: "WARN" | "BLOCK"; linesEnabled: string[] }; lines: QuoteLine[]; totals: { taxable: number; tax: number; total: number }; gate: { status: string; restricted: boolean; mode: string; headroom: number }; lineIds: string[] }
 
 const inDays = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
@@ -18,7 +19,7 @@ const inDays = (n: number) => new Date(Date.now() + n * 864e5).toISOString().sli
 // sales executive. Everything the portal decides — rate, slab, credit gate,
 // stock — is decided by the server here too; this screen only collects.
 export function NewOrderModal({ customerId }: { customerId?: string }) {
-  const { closeModal, toast } = useUI();
+  const { closeModal, toast } = useUI(); const { can } = useAuth();
   const { data: lines } = useLines();
   const { data: customers } = useApi<Customer[]>("/api/customers?line=ALL&q=");
   const [cid, setCid] = useState(customerId ?? "");
@@ -31,6 +32,10 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   // that is when the customer hands them over — booking the cards and then
   // remembering to raise the printing on another screen is how the two came to
   // have nothing joining them.
+  // Rates the office typed over the list, by item. A wholesale counter agrees
+  // prices out loud; the list is where the conversation starts, not where it
+  // has to end.
+  const [rates, setRates] = useState<Record<string, number>>({});
   const [wantJob, setWantJob] = useState(false);
   const [job, setJob] = useState({ processItemId: "", qty: 0, text: "", quote: 0 });
   const [reason, setReason] = useState("");
@@ -61,12 +66,12 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
     let dead = false;
     const t = setTimeout(async () => {
       try {
-        const r = await post<Quote>("/api/orders/quote", { customerId: cid, lines: picked.map(([itemId, qty]) => ({ itemId, qty })) });
+        const r = await post<Quote>("/api/orders/quote", { customerId: cid, lines: picked.map(([itemId, qty]) => ({ itemId, qty, rate: rates[itemId] })) });
         if (!dead) setQuote({ key, q: r, err: "" });
       } catch (e) { if (!dead) setQuote({ key, q: null, err: errMsg(e) }); }
     }, 250);
     return () => { dead = true; clearTimeout(t); };
-  }, [cid, picked, key]);
+  }, [cid, picked, key, rates]);
 
   const fresh = quote?.key === key ? quote : null;
   const qt = picked.length ? fresh?.q ?? null : null;
@@ -106,7 +111,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
     } catch { toast(`No item carries the code ${code.trim()}`, "e"); }
   };
   const setQty = (id: string, n: number) => setCart((c) => ({ ...c, [id]: Math.max(0, n) }));
-  const drop = (id: string) => setCart((c) => { const n = { ...c }; delete n[id]; return n; });
+  const drop = (id: string) => { setCart((c) => { const n = { ...c }; delete n[id]; return n; }); setRates((m) => { const n = { ...m }; delete n[id]; return n; }); };
 
   const gate = qt?.gate;
   const blocked = !!firm?.blockReason;
@@ -118,7 +123,7 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
   const submit = async () => {
     setBusy(true);
     try {
-      const o = await post<Order>("/api/orders", { customerId: cid, lines: picked.map(([itemId, qty]) => ({ itemId, qty })), requiredBy, note: note.trim() || undefined, overrideReason: reason.trim() || undefined });
+      const o = await post<Order>("/api/orders", { customerId: cid, lines: picked.map(([itemId, qty]) => ({ itemId, qty, rate: rates[itemId] })), requiredBy, note: note.trim() || undefined, overrideReason: reason.trim() || undefined });
       // The printing is raised against the order that was just booked, so the
       // two read together from the start and land on one bill at dispatch.
       if (wantJob && job.processItemId && job.text.trim()) {
@@ -198,7 +203,21 @@ export function NewOrderModal({ customerId }: { customerId?: string }) {
             return <tr key={id} style={{ cursor: "default" }}>
               <td className="w">{l?.name ?? it?.name ?? id}<div className="sm"><span className="rid">{l ? itemRef(l) : it ? itemRef(it) : ""}</span>{l?.short ? <span style={{ color: "var(--er)" }}> · only {num(l.available)} available</span> : l?.belowMoq ? <span style={{ color: "var(--er)" }}> · below MOQ {num(l.moq)}</span> : null}</div></td>
               <td className="n"><Num style={{ width: 88, textAlign: "right" }} value={qty} onChange={(val) => setQty(id, val)} /></td>
-              <td className="n tab">{l ? <>{rate(l.rate)}<div className="sm">{l.priceSrc}</div></> : "…"}</td>
+              {/* A wholesale counter agrees prices out loud. The list is where
+                  the conversation starts; anyone with cust.price can type over
+                  it, and the floor still holds. */}
+              <td className="n">{can("cust.price")
+                ? <>
+                  <Num style={{ width: 92, textAlign: "right", fontWeight: l?.priceSrc === "manual" ? 700 : 400 }} step="0.01"
+                    value={rates[id] ?? l?.rate ?? 0} onChange={(val) => setRates((m) => ({ ...m, [id]: val }))} />
+                  <div className="sm">
+                    {l?.priceSrc === "manual"
+                      ? <>typed · list {rate(l.listRate)} {rates[id] != null && <button className="lnk" onClick={() => setRates((m) => { const n = { ...m }; delete n[id]; return n; })}>reset</button>}</>
+                      : l?.priceSrc ?? "…"}
+                    {l?.belowFloor && <div style={{ color: "var(--er)" }}>under floor {rate(l.floor)}</div>}
+                  </div>
+                </>
+                : l ? <span className="tab">{rate(l.rate)}<div className="sm">{l.priceSrc}</div></span> : "…"}</td>
               <td className="n tab" style={{ fontWeight: 600 }}>{l ? money(l.amount) : "…"}</td>
               <td><button className="b b-g b-s" onClick={() => drop(id)}><Icon n="x" s={11} /></button></td>
             </tr>;

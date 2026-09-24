@@ -553,6 +553,23 @@ input[type=number]{-moz-appearance:textfield}
 .lg-demo{margin-top:13px;padding-top:12px;border-top:1px dashed var(--bd)}
 .lg-demo .lb{margin-bottom:5px}
 
+/* A link-looking button inside small print. */
+.lnk{background:none;border:0;padding:0;color:var(--ac);font-size:inherit;text-decoration:underline;cursor:pointer}
+
+/* The item movement ledger — a wide sheet over the page, because it is read
+   across, not down a drawer. */
+.ldgr{width:min(1180px,96vw);max-height:92vh;overflow:auto;background:#fff;border-radius:12px;padding:0 16px 16px;box-shadow:0 22px 60px rgba(16,24,40,.32)}
+.ldgr .drh{position:sticky;top:0;background:#fff;z-index:2;margin:0 -16px;padding:13px 16px}
+.ldgr .tbar{margin-bottom:11px}
+
+/* "A newer version is ready." Sits above everything, because the whole point is
+   that it is seen; small, because it is not an error. */
+.fbld{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:500;display:flex;align-items:center;gap:11px;
+  background:var(--t9);color:#fff;border-radius:999px;padding:8px 10px 8px 17px;font-size:13px;box-shadow:0 12px 30px rgba(16,24,40,.3)}
+.fbld .b{border-radius:999px}
+.fbldx{background:none;border:0;color:#fff;opacity:.6;font-size:17px;line-height:1;padding:0 6px;cursor:pointer}
+.fbldx:hover{opacity:1}
+
 /* Tabs that sit inside a toolbar, beside the search box. */
 .ptab{display:inline-flex;gap:2px;background:var(--panel-2);border:1px solid var(--bd);border-radius:7px;padding:2px}
 .ptab button{font-size:12.5px;padding:3px 9px;border:0;background:none;border-radius:5px;color:var(--t6);cursor:pointer;white-space:nowrap}
