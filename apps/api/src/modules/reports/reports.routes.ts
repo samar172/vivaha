@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma, D } from "../../db";
+import { customerHealth, vendorHealth } from "../../services/health";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { loadItemViews } from "../../services/items";
@@ -37,6 +38,16 @@ const lineOf = (req: { query: Record<string, unknown> }) => String(req.query.lin
 // screen in the portal, a reward on the row. Nothing could read it back. This
 // joins each referral to the firm it produced, so "submitted" and "actually
 // bought" are told apart, and the reward is only counted once there is an order.
+// How complete the customer and supplier masters are, as a percentage.
+//
+// A half-filled master costs money quietly — a bill that cannot be raised, a
+// consignment that cannot be chased — and never announces itself. This is the
+// number, the fields holding it down, and the records to go and fix.
+router.get("/health", requirePerm("report.view", "cust.view"), asyncHandler(async (_req, res) => {
+  const [customers, vendors] = await Promise.all([customerHealth(), vendorHealth()]);
+  res.json({ customers, vendors });
+}));
+
 router.get("/referral", requirePerm("report.view"), asyncHandler(async (req, res) => {
   const refs = await prisma.referral.findMany({ include: { by: { select: { id: true, name: true, tehsil: true, referCode: true } } }, orderBy: { createdAt: "desc" } });
   // A firm opened on somebody's refer code carries the link outright. The name

@@ -12,7 +12,10 @@
 // stale credit gate read back from a cache would be worse than an error. Only
 // the static build output is cached, and only after it has been fetched once.
 
-const CACHE = "vivaha-shell-v1";
+// Bumped when the worker's own behaviour changes. The activate handler deletes
+// every cache that is not this one, so a rename is also a clean sweep — cheap
+// insurance after a bug in the caching path.
+const CACHE = "vivaha-shell-v2";
 const OFFLINE = "/offline.html";
 
 self.addEventListener("install", (e) => {
@@ -47,7 +50,17 @@ self.addEventListener("fetch", (e) => {
   if (isStatic(url)) {
     e.respondWith(
       caches.match(req).then((hit) => hit || fetch(req).then((res) => {
-        if (res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
+        // The copy has to be taken NOW, synchronously, before this response is
+        // handed back. Taking it inside the caches.open() callback was a race:
+        // by the time that resolved the browser had already begun reading the
+        // body, and clone() on a used body throws — which is what surfaced in
+        // the console as "Response body is already used".
+        //
+        // The put is still allowed to be slow; only the clone has to be early.
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
         return res;
       })),
     );
