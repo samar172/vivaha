@@ -7,8 +7,9 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { requirePerm } from "../../middleware/auth";
 import { gatesForAll, gateFor } from "../../services/credit";
 import { audit } from "../../services/audit";
+import { badRequest, notFound } from "../../utils/httpError";
 import { getCompany, getSetting } from "../../services/settings";
-import { storeImage } from "../../services/uploads";
+import { storeImage, removeImage } from "../../services/uploads";
 import * as svc from "./orders.service";
 
 const router = Router();
@@ -119,6 +120,65 @@ router.post("/:id/status", requirePerm("order.pick", "order.dispatch"), asyncHan
   await svc.advance(await svc.getOrder(prisma, req.params.id), actor(req), to);
   res.json(svc.serializeOrder(await svc.getOrder(prisma, req.params.id)));
 }));
+// ── What was picked, photographed before it was packed ──────────────────────
+// A dispute is always the same argument: the firm says four bundles came and
+// the godown says five went. Once the boxes are taped there is nothing left to
+// look at, so the moment worth a photograph is after picking and before
+// packing, with the goods still spread on the table.
+//
+// Several at once, because one photograph of a full table proves less than four
+// of the separate stacks.
+router.post("/:id/photos", requirePerm("order.pick", "order.dispatch"), asyncHandler(async (req, res) => {
+  const b = z.object({
+    photos: z.array(z.string().min(1)).min(1, "Nothing to save").max(12, "Twelve photographs is plenty for one order"),
+    note: z.string().trim().max(200).default(""),
+  }).parse(req.body);
+  const o = await prisma.order.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+  if (!o) throw notFound("Order not found");
+
+  // Stored before the rows are written: an upload is a network call.
+  const urls: string[] = [];
+  for (const [n, data] of b.photos.entries()) {
+    if (!data.startsWith("data:")) { urls.push(data); continue; }
+    urls.push((await storeImage("orders", `${o.id}-${Date.now()}-${n}`, data)).url);
+  }
+
+  const rows = await prisma.$transaction(async (tx) => {
+    const made = [];
+    for (const url of urls) {
+      // The order's status at this moment is stamped on the picture. A
+      // photograph taken at the packing table and one added a week after the
+      // goods went are both allowed — they are simply not allowed to look alike.
+      made.push(await tx.orderPhoto.create({ data: { orderId: o.id, url, atStage: o.status, note: b.note, by: req.user!.name } }));
+    }
+    await audit(tx, {
+      userId: req.user!.id, actor: req.user!.name, action: "Picking photographs saved",
+      entityType: "Order", entityId: o.id,
+      newValue: `${urls.length} photograph${urls.length === 1 ? "" : "s"} at ${o.status}`,
+      reason: b.note,
+    });
+    return made;
+  });
+  res.status(201).json({ photos: rows, atStage: o.status });
+}));
+
+// A blurred shot or one of the wrong table can be taken off — until the goods
+// leave. After that the set is what it is: removing a photograph of a
+// consignment already in dispute is not housekeeping.
+router.delete("/:id/photos/:photoId", requirePerm("order.pick", "order.dispatch"), asyncHandler(async (req, res) => {
+  const o = await prisma.order.findUnique({ where: { id: req.params.id }, select: { id: true, status: true } });
+  if (!o) throw notFound("Order not found");
+  const photo = await prisma.orderPhoto.findFirst({ where: { id: req.params.photoId, orderId: o.id } });
+  if (!photo) throw notFound("That photograph is not on this order");
+  if (["DISPATCHED", "PARTIALLY_DISPATCHED", "DELIVERED"].includes(o.status)) {
+    throw badRequest("The goods have gone, so the photographs of them are closed. They are what this order was sent as.");
+  }
+  await prisma.orderPhoto.delete({ where: { id: photo.id } });
+  await removeImage(photo.url);
+  await audit(prisma, { userId: req.user!.id, actor: req.user!.name, action: "Picking photograph removed", entityType: "Order", entityId: o.id, oldValue: `taken at ${photo.atStage} by ${photo.by}`, reason: "Removed before dispatch" });
+  res.json({ ok: true });
+}));
+
 router.post("/:id/dispatch", requirePerm("order.dispatch"), asyncHandler(async (req, res) => {
   const b = z.object({
     ship: z.record(z.number().int().min(0)),

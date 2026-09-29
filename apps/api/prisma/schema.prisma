@@ -822,6 +822,7 @@ model Order {
   lines      OrderLine[]
   events     OrderEvent[]
   jobs       JobWork[]
+  photos     OrderPhoto[]
   dispatches Dispatch[]
   invoices   Invoice[]
   returns    ReturnRequest[]
@@ -859,6 +860,33 @@ model OrderEvent {
   by      String
   why     String   @default("")
   at      DateTime @default(now())
+}
+
+// What was picked, photographed before it was packed.
+//
+// A dispute is always about the same thing: the firm says four bundles came and
+// the godown says five went. Once the boxes are taped there is nothing left to
+// look at, so the moment worth a photograph is after the picking and before the
+// packing, with the goods still spread on the table.
+//
+// This is evidence, so it is kept as evidence. The picture is stamped with who
+// took it, when, and — importantly — what the order's status was at that
+// moment. A photograph added after the goods had already gone says so on its
+// own face rather than passing as one taken at the table. Nothing is silently
+// replaced: a picture removed before dispatch is audited, and once the
+// consignment has left, the set is closed.
+model OrderPhoto {
+  id      String   @id @default(cuid())
+  orderId String
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  url     String
+  /// What the order was at the moment the photograph was taken.
+  atStage String
+  note    String   @default("")
+  by      String
+  at      DateTime @default(now())
+
+  @@index([orderId, at])
 }
 
 // How a consignment left the building.

@@ -6,6 +6,50 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-29 — Photographs of what was picked
+
+A dispute is always the same argument: the firm says four bundles came and the
+godown says five went, and neither can prove it. Once the boxes are taped there
+is nothing left to look at — so the moment worth a photograph is after the
+picking and before the packing, with the goods still spread on the table.
+
+Several at once, because that is how it is actually useful: four stacks
+photographed separately prove more than one wide shot of everything. On a phone
+the camera opens straight away; the file picker takes a batch on a desktop. A
+note can ride along with the set — *"4 bundles, counted twice"*.
+
+### Kept as evidence, because that is what it is
+
+`OrderPhoto` stamps every picture with who took it, when, and **what the order
+was at that moment**. That last field is the one that matters. A photograph
+added a week after the goods went is not refused — losing evidence to a failed
+upload at a godown would be the worse outcome — but it carries `DISPATCHED` on
+its face and the screen says *"added at dispatched"*, so it cannot pass as one
+taken at the table.
+
+A blurred shot or one of the wrong table can be taken off while the goods are
+still here, and that removal is audited. Once the consignment has left, the set
+is closed: removing a photograph of goods already in dispute is not
+housekeeping. Adding is still allowed — it is only ever marked, never silently
+lost.
+
+### Said at the moment it can be acted on
+
+An order sitting at **Picked** with no photographs says so, in the place the
+picker is already looking: *"The goods are picked and still out — this is the
+moment. Once they are packed there is nothing left to look at."* Not a blocking
+dialog; the feature was asked for as an option and stays one.
+
+### Verified
+
+19 checks in `scripts/check_picking_photos.py`: three photographs saved in one
+go and stamped at PICKED, one removed before dispatch, more added at PACKED,
+removal refused once dispatched, a late addition accepted and marked
+`DISPATCHED`, an empty set and an absurd one refused, an unknown order a 404,
+and the audit log carrying it. Eleven harnesses, all passing.
+
+---
+
 ## 2026-09-24 (security) — Two holes, and a promise the shop could not keep
 
 Asked to check the portal and that every endpoint is closed. 187 routes

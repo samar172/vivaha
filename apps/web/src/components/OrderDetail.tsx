@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useApi, useGodowns, useLines, refresh } from "@/lib/hooks";
 import { useAuth } from "@/lib/auth-context";
 import { useUI, errMsg } from "@/lib/ui";
-import { post } from "@/lib/api";
+import { post, del } from "@/lib/api";
 import { DF, Section, ModalFrame, Field, Note, Hold, Timeline, Num } from "./ui";
 import { PageHead } from "./PageHead";
 import { useFooter } from "./Shell";
@@ -84,6 +84,11 @@ export function OrderDetail({ id }: { id: string }) {
       {o.holdUntil && <Note k="w" style={{ marginBottom: 13 }}>
         <b>Hold expires in <Hold until={o.holdUntil} onExpire={() => setTimeout(() => mutate(), 16000)} /></b> — then the stock releases and an alert is raised to the firm&apos;s sales executive.
       </Note>}
+      {/* The one moment this can be done, said at that moment. After the boxes
+          are taped there is nothing left to photograph. */}
+      {o.status === "PICKED" && !(o.photos ?? []).length && (can("order.pick") || can("order.dispatch")) && <Note k="w" style={{ marginBottom: 13 }}>
+        <b>Nothing photographed yet.</b> The goods are picked and still out — this is the moment to photograph them. Once they are packed there is nothing left to look at, and a dispute over what went in the box has only the paperwork to go on.
+      </Note>}
       {o.status === "PARTIALLY_DISPATCHED" && <Note k="w" style={{ marginBottom: 13 }}>Backorder open — {num(o.backorder)} units still reserved and dispatchable.</Note>}
 
       <div className="idg">
@@ -101,6 +106,9 @@ export function OrderDetail({ id }: { id: string }) {
               </tbody></table>
             </Section>
           </div></div>)}
+          <div className="pn"><div className="pnb">
+            <PickingPhotos o={o} onChange={() => mutate()} />
+          </div></div>
           <div className="pn"><div className="pnb">
             <Section t="History"><Timeline rows={o.events.slice().reverse().map((h) => ({ t: <span className="wo">{h.from ? h.from.replace(/_/g, " ") + " → " : ""}{h.to.replace(/_/g, " ")}</span>, n: `${fDT(h.at)} · ${h.by}${h.why ? " · " + h.why : ""}` }))} /></Section>
           </div></div>
@@ -145,6 +153,87 @@ export function OrderDetail({ id }: { id: string }) {
       </div>
     </div>
   </>;
+}
+
+// Photographs of the goods, taken between the picking and the packing.
+//
+// A dispute is always the same argument — the firm says four bundles came and
+// the godown says five went — and once the boxes are taped there is nothing
+// left to look at. So the moment worth a picture is while the goods are still
+// spread on the table, and several pictures beat one: four stacks photographed
+// separately prove more than one wide shot of everything.
+//
+// Each carries what the order was when it was taken. A picture added after the
+// goods had gone is not refused — losing evidence to a failed upload would be
+// worse — but it says so on its own face rather than passing as one taken at
+// the table.
+function PickingPhotos({ o, onChange }: { o: Order; onChange: () => void }) {
+  const { toast } = useUI(); const { can } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [zoom, setZoom] = useState<string | null>(null);
+  const photos = o.photos ?? [];
+  const shut = ["DISPATCHED", "PARTIALLY_DISPATCHED", "DELIVERED"].includes(o.status);
+  const mayAdd = can("order.pick") || can("order.dispatch");
+  // The moment this is for. Before it, there is nothing picked to photograph.
+  const atTheTable = ["PICKING", "PICKED", "PACKED", "READY_TO_DISPATCH"].includes(o.status);
+
+  const take = async (files: FileList | null) => {
+    if (!files?.length) return;
+    if (photos.length + files.length > 12) return toast("Twelve photographs is plenty for one order", "e");
+    setBusy(true);
+    try {
+      const shots: string[] = [];
+      for (const f of Array.from(files)) shots.push(await shrink(f));
+      await post(`/api/orders/${o.id}/photos`, { photos: shots, note: note.trim() });
+      toast(`${shots.length} photograph${shots.length === 1 ? "" : "s"} saved against ${o.id}`, "s");
+      setNote(""); onChange(); refresh("/api/orders");
+    } catch (e) { toast(errMsg(e), "e"); } finally { setBusy(false); }
+  };
+
+  const drop = async (p: { id: string }) => {
+    try { await del(`/api/orders/${o.id}/photos/${p.id}`); toast("Photograph removed", "s"); onChange(); refresh("/api/orders"); }
+    catch (e) { toast(errMsg(e), "e"); }
+  };
+
+  return <Section t={<>Picking photographs{photos.length ? <span className="sm" style={{ fontWeight: 400 }}> · {photos.length}</span> : null}</>}>
+    {photos.length
+      ? <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+        {photos.map((p) => <div key={p.id} style={{ position: "relative" }}>
+          <img src={p.url} alt={`Picked goods — ${fDT(p.at)}`} onClick={() => setZoom(p.url)}
+            style={{ width: 104, height: 78, objectFit: "cover", borderRadius: 6, border: "1px solid var(--bd)", cursor: "zoom-in" }} />
+          <div className="sm" style={{ marginTop: 3, lineHeight: 1.35 }}>
+            {fDT(p.at)}<br />{p.by}
+            {/* Said plainly when a picture was not taken at the table. */}
+            {!["PICKING", "PICKED", "PACKED", "READY_TO_DISPATCH"].includes(p.atStage) &&
+              <><br /><span style={{ color: "var(--wa)" }}>added at {p.atStage.toLowerCase().replace(/_/g, " ")}</span></>}
+          </div>
+          {mayAdd && !shut && <button className="b b-g b-s" style={{ position: "absolute", top: 3, right: 3 }} onClick={() => drop(p)} title="Remove"><Icon n="x" s={10} /></button>}
+        </div>)}
+      </div>
+      : <div className="sm">No photographs yet. {atTheTable
+        ? "Photograph the goods on the table before they are packed — it is the only record of what went into the box."
+        : "They are taken between picking and packing, while the goods are still out."}</div>}
+
+    {mayAdd && <div style={{ marginTop: photos.length ? 11 : 9 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <label className={"b b-s " + (atTheTable && !shut ? "b-p" : "b-o")} style={{ cursor: busy ? "wait" : "pointer" }}>
+          {busy ? "Saving…" : photos.length ? "+ More photographs" : "+ Photograph the goods"}
+          {/* Several at once, and the camera straight away on a phone. */}
+          <input type="file" accept="image/*" multiple capture="environment" style={{ display: "none" }}
+            disabled={busy} onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
+        </label>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="A note on these (optional) — e.g. 4 bundles, counted twice"
+          style={{ flex: "1 1 240px", height: 30, border: "1px solid var(--bd)", borderRadius: 5, padding: "0 9px" }} />
+      </div>
+      {shut && <Note style={{ marginTop: 9 }}>The goods have gone, so this set is closed — a picture can still be added and will be marked as added late, but none can be taken away. They are what this order was sent as.</Note>}
+    </div>}
+
+    {zoom && <div className="pwov" onClick={() => setZoom(null)}>
+      <img src={zoom} alt="Picked goods" onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "92vw", maxHeight: "88vh", borderRadius: 10, background: "#fff" }} />
+    </div>}
+  </Section>;
 }
 
 function GateModal({ o, canOv }: { o: Order; canOv: boolean }) {

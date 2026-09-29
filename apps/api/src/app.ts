@@ -57,6 +57,8 @@ app.use("/api/items/:id/image", express.json({ limit: "12mb" }));
 // A bus consignment carries two photographs of the loaded bundle on the same
 // body as the dispatch itself, so it needs the same headroom.
 app.use("/api/orders/:id/dispatch", express.json({ limit: "12mb" }));
+// Several photographs of a picked order arrive on one body.
+app.use("/api/orders/:id/photos", express.json({ limit: "24mb" }));
 // A receipt can carry the customer's UPI screenshot on the same body.
 app.use("/api/ledger/payments", express.json({ limit: "12mb" }));
 app.use(express.json({ limit: "2mb" }));

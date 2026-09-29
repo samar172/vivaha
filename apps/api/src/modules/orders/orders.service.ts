@@ -15,6 +15,7 @@ export const orderInclude = {
   customer: { select: { id: true, name: true, contactName: true, tehsil: true, group: true, gstin: true, address: true, creditLimit: true, creditDays: true, gateMode: true, salesExecId: true, blockReason: true } },
   lines: { include: { item: { select: { id: true, sku: true, name: true, nameHi: true, uom: true, designNo: true, artSeed: true, lineId: true, imageUrl: true, landedCost: true } } } },
   events: { orderBy: { at: "asc" as const } },
+  photos: { orderBy: { at: "asc" as const } },
   dispatches: { orderBy: { at: "asc" as const } },
   invoices: { include: { lines: { orderBy: { id: "asc" as const } } }, orderBy: { date: "asc" as const } },
 } satisfies Prisma.OrderInclude;
