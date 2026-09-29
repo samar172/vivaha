@@ -18,9 +18,9 @@ export const NAV: { g: string; items: { k: string; l: string; i: IconName; perm:
   { g: "Overview", items: [{ k: "dashboard", l: "Dashboard", i: "grid", perm: "dash.view" }] },
   { g: "Catalogue", items: [{ k: "items", l: "Items & Rates", i: "tag", perm: "item.view" }, { k: "prices", l: "Price list", i: "rupee", perm: "item.view" }] },
   { g: "Supply", items: [{ k: "purchase", l: "Purchase & GRN", i: "inbox", perm: "purchase.view" }, { k: "stock", l: "Inventory", i: "warehouse", perm: "stock.view" }, { k: "vendors", l: "Vendor ledger", i: "rupee", perm: "purchase.view" }] },
-  { g: "Sales", items: [{ k: "customers", l: "Customers", i: "users", perm: "cust.view" }, { k: "orders", l: "Orders", i: "receipt", perm: "order.view" }, { k: "dispatch", l: "Dispatch", i: "truck", perm: "order.dispatch" }, { k: "jobs", l: "Job Work", i: "printer", perm: "order.view" }, { k: "cart-recovery", l: "Cart Recovery", i: "inbox", perm: "order.create" }, { k: "returns", l: "Returns", i: "undo", perm: "return.view" }] },
+  { g: "Sales", items: [{ k: "customers", l: "Customers", i: "users", perm: "cust.view" }, { k: "orders", l: "Orders", i: "receipt", perm: "order.view" }, { k: "dispatch", l: "Dispatch", i: "truck", perm: "order.dispatch" }, { k: "jobs", l: "Job Work", i: "printer", perm: "order.view" }, { k: "machines", l: "Machines", i: "sliders", perm: "cust.view" }, { k: "cart-recovery", l: "Cart Recovery", i: "inbox", perm: "order.create" }, { k: "returns", l: "Returns", i: "undo", perm: "return.view" }] },
   { g: "Finance", items: [{ k: "invoices", l: "Invoices", i: "receipt", perm: "ledger.view" }, { k: "accounts", l: "Ledger & GST", i: "rupee", perm: "ledger.view" }] },
-  { g: "Insight", items: [{ k: "reports", l: "Reports", i: "chart", perm: "report.view" }, { k: "audit", l: "Audit Log", i: "history", perm: "audit.view" }] },
+  { g: "Insight", items: [{ k: "reports", l: "Reports", i: "chart", perm: "report.view" }, { k: "health", l: "Data health", i: "alert", perm: "report.view" }, { k: "audit", l: "Audit Log", i: "history", perm: "audit.view" }] },
   { g: "System", items: [{ k: "banners", l: "Banners", i: "tag", perm: "settings.manage" }, { k: "settings", l: "Settings", i: "sliders", perm: "settings.manage" }] },
 ];
 

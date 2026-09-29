@@ -6,6 +6,61 @@ rather than repeating them: `docs/PLAN.md` is the original build plan,
 
 ---
 
+## 2026-09-29 (later) — Machines by owner, and how complete the masters are
+
+### Who runs an offset press
+
+The machines have always been on the customer record, which answers *what does
+this firm run*. It never answered the question that actually comes up — *who
+runs an offset press* — which is what you need when a consumable lands, a
+service round is planned, or a machine-specific offer goes out.
+
+**Sales → Machines** is the same records read the other way round: every press,
+plotter and binder with the firm beside it, tabs by type with counts, a filter
+by condition, and a search across make, model, serial, town and firm. The KPI
+row counts *firms*, not machines — one shop with three presses is one call.
+Nothing is edited here; a machine belongs to its firm and is edited there.
+
+### Health as a percentage
+
+A half-filled master costs money quietly. A bill cannot be raised without a
+GSTIN, a short delivery cannot be chased without a phone, and a firm with nobody
+marked to receive bills has them going nowhere at all. None of it announces
+itself — it surfaces as a delay, one record at a time, and nobody ever sits down
+to fix the class of problem.
+
+**Insight → Data health** is the percentage, per customer and per supplier, with
+two rules that keep the number worth looking at:
+
+* **It is weighted.** A missing phone number is not the same size of problem as
+  a missing map pin, and averaging them as though they were makes the figure
+  useless. Phone and a bills-to number carry 5; a map pin carries 1.
+* **A field that does not apply is left out, not failed.** An unregistered shop
+  has no GSTIN and never will. Marking it incomplete forever produces a score
+  that can never reach 100, which is a score everybody learns to ignore.
+
+Under the number, the fields holding it down, worst first — because a field is
+usually quicker to fix across forty records than forty records are one at a
+time. Click one and the list below shows only the records missing it. On this
+data: map pins on 0%, the office's own customer number on 8%, portal logins on
+13%.
+
+### Verified
+
+`scripts/check_health_and_machines.py` — the flat machine list reconciling with
+the customer records it comes from, the overall figure being the true average of
+its rows, the bands accounting for every record, *missing* being exactly the
+failed applicable checks, a complete record scoring 100 and only a complete one,
+each field's percentage reconciling with its own counts, and a not-applicable
+check sitting in neither the numerator nor the denominator.
+
+Two of those checks failed first time and both were the test's fault, not the
+code's — including Python's banker's rounding turning 12.5 into 12 where
+JavaScript gives 13. The same trap as `check_money`; the helper is now copied
+into this harness too.
+
+---
+
 ## 2026-09-29 — Photographs of what was picked
 
 A dispute is always the same argument: the firm says four bundles came and the

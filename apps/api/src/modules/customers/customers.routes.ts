@@ -46,6 +46,29 @@ router.get("/", requirePerm("cust.view"), asyncHandler(async (req, res) => {
   res.json(out);
 }));
 
+// Every machine on every firm's floor, flat.
+//
+// The machines live on the customer record, which answers "what does this firm
+// run" — and never "who runs an offset press", which is the question that comes
+// up when a consumable lands or a service round is planned. Declared before
+// /:id, or that route swallows it.
+router.get("/machines", requirePerm("cust.view"), asyncHandler(async (_req, res) => {
+  const rows = await prisma.customerMachine.findMany({
+    include: { customer: { select: { id: true, code: true, name: true, tehsil: true, phone: true, group: true, contactName: true, salesExec: { select: { name: true } } } } },
+    orderBy: [{ type: "asc" }, { id: "asc" }],
+  });
+  res.json(rows.map((m) => {
+    const spec = (m.spec as Record<string, string>) || {};
+    return {
+      id: m.id, type: m.type, spec,
+      // Pulled out because these are what the screen filters and sorts on.
+      make: spec.company ?? "", model: spec.model ?? "", serial: spec.serial ?? "",
+      status: spec.status ?? "", colours: spec.colours ?? "", ink: spec.ink ?? "",
+      customer: m.customer,
+    };
+  }));
+}));
+
 router.get("/:id", requirePerm("cust.view"), asyncHandler(async (req, res) => {
   const c = await prisma.customer.findUnique({ where: { id: req.params.id }, include: { ...custInclude, overrides: { include: { item: { select: { sku: true, name: true, moq: true, landedCost: true, slabs: true } } } } } });
   if (!c) throw notFound("Customer not found");
